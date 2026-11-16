@@ -17,7 +17,7 @@ class LanPeer {
   final DateTime lastSeen;
 }
 
-enum TransferState { preparing, sending, receiving, delivered, failed }
+enum TransferState { queued, preparing, sending, receiving, delivered, failed }
 
 class LanFile {
   LanFile({
@@ -64,18 +64,57 @@ class LanFile {
   }
 }
 
+
+/// A batch is committed only after the user presses Send. Its source files
+/// are private snapshots so delivery survives closing the app.
+class QueuedLanItem {
+  QueuedLanItem(this.id, this.name, this.path, this.size);
+  final String id, name, path;
+  final int size;
+  Map<String,dynamic> toJson() => {'id':id,'name':name,'path':path,'size':size};
+  static QueuedLanItem? fromJson(Object? raw) {
+    if(raw is! Map<String,dynamic>) return null;
+    try {return QueuedLanItem(raw['id'] as String,raw['name'] as String,
+      raw['path'] as String,(raw['size'] as num).toInt());}
+    catch(_){return null;}
+  }
+}
+class QueuedLanBatch {
+  QueuedLanBatch(this.id,this.created,this.items,[Set<String>? delivered])
+    : deliveredKeys=delivered??<String>{};
+  final String id;
+  final DateTime created;
+  final List<QueuedLanItem> items;
+  final Set<String> deliveredKeys;
+  Map<String,dynamic> toJson()=>{'id':id,'created':created.toUtc().toIso8601String(),
+    'items':items.map((e)=>e.toJson()).toList(),'delivered':deliveredKeys.toList()};
+  static QueuedLanBatch? fromJson(Object? raw){
+    if(raw is! Map<String,dynamic>)return null;
+    try {
+      final items=(raw['items'] as List).map(QueuedLanItem.fromJson)
+        .whereType<QueuedLanItem>().toList();
+      if(items.isEmpty)return null;
+      return QueuedLanBatch(raw['id'] as String,DateTime.parse(raw['created'] as String),
+        items,(raw['delivered'] as List? ?? []).whereType<String>().toSet());
+    }catch(_){return null;}
+  }
+}
+
 class LanEngine extends ChangeNotifier {
   LanEngine({this.discoveryPort = 49310, this.tcpPort = 49311,
     this.expiry = const Duration(hours: 24)});
   final int discoveryPort, tcpPort;
   final Duration expiry;
   final List<LanFile> files = [];
+  final List<QueuedLanBatch> queuedBatches = [];
   final Map<String, LanPeer> peers = {};
+  final Set<String> _activePeers = {};
+  final Map<String, DateTime> _attempts = {};
   ServerSocket? _server;
   RawDatagramSocket? _discovery;
   Timer? _heartbeat, _cleanup;
-  Directory? _inbox;
-  File? _db;
+  Directory? _inbox, _outbox;
+  File? _db, _queueDb;
   String? deviceId, error;
   bool started = false, _disposed = false;
   Future<void> _writes = Future<void>.value();
@@ -97,10 +136,14 @@ class LanEngine extends ChangeNotifier {
     _inbox = Directory(dir.path + Platform.pathSeparator + 'fileshare_inbox');
     await _inbox!.create(recursive: true);
     _db = File(_inbox!.path + Platform.pathSeparator + 'history.json');
+    _outbox = Directory(_inbox!.path + Platform.pathSeparator + 'outbox');
+    await _outbox!.create(recursive: true);
+    _queueDb = File(_inbox!.path + Platform.pathSeparator + 'pending_batches.json');
     final preferences = SharedPreferencesAsync();
     deviceId = await preferences.getString('lan_device_id') ?? newId();
     await preferences.setString('lan_device_id', deviceId!);
     await _restore();
+    await _loadQueue();
     await cleanExpired();
     try {
       _server = await ServerSocket.bind(InternetAddress.anyIPv4, tcpPort);
@@ -121,6 +164,7 @@ class LanEngine extends ChangeNotifier {
       _heartbeat = Timer.periodic(const Duration(seconds: 5), (_) {
         refresh();
         _expirePeers();
+        _dispatchQueued();
       });
     } catch (e) { error = 'LAN broadcast unavailable: ' + e.toString(); }
     _cleanup = Timer.periodic(const Duration(minutes: 1),
@@ -148,9 +192,12 @@ class LanEngine extends ChangeNotifier {
           obj['port'] is! int || (obj['port'] as int) <= 0) return;
       final id = obj['id'] as String;
       if (id.length > 100) return;
+      final firstSeen = !peers.containsKey(id);
       peers[id] = LanPeer(id, safeFileName((obj['name'] as String?) ?? 'Device'),
         packet.address.address, obj['port'] as int, DateTime.now());
       _notify();
+      if(firstSeen)refresh();
+      _dispatchQueued();
     } catch (_) {}
   }
 
@@ -168,13 +215,112 @@ class LanEngine extends ChangeNotifier {
         for (final raw in obj) {
           final file = LanFile.fromJson(raw);
           if (file == null) continue;
-          if (file.state != TransferState.delivered) {
-            file.state = TransferState.failed; // interrupted, not delivered
+          if (file.state != TransferState.delivered &&
+              file.state != TransferState.queued) {
+            file.state = TransferState.failed;
           }
           files.add(file);
         }
       }
     } catch (e) { error = 'Local history read failed: ' + e.toString(); }
+  }
+
+
+  Future<void> _loadQueue() async {
+    if(_queueDb==null||!await _queueDb!.exists())return;
+    try {
+      final raw=jsonDecode(await _queueDb!.readAsString());
+      if(raw is List)queuedBatches.addAll(raw.map(QueuedLanBatch.fromJson)
+        .whereType<QueuedLanBatch>());
+    }catch(e){error='Pending queue read failed: '+e.toString();}
+  }
+  void _saveQueue(){
+    final contents=jsonEncode(queuedBatches.map((e)=>e.toJson()).toList());
+    _writes=_writes.then((_)async{
+      if(_queueDb==null)return;
+      final tmp=File(_queueDb!.path+'.tmp');
+      await tmp.writeAsString(contents,flush:true);
+      if(await _queueDb!.exists())await _queueDb!.delete();
+      await tmp.rename(_queueDb!.path);
+    }).catchError((Object e){error='Pending queue save failed: '+e.toString();});
+  }
+
+  /// Starts only when Send is pressed; no nearby device is required.
+  Future<String> enqueue(List<File> sources,{List<String>? names})async{
+    if(!started||_outbox==null)throw StateError('LAN engine not ready');
+    if(sources.isEmpty)throw StateError('No selected files');
+    final batchId=newId();
+    final items=<QueuedLanItem>[];
+    try{
+      for(var i=0;i<sources.length;i++){
+        final source=sources[i];
+        if(!await source.exists())throw StateError('Selected file unavailable');
+        final fileId=newId();
+        final name=safeFileName(names!=null&&names.length>i
+          ?names[i]:source.uri.pathSegments.last);
+        final copy=File(_outbox!.path+Platform.pathSeparator+fileId+'_'+name);
+        await source.openRead().pipe(copy.openWrite());
+        items.add(QueuedLanItem(fileId,name,copy.path,await copy.length()));
+      }
+      final batch=QueuedLanBatch(batchId,DateTime.now(),items);
+      queuedBatches.add(batch);
+      for(final item in items){
+        files.insert(0,LanFile(id:item.id,batch:batchId,name:item.name,
+          path:item.path,peer:'Waiting for nearby devices',incoming:false,
+          size:item.size,created:batch.created,state:TransferState.queued));
+      }
+      _update(save:true);
+      _saveQueue();
+      await _writes;
+      _dispatchQueued();
+      return batchId;
+    }catch(_){
+      for(final item in items){final f=File(item.path);
+        if(await f.exists())await f.delete();}
+      rethrow;
+    }
+  }
+  void _dispatchQueued(){
+    if(!started||queuedBatches.isEmpty||peers.isEmpty)return;
+    for(final peer in peers.values.toList()){
+      if(_activePeers.add(peer.id)){
+        unawaited(_deliverToPeer(peer).whenComplete(()=>_activePeers.remove(peer.id)));
+      }
+    }
+  }
+  Future<void> _deliverToPeer(LanPeer peer)async{
+    try{
+      for(final batch in queuedBatches.toList()){
+        if(DateTime.now().difference(batch.created)>=expiry)continue;
+        for(final item in batch.items.toList()){
+          final key=peer.id+':'+item.id;
+          if(batch.deliveredKeys.contains(key))continue;
+          final last=_attempts[key];
+          if(last!=null&&DateTime.now().difference(last)<const Duration(seconds:30))continue;
+          _attempts[key]=DateTime.now();
+          final source=File(item.path);
+          if(!await source.exists())continue;
+          final entry=LanFile(id:newId(),batch:batch.id,name:item.name,
+            path:item.path,peer:peer.name,peerId:peer.id,incoming:false,
+            size:item.size,created:batch.created,state:TransferState.preparing);
+          files.insert(0,entry);_update(save:true);
+          await _sendOne(source,peer,entry);
+          if(entry.state==TransferState.delivered){
+            batch.deliveredKeys.add(key);_saveQueue();
+          }else{return;}
+        }
+      }
+    }catch(e){error='Queued LAN delivery: '+e.toString();_notify();}
+  }
+  Future<void> cancelQueuedBatch(String id)async{
+    final batches=queuedBatches.where((b)=>b.id==id).toList();
+    if(batches.isEmpty)return;
+    final batch=batches.first;queuedBatches.remove(batch);
+    files.removeWhere((e)=>e.batch==id&&!e.incoming&&e.state==TransferState.queued);
+    for(final item in batch.items){
+      final f=File(item.path);if(await f.exists())await f.delete();
+    }
+    _saveQueue();_update(save:true);
   }
 
   void _save() {
@@ -366,7 +512,8 @@ class LanEngine extends ChangeNotifier {
     final hits = files.where((entry) => entry.id == id).toList();
     if (hits.isEmpty) return;
     final item = hits.first;
-    // Received data is managed by the app. An outgoing original is USER DATA.
+    if(item.state==TransferState.queued){await cancelQueuedBatch(item.batch);return;}
+    // Never delete sender originals.
     if (item.incoming) {
       final f = File(item.path);
       if (await f.exists()) await f.delete();
@@ -385,6 +532,11 @@ class LanEngine extends ChangeNotifier {
       try { await remove(entry.id); } catch (e) {
         error = 'Cleanup retry needed: ' + e.toString();
       }
+    }
+    for(final batch in queuedBatches.where((b)=>
+      now.difference(b.created)>=expiry).toList()){
+      try{await cancelQueuedBatch(batch.id);}
+      catch(e){error='Queued cleanup will retry: '+e.toString();}
     }
     if (_inbox == null) return;
     try {
