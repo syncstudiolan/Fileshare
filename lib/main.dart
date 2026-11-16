@@ -915,7 +915,7 @@ class DesignFileCard extends StatelessWidget {
         physics: const NeverScrollableScrollPhysics(),
         shrinkWrap: true,
         itemCount: 4,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           mainAxisSpacing: 8,
           crossAxisSpacing: 8,
@@ -1586,12 +1586,18 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             Padding(
               padding: EdgeInsets.symmetric(horizontal: wide ? 24 : 10),
               child: Row(children: [
-                for (final choice in const ['All', 'Sent', 'Received'])
-                  Padding(padding: const EdgeInsets.only(right: 5),
-                    child: ChoiceChip(label: Text(choice),
-                      selected: choice == _filter,
-                      onSelected: (_) => setState(() => _filter = choice))),
-                const Spacer(),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      for (final choice in const ['All', 'Sent', 'Received'])
+                        Padding(padding: const EdgeInsets.only(right: 5),
+                          child: ChoiceChip(label: Text(choice),
+                            selected: choice == _filter,
+                            onSelected: (_) => setState(() => _filter = choice))),
+                    ]),
+                  ),
+                ),
                 if (groups.isEmpty)
                   TextButton(onPressed: () => setState(() =>
                     _showSamples = !_showSamples),
@@ -1906,7 +1912,7 @@ class FeatureDesignPage extends StatelessWidget {
       Column(children: [
         _line(c, Icons.verified_user_outlined, '1. Verify token',
           'Check account, scope and permissions'),
-        _line(c, Icons.database_outlined, '2. Provision D1',
+        _line(c, Icons.storage_outlined, '2. Provision D1',
           'QR, guest sessions, delivery and quota records'),
         _line(c, Icons.storage_outlined, '3. Provision R2',
           'Private cloud files for this user'),
