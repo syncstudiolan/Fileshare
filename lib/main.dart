@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:open_filex/open_filex.dart';
 
 import 'lan_engine.dart';
 import 'personal_cloud.dart';
@@ -967,15 +968,95 @@ class DesignFileCard extends StatelessWidget {
 
 
 class PendingBatch {
-  PendingBatch(this.id, this.sources, this.labels, this.started);
+  PendingBatch(this.id, this.sources, this.labels, this.sizes);
   final String id;
   final List<File> sources;
   final List<String> labels;
-  bool started;
+  final List<int> sizes;
 }
 
 /// This singleton stays active while the user navigates between pages.
 final LanEngine appLan = LanEngine();
+
+
+/// Real file preview. Uses a zoomable full-screen image and the same actions
+/// as the file card; no duplicate upload is initiated from here.
+class FullScreenFilePreview extends StatelessWidget {
+  const FullScreenFilePreview({super.key, required this.file,
+    required this.onSave, required this.onDelete, required this.onShare});
+  final LanFile file;
+  final Future<void> Function(LanFile) onSave, onDelete, onShare;
+
+  bool get isPicture {
+    final name=file.name.toLowerCase();
+    return name.endsWith('.jpg')||name.endsWith('.jpeg')||
+      name.endsWith('.png')||name.endsWith('.webp')||name.endsWith('.gif');
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text(file.name,maxLines:1,overflow:TextOverflow.ellipsis),
+    ),
+    body:SafeArea(child:Column(children:[
+      Expanded(child:Center(
+        child:isPicture
+          ? InteractiveViewer(
+              minScale:.8,maxScale:5,
+              child:Image.file(File(file.path),
+                fit:BoxFit.contain,
+                errorBuilder:(_,__,___)=>const Icon(
+                  Icons.broken_image_outlined,size:80,color:Colors.white70)),
+            )
+          : Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+              const Icon(Icons.insert_drive_file_outlined,
+                color:Colors.white,size:92),
+              const SizedBox(height:12),
+              Text(file.name,style:const TextStyle(color:Colors.white)),
+              const SizedBox(height:6),
+              Text(_formatBytes(file.size),
+                style:const TextStyle(color:Colors.white70)),
+            ]),
+      )),
+      Container(
+        padding:const EdgeInsets.symmetric(horizontal:12,vertical:9),
+        color:const Color(0xFF20172F),
+        child:Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[
+          if(file.incoming)
+            IconButton(
+              tooltip:'Download file',
+              onPressed:file.state==TransferState.delivered
+                ?()=>onSave(file):null,
+              icon:const Icon(Icons.download_rounded,color:Colors.white)),
+          IconButton(
+            tooltip:'Delete file',
+            onPressed:()async{
+              await onDelete(file);
+              if(context.mounted)Navigator.pop(context);
+            },
+            icon:const Icon(Icons.delete_outline_rounded,color:Colors.white)),
+          IconButton(
+            tooltip:'Open in another app',
+            onPressed:file.state==TransferState.delivered
+              ?()=>OpenFilex.open(file.path):null,
+            icon:const Icon(Icons.open_in_new_rounded,color:Colors.white)),
+          IconButton(
+            tooltip:'Share to another app',
+            onPressed:file.state==TransferState.delivered
+              ?()=>onShare(file):null,
+            icon:const Icon(Icons.ios_share_rounded,color:Colors.white)),
+          const IconButton(
+            tooltip:'Toolbox coming later',
+            onPressed:null,
+            icon:Icon(Icons.auto_fix_high_rounded,color:Colors.white54)),
+        ]),
+      ),
+    ])),
+  );
+}
 
 class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
@@ -996,7 +1077,7 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   Widget _visual(LanFile file) {
-    if (file.state == TransferState.delivered && _photo(file.name)) {
+    if (_photo(file.name) && File(file.path).existsSync()) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Image.file(File(file.path), fit: BoxFit.cover,
@@ -1030,6 +1111,11 @@ class LiveTransferCard extends StatelessWidget {
         onPressed: file.state == TransferState.delivered
             ? () => onShare(file) : null,
         icon: const Icon(Icons.ios_share_rounded, color: FileTheme.pink)),
+      IconButton(
+        tooltip: 'Open in another app',
+        onPressed: file.state == TransferState.delivered
+          ? () => OpenFilex.open(file.path) : null,
+        icon: const Icon(Icons.open_in_new_rounded, color: FileTheme.pink)),
       const IconButton(
         tooltip: 'Toolbox coming later',
         onPressed: null,
@@ -1037,10 +1123,21 @@ class LiveTransferCard extends StatelessWidget {
     ],
   );
 
+  void _preview(BuildContext context,LanFile file){
+    if(file.state!=TransferState.delivered &&
+       file.state!=TransferState.queued)return;
+    Navigator.push(context,MaterialPageRoute<void>(builder:(_)=>
+      FullScreenFilePreview(file:file,onSave:onSave,
+        onDelete:onDelete,onShare:onShare)));
+  }
+
   Widget _file(BuildContext context, LanFile file) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 5),
     child: Row(children: [
-      SizedBox(width: 78, height: 78, child: Center(child: _visual(file))),
+      GestureDetector(
+        onTap:()=>_preview(context,file),
+        child:SizedBox(width: 78,height:78,child:Center(child:_visual(file))),
+      ),
       const SizedBox(width: 9),
       Expanded(child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
