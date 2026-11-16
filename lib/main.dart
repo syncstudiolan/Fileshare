@@ -1228,10 +1228,15 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     appLan.addListener(_changed);
+    PersonalCloud.instance.addListener(_changed);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) {
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
+      PersonalCloud.instance.restore().then((_) =>
+        PersonalCloud.instance.cleanupLocalCache()).catchError((Object e) {
+          _snack('Personal cloud storage unavailable: ' + e.toString());
+        });
     });
   }
 
@@ -1240,6 +1245,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     appLan.removeListener(_changed);
+    PersonalCloud.instance.removeListener(_changed);
     super.dispose();
   }
 
@@ -1250,8 +1256,15 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _navigate(String title) {
-    Navigator.of(context).push(fadePage(
-      FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode)));
+    final Widget screen;
+    if (title == 'Cloud Setup') {
+      screen = CloudConnectPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'My QR') {
+      screen = MyQrPage(mode: widget.mode, onMode: widget.onMode);
+    } else {
+      screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
+    }
+    Navigator.of(context).push(fadePage(screen));
   }
 
   Widget _nav(String label, IconData icon, {bool enabled = true}) => ListTile(
@@ -1395,21 +1408,62 @@ class _DashboardPageState extends State<DashboardPage> {
     catch (e) { _snack('Delete failed: ' + e.toString()); }
   }
 
-  List<List<LanFile>> _groups() {
-    final skip = _staged.map((x) => x.id).toSet();
-    final visible = appLan.files.where((f) =>
-      !skip.contains(f.batch) &&
-      (_filter == 'All' ||
-      (_filter == 'Sent' && !f.incoming) ||
+
+  List<TimelineGroup> _timeline() {
+    final hidden = _staged.map((item) => item.id).toSet();
+    final lan = appLan.files.where((f) =>
+      !hidden.contains(f.batch) &&
+      (_filter == 'All' || (_filter == 'Sent' && !f.incoming) ||
       (_filter == 'Received' && f.incoming))).toList();
-    final map = <String, List<LanFile>>{};
-    for (final item in visible) {
+    final groupedLan = <String, List<LanFile>>{};
+    for (final item in lan) {
       final key = item.batch + ':' + item.peer + ':' + item.incoming.toString();
-      map.putIfAbsent(key, () => []).add(item);
+      groupedLan.putIfAbsent(key, () => []).add(item);
     }
-    final groups = map.values.toList();
-    groups.sort((a, b) => b.first.created.compareTo(a.first.created));
-    return groups;
+    final timeline = groupedLan.values.map((group) =>
+      TimelineGroup(lan: group)).toList();
+    if (_filter != 'Sent') {
+      final groupedCloud = <String, List<CloudFile>>{};
+      for (final item in PersonalCloud.instance.files) {
+        groupedCloud.putIfAbsent(item.session, () => []).add(item);
+      }
+      timeline.addAll(groupedCloud.values.map((group) =>
+        TimelineGroup(cloud: group)));
+    }
+    timeline.sort((a, b) => b.created.compareTo(a.created));
+    return timeline;
+  }
+
+  Future<void> _saveCloud(CloudFile entry) async {
+    try {
+      final downloaded = await PersonalCloud.instance.download(entry);
+      final downloads = await getDownloadsDirectory();
+      if (downloads == null) throw StateError('Downloads directory not available');
+      await downloads.create(recursive: true);
+      final name = LanEngine.safeFileName(entry.name);
+      var target = File(downloads.path + Platform.pathSeparator + name);
+      var suffix = 1;
+      while (await target.exists()) {
+        target = File(downloads.path + Platform.pathSeparator +
+          suffix.toString() + '_' + name);
+        suffix++;
+      }
+      await downloaded.openRead().pipe(target.openWrite());
+      _snack('Guest QR file saved to Downloads.');
+    } catch (e) { _snack('QR Download failed: ' + e.toString()); }
+  }
+
+  Future<void> _deleteCloud(CloudFile entry) async {
+    try { await PersonalCloud.instance.deleteRemote(entry); }
+    catch (e) { _snack('QR Delete failed: ' + e.toString()); }
+  }
+
+  Future<void> _shareCloud(CloudFile entry) async {
+    try {
+      final downloaded = await PersonalCloud.instance.download(entry);
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(downloaded.path)], text: entry.name));
+    } catch (e) { _snack('QR Share failed: ' + e.toString()); }
   }
 
   Widget _drafts(BuildContext context) {
@@ -1445,7 +1499,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
-    final groups = _groups();
+    final groups = _timeline();
     final useDemo = _showSamples && groups.isEmpty && _staged.isEmpty;
     final samples = mockTransfers.where((f) =>
       _filter == 'All' || (_filter == 'Sent' && f.sent) ||
@@ -1474,7 +1528,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         color: FileTheme.foreground(context))),
                       Text(appLan.peers.length.toString() + ' nearby LAN devices · ' +
                         (appLan.started ? 'LAN active' : 'Starting LAN') +
-                        ' · Cloud not connected',
+                         + (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
@@ -1485,7 +1539,12 @@ class _DashboardPageState extends State<DashboardPage> {
                       color: FileTheme.violet)),
                   AppearanceButton(mode: widget.mode, onChange: widget.onMode),
                   IconButton(tooltip: 'Refresh nearby LAN devices',
-                    onPressed: appLan.refresh,
+                    onPressed: () {
+                      appLan.refresh();
+                      if (PersonalCloud.instance.connected) {
+                        unawaited(PersonalCloud.instance.refreshFiles());
+                      }
+                    },
                     icon: const Icon(Icons.refresh_rounded, color: FileTheme.violet)),
                 ]),
               ),
@@ -1522,9 +1581,12 @@ class _DashboardPageState extends State<DashboardPage> {
               ? ListView.builder(
                   padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
                   itemCount: groups.length,
-                  itemBuilder: (_, i) => LiveTransferCard(
-                    items: groups[i], onSave: _saveReceived,
-                    onDelete: _delete, onShare: _share))
+                  itemBuilder: (_, i) => groups[i].lan != null
+                    ? LiveTransferCard(items: groups[i].lan!,
+                        onSave: _saveReceived, onDelete: _delete, onShare: _share)
+                    : CloudInboxCard(items: groups[i].cloud!,
+                        onSave: _saveCloud, onDelete: _deleteCloud,
+                        onShare: _shareCloud))
               : useDemo
                 ? ListView.builder(
                     padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
