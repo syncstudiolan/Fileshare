@@ -1775,7 +1775,7 @@ class FeatureDesignPage extends StatelessWidget {
               Text('50% · not uploading', style: TextStyle(
                 color: FileTheme.muted(c), fontSize: 10)),
             ]),
-          )),
+          ),
         ]),
         const SizedBox(height: 20),
         const Row(children: [
