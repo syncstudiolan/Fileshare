@@ -1,0 +1,68 @@
+name: Android Emulator UI Capture (Validation Branch)
+
+on:
+  push:
+    branches: [emulator-validation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator-screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Generate native Android project files
+        run: flutter create --project-name file_share --platforms=android .
+      - name: Get packages
+        run: flutter pub get
+      - name: Flutter analyzer diagnostics
+        continue-on-error: true
+        run: flutter analyze
+      - name: Flutter widget tests
+        continue-on-error: true
+        run: flutter test
+      - name: Enable KVM on GitHub runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build and launch APK on real Android Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            mkdir -p screenshots
+            flutter build apk --debug --dart-define=FILE_SHARE_CAPTURE_UI=true
+            adb install -r build/app/outputs/flutter-apk/app-debug.apk
+            adb shell monkey -p com.example.file_share -c android.intent.category.LAUNCHER 1
+            sleep 12
+            adb exec-out screencap -p > screenshots/01-real-flutter-dashboard.png
+            adb shell input tap 850 155
+            sleep 2
+            adb exec-out screencap -p > screenshots/02-appearance-menu.png
+            adb shell input tap 780 320
+            sleep 2
+            adb exec-out screencap -p > screenshots/03-theme-selection.png
+      - name: Upload genuine emulator captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-flutter-screenshots
+          path: screenshots/*.png
+          if-no-files-found: warn
