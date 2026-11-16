@@ -83,3 +83,16 @@ See `cloudflare/README.md`. Every owner uses their own Worker + D1 + R2 and secr
 First get the manual test build green, then test Android↔Windows real LAN transfers (several files, 0 B, 1GB+, disconnect/reconnect); fix plugin/manifest/firewall issues; implement reliable resume and Android background operation; secure cross-device login and full API-token auto-provisioning; test 200 MB/4-session Worker quota and midnight cleanup on a user-owned account; implement event-driven delivery; do security review, load testing and release signing.
 
 Repository may be publicly visible. Assume all committed code is public; protect tokens and secrets.
+
+
+## Draft PR #1 — Offline LAN improvements (not merged)
+
+- Receive photo card thumbnail opens a full-screen pinch/zoom preview. Download on receiver only, Delete, Open in Other App, External Share and future Toolbox icons are shown.
+- Android system Sharesheet receives shared WhatsApp/gallery/documents as private pending items. **Selecting a file never transmits it.**
+- The Send action explicitly commits copies to a 24-hour persistent local queue. Send works without nearby devices; discovery later triggers automatic delivery to newly connected peers. Successful delivery is tracked per unique device and file.
+- Files menu now contains Images / Documents / Folders (transfer-batch groups). Devices shows the actual live LAN list. History and Tools are removed from the navigation drawer.
+- Header Refresh has a spinning animation. Android adds an optional foreground service and Wi-Fi multicast lock.
+- Cloud and QR code are unchanged. Menu Login/Logout is currently derived from the optional manually paired Worker session, **not** a production email/password login. Local sign-out keeps encrypted Worker configuration, but account-based re-login/cross-device restoration are still NOT implemented.
+- Android 15+ dataSync foreground services have a six-hour background time limit; a service cannot guarantee perpetual discovery after OS kill/reboot. A future native receive/background scheduling audit remains essential.
+- Windows has Flutter UI and Dart LAN engine parity but still requires native build and firewall/LAN tests.
+- No automated LAN E2E test has yet proven actual two-device delivery. Do not use confidential files on untrusted Wi-Fi: local LAN transfers currently have no pairing or encryption.
