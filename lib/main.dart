@@ -1528,7 +1528,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         color: FileTheme.foreground(context))),
                       Text(appLan.peers.length.toString() + ' nearby LAN devices · ' +
                         (appLan.started ? 'LAN active' : 'Starting LAN') +
-                         + (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
+                        (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
