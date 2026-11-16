@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'lan_engine.dart';
+import 'personal_cloud.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1125,6 +1127,88 @@ String _formatBytes(int bytes) {
   return value.toStringAsFixed(i == 0 ? 0 : 1) + ' ' + units[i];
 }
 
+
+class CloudInboxCard extends StatelessWidget {
+  const CloudInboxCard({super.key, required this.items,
+    required this.onSave, required this.onDelete, required this.onShare});
+  final List<CloudFile> items;
+  final Future<void> Function(CloudFile) onSave, onDelete, onShare;
+
+  @override
+  Widget build(BuildContext context) {
+    final first=items.first;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width>700
+          ? 580 : MediaQuery.sizeOf(context).width*.90),
+        margin: const EdgeInsets.symmetric(vertical: 7),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: FileTheme.dark(context)
+            ? const Color(0xFF482945) : const Color(0xFFFFDDED),
+          border: Border.all(color: FileTheme.pink.withValues(alpha: .17)),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(22), topRight: Radius.circular(22),
+            bottomLeft: Radius.circular(5), bottomRight: Radius.circular(22))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
+          Row(children: [
+            Expanded(child: Text(items.length>1
+              ? items.length.toString()+' Files (QR Group)' : first.name,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: FileTheme.foreground(context),
+                fontWeight: FontWeight.w800))),
+            const DesignTag('Received',received:true),
+          ]),
+          const SizedBox(height: 7),
+          Text('From Guest browser · Guest QR · Online',
+            style: TextStyle(color: FileTheme.muted(context),fontSize:11)),
+          for(final file in items.take(5))
+            Row(children: [
+              const Icon(Icons.insert_drive_file_outlined,
+                color:FileTheme.pink,size:32),
+              const SizedBox(width:9),
+              Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start,
+                children: [
+                  Text(file.name,maxLines:1,overflow:TextOverflow.ellipsis,
+                    style:TextStyle(color:FileTheme.foreground(context),
+                      fontWeight:FontWeight.w700,fontSize:12)),
+                  Text(_formatBytes(file.size),
+                    style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+                ])),
+              IconButton(tooltip:'Download received QR file',
+                onPressed:()=>onSave(file),
+                icon:const Icon(Icons.download_rounded,color:FileTheme.pink)),
+              IconButton(tooltip:'Delete QR file',
+                onPressed:()=>onDelete(file),
+                icon:const Icon(Icons.delete_outline_rounded,color:FileTheme.pink)),
+              IconButton(tooltip:'Share QR file externally',
+                onPressed:()=>onShare(file),
+                icon:const Icon(Icons.ios_share_rounded,color:FileTheme.pink)),
+            ]),
+          if(items.length>5)
+            Text('+ '+(items.length-5).toString()+' more files',
+              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+          if(items.length>1)
+            TextButton.icon(
+              onPressed:()async{for(final f in items){await onSave(f);}},
+              icon:const Icon(Icons.download_for_offline_outlined),
+              label:const Text('Download All')),
+          Align(alignment:Alignment.centerRight,
+            child:Text('Guest QR · '+first.created.toLocal().toString().substring(11,16),
+              style:TextStyle(color:FileTheme.muted(context),fontSize:10))),
+        ]),
+      ),
+    );
+  }
+}
+
+class TimelineGroup {
+  const TimelineGroup({this.lan, this.cloud});
+  final List<LanFile>? lan;
+  final List<CloudFile>? cloud;
+  DateTime get created => lan?.first.created ?? cloud!.first.created;
+}
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode});
   final ThemeMode mode;
