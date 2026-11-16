@@ -21,6 +21,33 @@ void main() {
     expect(decoded.batch, 'batch');
   });
 
+  test('Queued batch persists the intended files and acknowledged peers', () {
+    final batch = QueuedLanBatch('batch-1', DateTime.utc(2026, 11, 16), [
+      QueuedLanItem('file-1','picture.jpg','/private/picture.jpg',4096)
+    ], {'android-A:file-1'});
+    final restored = QueuedLanBatch.fromJson(batch.toJson());
+    expect(restored, isNotNull);
+    expect(restored!.items.single.name, 'picture.jpg');
+    expect(restored.deliveredKeys.contains('android-A:file-1'), isTrue);
+    expect(restored.deliveredKeys.contains('android-B:file-1'), isFalse);
+  });
+
+  testWidgets('Drawer has the new offline menu and no History or Tools',
+      (tester) async {
+    await tester.pumpWidget(const FileShareApp(
+      initialMode: ThemeMode.light,
+      offlineDefault: true,
+      enableBackends: false,
+    ));
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+    expect(find.text('Files'), findsOneWidget);
+    expect(find.text('Devices'), findsOneWidget);
+    expect(find.text('Login'), findsOneWidget);
+    expect(find.text('History'), findsNothing);
+    expect(find.text('Tools'), findsNothing);
+  });
+
   testWidgets('First use offers login and no-login offline LAN', (tester) async {
     await tester.pumpWidget(const FileShareApp(initialMode: ThemeMode.light));
     expect(find.text('Login / Create Account'), findsOneWidget);
