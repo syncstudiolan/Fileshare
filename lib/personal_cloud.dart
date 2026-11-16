@@ -195,6 +195,20 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   /// Streams to private app storage; no 200 MB allocation in Dart RAM.
+  // The dashboard can hide expired QR cards at midnight with ZERO network calls.
+  void removeExpiredLocalEntries() {
+    const day = 86400000, istOffset = 19800000;
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final before = files.length;
+    files.removeWhere((entry) {
+      final created = entry.created.toUtc().millisecondsSinceEpoch;
+      final expiry = ((created + istOffset) ~/ day + 1) * day - istOffset;
+      return expiry <= now;
+    });
+    if (files.length != before) notifyListeners();
+    unawaited(cleanupLocalCache());
+  }
+
   Future<File> download(CloudFile item) async {
     if (!connected) throw StateError('Cloud not connected');
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
