@@ -20,6 +20,16 @@ Future<void> main() async {
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
   final offline = await prefs.getBool('offline_start') ?? false;
+  // CI-only visual capture: real Flutter widgets, no fake transfer requests.
+  const captureUi = bool.fromEnvironment('FILE_SHARE_CAPTURE_UI');
+  if (captureUi) {
+    runApp(const FileShareApp(
+      initialMode: ThemeMode.light,
+      offlineDefault: true,
+      enableBackends: false,
+    ));
+    return;
+  }
   runApp(FileShareApp(
     initialMode: switch (mode) {
       'light' => ThemeMode.light,
