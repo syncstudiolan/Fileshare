@@ -76,7 +76,7 @@ class MainActivity : FlutterActivity() {
             intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
                 ?.forEach { uris.add(it) }
         }
-        val dir = File(filesDir, "shared_intents")
+        val dir = File(filesDir, "fileshare_inbox")
         dir.mkdirs()
         for (uri in uris) {
             try {
@@ -84,7 +84,7 @@ class MainActivity : FlutterActivity() {
                     .replace(Regex("[/\\\\\\u0000-\\u001F]"), "_")
                     .takeLast(150)
                     .ifBlank { "shared_file" }
-                val copy = File(dir, System.nanoTime().toString() + "_" + filename)
+                val copy = File(dir, "stage_" + System.nanoTime().toString() + "_" + filename)
                 contentResolver.openInputStream(uri)?.use { input ->
                     copy.outputStream().use { output -> input.copyTo(output) }
                 }
