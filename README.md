@@ -1,61 +1,85 @@
-# File Share — Flutter UI Design Preview
+# File Share — Android + Windows file-sharing application
 
-Independent cross-platform file-sharing project: Android APK and Windows EXE first, iOS/macOS later.
-Repository: https://github.com/syncstudiolan/Fileshare
+Independent Flutter/Dart project at https://github.com/syncstudiolan/Fileshare. Android APK and Windows EXE are the first targets; iOS and macOS are future targets. Do not modify earlier Bank Setu or Sync Studio repositories.
 
-## Designed now
+## Verified scope and current implementation status
 
-- Lavender/pink glass-like unified chat dashboard with light, dark and system themes; theme choice remembered.
-- Welcome, Login / Create Account, Skip to Offline LAN.
-- ONE unified chat for LAN and guest QR; no separate QR inbox.
-- Received-left cards: Download, Delete, Share externally, Share to Toolbox.
-- Sent-right cards: Delete and Share actions only; no Download.
-- Sample four-photo group with per-item disabled actions and Download All display.
-- Image, video, document and Guest QR sample cards labelled with device and route.
-- Files/Preview Tray, History, Devices, My QR, Cloud BYOC Setup, Settings and Profile designs.
-- All/Sent/Received UI filter, navigation, theme and login/register demo toggles.
-- File picking, Send, Refresh, Download, Delete, sharing, QR regeneration and provisioning are not live.
+| Area | Code status | Practical status |
+| --- | --- | --- |
+| Lavender/Pink light and dark UI | Implemented | Device-specific visual QA still required |
+| Welcome, skip-to-LAN, login form | UI implemented | Central email/password authentication NOT implemented |
+| One unified chat for LAN + QR | Implemented | Real QR feed needs user's deployed Worker |
+| LAN peer discovery | UDP broadcast engine implemented | Two-device discovery not yet tested; router/Windows Firewall may block |
+| Direct LAN file transfer | TCP streamed send/receive and delivery acknowledgement implemented | No device-to-device test yet |
+| Native file selection | Uses file_picker v13 | Android SAF/Windows testing still needed |
+| Auto-start on selection | Starts sending to discovered LAN peers before Send | Send promotes existing progress into timeline |
+| File metadata, grouping, sender/receiver actions | Implemented | Group preview, retry/resume and some device state edge cases remain |
+| Receiver Save to Downloads | Streaming copy implemented | Android scoped-storage behavior needs testing |
+| External native Share | share_plus wired | Actual platform share UI not tested |
+| LAN 24-hour cleanup | History and private cache cleanup implemented | Background when Android is killed not guaranteed |
+| QR guest web page | Implemented in cloudflare/public/guest.html | Requires manual deployment and real Cloudflare test |
+| Per-guest 200 MiB / 4 sessions | D1 conditional quota reservation implemented | Cookie/IP is not trustworthy hardware identity |
+| 200MB large file | R2 multipart 6-MiB chunks implemented | Real upload/retry/network test required |
+| Owner's QR generate/revoke/regenerate | Worker routes + app QR image integrated | Requires connected Worker and owner secret |
+| QR files in unified feed | Integrated via PersonalCloud.refreshFiles | Manual refresh currently; real-time push not implemented |
+| Midnight IST QR cleanup | Worker scheduled batch cleanup + app card expiry | Real Cron timing and error retries untested |
+| One-time per-user Cloudflare Account ID/API Token provisioning | Not implemented | Requires secured provisioning flow, deployments and permissions |
+| Login and cross-device account linking | Not implemented | Needs central identity/account directory |
+| Android background receiving | Foreground sockets only | Foreground service and OS/background tests remain |
+| Native Android/Windows runners | Partially configured; Android Manifest committed | Generated platform files/builds not yet verified |
+| LAN secure peer trust, retries and transfer resume | Not implemented | Needs robust production engineering |
+| Performance 60/90/120 FPS | GPU-based Flutter UI architecture | Not profiled or guaranteed |
 
-All file cards and devices are explicitly SAMPLE DATA. The QR preview is NOT scannable.
-No file is uploaded, downloaded, shared or deleted. No cloud/network requests are made.
+**Important:** Code has been committed, but it is not correct to call all functionality finished or verified. No actual APK/EXE is attached and no successful on-device LAN or Cloudflare transfer test has been reported.
 
-## Still needed
+## Files and responsibilities
 
-1. Flutter native Android/Windows platform runners and real device builds.
-2. Real file picker, preview metadata, upload progress and transfer lifecycle.
-3. Offline LAN peer discovery, streaming, retries and delivery status.
-4. Secure app login and personal Cloudflare BYOC setup (Worker, D1, R2).
-5. Guest QR browser upload and guest-specific rolling 24-hour quotas.
-6. QR delivery into the ONE dashboard, LAN 24h cleanup, cloud midnight-IST cleanup.
-7. Security, performance, accessibility and full cross-platform testing.
+- `lib/main.dart`: welcome/login forms, unified dashboard, sent/received/QR cards, file picker, dark/light themes, Cloud Setup and QR pages.
+- `lib/lan_engine.dart`: UDP discovery, TCP streaming, local transfer records, 24h expiry and original-file protection.
+- `lib/personal_cloud.dart`: secure owner Worker pairing, QR lifecycle, cloud inbox API and streamed downloads.
+- `cloudflare/worker.js`: user-owned Worker guest upload endpoints, quota and cleanup.
+- `cloudflare/schema.sql`: D1 schema, indexed for quota and expiring inbox.
+- `cloudflare/public/guest.html`: browser QR upload UI; auto-upload on file selection, progress and disabled button until completion.
+- `cloudflare/wrangler.jsonc`: manually provisioned R2/D1 bindings, guest assets and scheduled cleanup.
+- `cloudflare/README.md`: deployment guidance without sharing secrets.
+- `test/widget_test.dart`: Flutter UI and LAN model tests (not executed in this authoring environment).
+- `.github/workflows/manual-test-builds.yml`: opt-in-only test builds, not automatically triggered.
 
-## How to run after installing Flutter
+## Build/test without a local Flutter SDK
 
-Install current Flutter SDK (Dart 3.11+), Android SDK, and/or Windows Visual Studio desktop C++ tooling.
-Execute these commands in the repository root:
+GitHub Actions → **Manual Android and Windows test builds** → **Run workflow** (main).
 
-    flutter create --project-name file_share --platforms=android,windows,ios,macos .
+Only workflow_dispatch is configured; saving code does not start builds. Running it uses GitHub Actions quota and may expose compilation problems needing further fixes. On success it provides:
+
+- `file-share-android-debug-apk`: debug APK for Android testing.
+- `file-share-windows-debug-bundle`: Windows EXE with necessary DLLs and data; keep the whole folder, not EXE alone.
+
+For direct local work, install current Flutter SDK (Dart 3.11+), Android SDK, Visual Studio Desktop C++ tools, then in the repository root:
+
+    flutter create --project-name file_share --platforms=android,windows .
     flutter pub get
     flutter analyze
     flutter test
     flutter run -d windows
 
-The checked-in repository currently has Flutter source and tests but NO generated native runners.
-These runner files are necessary platform files, not duplicate patch files.
+Existing source files should be edited IN PLACE. Generating missing native runner files is necessary and does not mean duplicating modified files.
 
-## Important product constraints
+## Cloudflare test without giving anybody your credentials
 
-- Flutter/Dart GPU-based UI, optional Kotlin/Windows native integration.
-- Light/dark mode supported on Android and Windows.
-- Optional app login for LAN, required for permanent QR and BYOC.
-- Own Cloudflare account per user via restricted API token, workers.dev link, no custom domain.
-- Cloud requests minimized: no idle polling, event-driven notifications and bounded cleanup retries.
-- LAN data expires 24h from each batch; QR cloud temporary data expires at midnight IST.
-- Do not commit API tokens, passwords, or production secrets.
-- This project is independent from legacy Bank Setu and Sync Studio repos.
+See `cloudflare/README.md`. Every owner uses their own Worker + D1 + R2 and secret OWNER_TOKEN. This is distinct from a limited Cloudflare API token used for initial deployment. The current app has an **advanced/manual Worker pairing screen** for isolated testing; it is not yet the promised fully automatic Account-ID/API-Token self-provisioning system. Never commit owner secrets, API tokens, passwords, or real guest files.
 
-## Verification
+## Business and cleanup rules
 
-Widget test cases are committed, but Flutter SDK/native toolchains are unavailable here.
-flutter analyze, flutter test, actual Android APK/Windows EXE build and FPS tests have NOT been run.
-UI illustrations or browser mockups are NOT screenshots of a running Flutter build.
+- Skip Login → full local LAN mode, no PIN. QR requires identity and personal cloud in the planned production product.
+- Sent cards on the right have no Download; received cards on the left have Download, Delete, external Share and future Toolbox.
+- LAN transfers use local disk streaming and are not app-size-limited, but disk space/network speed remain physical constraints.
+- Sender originals are never deleted by local cleanup. App-owned temporary received copies expire 24h after receiving; expired batches and temporary records are pruned.
+- QR guest browser files are available only to the owner's secret-authorized Worker clients, and expire at midnight IST. Guest quota accounting survives until its rolling 24h end.
+- Idle cloud polling is disabled. Cloud inbox needs explicit Refresh until push notification/real-time delivery is built.
+- A browser does not reveal a permanent hardware ID. Guest cookie and hashed IP are abuse signals, not guaranteed person identity.
+
+## Still required before a finished release
+
+First get the manual test build green, then test Android↔Windows real LAN transfers (several files, 0 B, 1GB+, disconnect/reconnect); fix plugin/manifest/firewall issues; implement reliable resume and Android background operation; secure cross-device login and full API-token auto-provisioning; test 200 MB/4-session Worker quota and midnight cleanup on a user-owned account; implement event-driven delivery; do security review, load testing and release signing.
+
+Repository may be publicly visible. Assume all committed code is public; protect tokens and secrets.
