@@ -1584,8 +1584,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   List<TimelineGroup> _timeline() {
     final hidden = _staged.map((item) => item.id).toSet();
+    final visibleToPeers = appLan.files.where((e) =>
+      !e.incoming && e.state != TransferState.queued)
+      .map((e) => e.batch).toSet();
     final lan = appLan.files.where((f) =>
       !hidden.contains(f.batch) &&
+      (f.state != TransferState.queued || !visibleToPeers.contains(f.batch)) &&
       (_filter == 'All' || (_filter == 'Sent' && !f.incoming) ||
       (_filter == 'Received' && f.incoming))).toList();
     final groupedLan = <String, List<LanFile>>{};
