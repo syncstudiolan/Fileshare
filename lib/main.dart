@@ -168,8 +168,7 @@ class AppearanceButton extends StatelessWidget {
               color: FileTheme.surface(context).withValues(alpha: .9),
             ),
             child: Icon(
-              mode == ThemeMode.dark ||
-                      (mode == ThemeMode.system && FileTheme.dark(context))
+              FileTheme.dark(context)
                   ? Icons.dark_mode_rounded
                   : Icons.light_mode_rounded,
               color: FileTheme.violet,
