@@ -330,7 +330,8 @@ async function cleanup(env) {
     await env.DB.batch(statements);
   }
   // Keep guest usage data for rolling 24h even after midnight file cleanup.
-  await env.DB.prepare('DELETE FROM guest_sessions WHERE created_at<?')
+  await env.DB.prepare('DELETE FROM guest_sessions WHERE created_at<? ' +
+    'AND NOT EXISTS (SELECT 1 FROM uploads WHERE uploads.session_id=guest_sessions.id)')
     .bind(now - DAY).run();
 }
 
