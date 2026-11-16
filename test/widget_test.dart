@@ -1,8 +1,26 @@
 import 'package:file_share/main.dart';
+import 'package:file_share/lan_engine.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('LAN file names cannot contain path separators', () {
+    expect(LanEngine.safeFileName('../unsafe\\name.png'),
+        '.._unsafe_name.png');
+  });
+
+  test('LAN transfer records round-trip without losing progress', () {
+    final entry = LanFile(
+      id: 'id', batch: 'batch', name: 'test.jpg', path: '/temp/test.jpg',
+      peer: 'Laptop', incoming: true, size: 1024, done: 512,
+      created: DateTime.utc(2026, 11, 16), state: TransferState.receiving);
+    final decoded = LanFile.fromJson(entry.toJson());
+    expect(decoded, isNotNull);
+    expect(decoded!.progress, 0.5);
+    expect(decoded.incoming, isTrue);
+    expect(decoded.batch, 'batch');
+  });
+
   testWidgets('First use offers login and no-login offline LAN', (tester) async {
     await tester.pumpWidget(const FileShareApp(initialMode: ThemeMode.light));
     expect(find.text('Login / Create Account'), findsOneWidget);
@@ -23,6 +41,7 @@ void main() {
     await tester.pumpWidget(const FileShareApp(
       initialMode: ThemeMode.dark,
       offlineDefault: true,
+      enableBackends: false,
     ));
     expect(find.text('File Transfer'), findsOneWidget);
     expect(find.text('4 Photos (Group)'), findsOneWidget);
@@ -60,16 +79,18 @@ void main() {
     expect(find.byTooltip('Delete · not enabled'), findsOneWidget);
   });
 
-  testWidgets('QR page clearly marks dummy QR as not scannable',
+  testWidgets('QR screen requires connection and never invents a real QR',
       (tester) async {
     await tester.pumpWidget(const FileShareApp(
-      initialMode: ThemeMode.light, offlineDefault: true,
+      initialMode: ThemeMode.light,
+      offlineDefault: true,
+      enableBackends: false,
     ));
     await tester.tap(find.byTooltip('QR design preview'));
     await tester.pumpAndSettle();
-    expect(find.text('Your permanent guest QR'), findsOneWidget);
-    expect(find.text('DEMO · NOT SCANNABLE'), findsOneWidget);
-    expect(find.text('QR LOCKED UNTIL LOGIN'), findsOneWidget);
+    expect(find.text('My Permanent QR'), findsOneWidget);
+    expect(find.text('No active QR yet'), findsOneWidget);
+    expect(find.text('Connect Personal Cloud'), findsOneWidget);
   });
 
   testWidgets('Narrow mobile dashboard renders first group card',
@@ -78,9 +99,16 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const FileShareApp(
       initialMode: ThemeMode.light, offlineDefault: true,
+      enableBackends: false,
     ));
     await tester.pumpAndSettle();
     expect(find.text('4 Photos (Group)'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+
+// Engine model tests avoid creating any sockets or reading device storage.
+void verifyLanModels() {
+  assert(LanEngine.safeFileName('../unsafe\\name.png') == '.._unsafe_name.png');
 }
