@@ -1123,3 +1123,310 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 }
+
+
+class FeatureDesignPage extends StatelessWidget {
+  const FeatureDesignPage({
+    super.key, required this.title, required this.mode, required this.onMode,
+  });
+  final String title;
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Container(
+      decoration: BoxDecoration(gradient: FileTheme.background(context)),
+      child: SafeArea(child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 11, 12, 6),
+          child: DesignPanel(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            child: Row(children: [
+              IconButton(tooltip: 'Back to chat',
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back_rounded)),
+              Expanded(child: Text(title, style: TextStyle(
+                fontSize: 18, fontWeight: FontWeight.w800,
+                color: FileTheme.foreground(context)))),
+              AppearanceButton(mode: mode, onChange: onMode),
+            ]),
+          ),
+        ),
+        Expanded(child: Center(child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 750),
+          child: ListView(padding: const EdgeInsets.all(15), children: [
+            const DesignTag('UI DESIGN ONLY — NO ONLINE SERVICE'),
+            const SizedBox(height: 15),
+            if (title == 'Home') _home(context),
+            if (title == 'Files') _files(context),
+            if (title == 'History') _history(context),
+            if (title == 'Devices') _devices(context),
+            if (title == 'My QR') _qr(context),
+            if (title == 'Cloud Setup') _cloud(context),
+            if (title == 'Settings') _settings(context),
+            if (title == 'Profile') _profile(context),
+          ]),
+        ))),
+      ])),
+    ),
+  );
+
+  Widget _section(BuildContext c, String heading, String description, Widget content) =>
+    DesignPanel(child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(heading, style: TextStyle(fontSize: 18,
+          fontWeight: FontWeight.w800, color: FileTheme.foreground(c))),
+        const SizedBox(height: 6),
+        Text(description, style: TextStyle(fontSize: 12,
+          height: 1.4, color: FileTheme.muted(c))),
+        const SizedBox(height: 17),
+        content,
+      ],
+    ));
+
+  Widget _line(BuildContext c, IconData icon, String name, String detail,
+      {Widget? trailing}) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 11),
+    child: Row(children: [
+      Icon(icon, color: FileTheme.violet, size: 24),
+      const SizedBox(width: 11),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(name, style: TextStyle(
+          fontWeight: FontWeight.w700, color: FileTheme.foreground(c))),
+        const SizedBox(height: 4),
+        Text(detail, maxLines: 3, style: TextStyle(fontSize: 11,
+          color: FileTheme.muted(c))),
+      ])),
+      if (trailing != null) trailing,
+    ]),
+  );
+
+  Widget _home(BuildContext c) => _section(c,
+    'Single unified file dashboard',
+    'LAN and online guest QR use the same chronological chat-style feed.',
+    Column(children: [
+      _line(c, Icons.swipe_left_rounded, 'Received · Left',
+        'Download, delete, share externally and share to toolbox'),
+      _line(c, Icons.swipe_right_rounded, 'Sent · Right',
+        'Delete and share; no download action for the sender'),
+      _line(c, Icons.collections_outlined, 'Grouped files',
+        'Individual actions and one Download All action for received groups'),
+      const SizedBox(height: 14),
+      OutlinedButton.icon(
+        onPressed: () => Navigator.pop(c),
+        icon: const Icon(Icons.arrow_back_rounded),
+        label: const Text('Return to unified dashboard')),
+    ]));
+
+  Widget _files(BuildContext c) => Column(children: [
+    _section(c, 'Selected file preview tray',
+      'Visual sample of a selected file at 50%. No upload or file picker is active.',
+      Column(children: [
+        Row(children: [
+          const SizedBox(width: 96, height: 82,
+            child: DemoLandscape(variant: 1)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('sunset_photo.jpg', style: TextStyle(
+                color: FileTheme.foreground(c), fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text('1.93 MB · demo progress', style: TextStyle(
+                color: FileTheme.muted(c), fontSize: 11)),
+              const SizedBox(height: 10),
+              const LinearProgressIndicator(value: .5, minHeight: 7,
+                borderRadius: BorderRadius.all(Radius.circular(8))),
+              const SizedBox(height: 3),
+              Text('50% · not uploading', style: TextStyle(
+                color: FileTheme.muted(c), fontSize: 10)),
+            ]),
+          )),
+        ]),
+        const SizedBox(height: 20),
+        const Row(children: [
+          DesignAction(Icons.add_rounded, 'Choose files', size: 44),
+          SizedBox(width: 8),
+          DesignAction(Icons.handyman_outlined, 'Tools', size: 44),
+          Spacer(),
+          DesignAction(Icons.send_rounded, 'Send', size: 48),
+        ]),
+      ]),
+    ),
+    const SizedBox(height: 14),
+    _section(c, 'Supported card designs',
+      'All file types appear as chat cards. Thumbnails are preview illustrations.',
+      Column(children: [
+        _line(c, Icons.photo_outlined, 'Photos', 'Thumbnail + full group preview'),
+        _line(c, Icons.videocam_outlined, 'Videos', 'Play indicator and duration'),
+        _line(c, Icons.headphones_outlined, 'Audio', 'Audio icon, name and size'),
+        _line(c, Icons.description_outlined, 'Documents', 'PDF, ZIP and arbitrary files'),
+      ]),
+    ),
+  ]);
+
+  Widget _history(BuildContext c) => _section(c, 'Activity history',
+    'History is a view of the SAME shared file timeline, never a second QR inbox.',
+    Column(children: [
+      _line(c, Icons.arrow_upward_rounded, 'Sent',
+        'Right-aligned in the unified chat'),
+      _line(c, Icons.arrow_downward_rounded, 'Received',
+        'Left-aligned, LAN and guest QR together'),
+      _line(c, Icons.schedule_rounded, 'LAN auto-delete',
+        '24 hours after each sending batch'),
+      _line(c, Icons.nightlight_round, 'Guest cloud auto-delete',
+        'Daily at 12:00 AM IST'),
+    ]));
+
+  Widget _devices(BuildContext c) => Column(children: [
+    _section(c, 'Nearby devices', 'Real device discovery is not active in this UI phase.',
+      Column(children: [
+        _line(c, Icons.wifi_off_rounded, 'Connected LAN devices',
+          '0 devices detected', trailing: const DesignTag('Not scanning')),
+        const Divider(),
+        _line(c, Icons.smartphone_rounded, 'Android A (sample)',
+          'Same Wi-Fi · Direct peer-to-peer'),
+        _line(c, Icons.smartphone_rounded, 'Android B (sample)',
+          'Same Wi-Fi · Direct peer-to-peer'),
+        _line(c, Icons.desktop_windows_outlined, 'Windows PC (sample)',
+          'Same Wi-Fi · Direct peer-to-peer'),
+      ]),
+    ),
+  ]);
+
+  Widget _qr(BuildContext c) => Column(children: [
+    _section(c, 'Your permanent guest QR',
+      'One QR per account, visible on all linked devices after login and cloud setup.',
+      Column(children: [
+        Center(child: Container(
+          width: 204, height: 204,
+          decoration: BoxDecoration(
+            color: Colors.white, borderRadius: BorderRadius.circular(22)),
+          child: const Column(mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.qr_code_2_rounded, size: 136, color: Color(0xFF503C79)),
+              Text('DEMO · NOT SCANNABLE', style: TextStyle(
+                fontWeight: FontWeight.w800, fontSize: 10,
+                color: FileTheme.pink)),
+            ]),
+        )),
+        const SizedBox(height: 13),
+        const DesignTag('QR LOCKED UNTIL LOGIN'),
+        const SizedBox(height: 18),
+        const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          DesignAction(Icons.copy_rounded, 'Copy QR URL', size: 42),
+          SizedBox(width: 10),
+          DesignAction(Icons.share_rounded, 'Share QR', size: 42),
+          SizedBox(width: 10),
+          DesignAction(Icons.refresh_rounded, 'Regenerate QR', size: 42),
+          SizedBox(width: 10),
+          DesignAction(Icons.delete_rounded, 'Delete QR', size: 42),
+        ]),
+      ]),
+    ),
+    const SizedBox(height: 14),
+    _section(c, 'Guest browser upload preview',
+      'File selection would start upload automatically. The main Upload button remains disabled until success.',
+      Column(children: [
+        _line(c, Icons.file_present_outlined, 'Selected: 4 photos',
+          'Sample 130 MB of 200 MB'),
+        const LinearProgressIndicator(value: .65, minHeight: 7,
+          borderRadius: BorderRadius.all(Radius.circular(8))),
+        const SizedBox(height: 8),
+        Text('65% · preview only', style: TextStyle(
+          color: FileTheme.muted(c), fontSize: 11)),
+        const SizedBox(height: 12),
+        const DesignTag('Upload button disabled until complete'),
+        const SizedBox(height: 16),
+        _line(c, Icons.shield_outlined, 'Per-guest quota',
+          '200 MB and up to 4 upload sessions per rolling 24 hours'),
+      ]),
+    ),
+  ]);
+
+  Widget _cloud(BuildContext c) => Column(children: [
+    _section(c, 'Connect your personal Cloudflare',
+      'A user connects their own account once through Account ID and restricted API token.',
+      Column(children: [
+        _line(c, Icons.cloud_off_outlined, 'Cloud connection',
+          'Not connected · no Cloudflare requests are being made',
+          trailing: const DesignTag('Offline')),
+        const SizedBox(height: 10),
+        const TextField(enabled: false, decoration: InputDecoration(
+          labelText: 'Cloudflare Account ID', hintText: 'Your Account ID',
+          prefixIcon: Icon(Icons.person_pin_outlined))),
+        const SizedBox(height: 12),
+        const TextField(enabled: false, obscureText: true,
+          decoration: InputDecoration(labelText: 'Restricted API Token',
+            hintText: 'Never use Global API Key',
+            prefixIcon: Icon(Icons.key_outlined))),
+        const SizedBox(height: 14),
+        const DesignTag('Verify & Auto Connect · disabled'),
+      ]),
+    ),
+    const SizedBox(height: 14),
+    _section(c, 'Automatic setup · proposed steps',
+      'The provisioning engine will run later; no live resources exist.',
+      Column(children: [
+        _line(c, Icons.verified_user_outlined, '1. Verify token',
+          'Check account, scope and permissions'),
+        _line(c, Icons.database_outlined, '2. Provision D1',
+          'QR, guest sessions, delivery and quota records'),
+        _line(c, Icons.storage_outlined, '3. Provision R2',
+          'Private cloud files for this user'),
+        _line(c, Icons.cloud_upload_outlined, '4. Deploy Worker',
+          'Guest upload page on workers.dev'),
+        _line(c, Icons.schedule_outlined, '5. Schedule cleanup',
+          'Midnight IST, delayed retry if deletion fails'),
+      ]),
+    ),
+  ]);
+
+  Widget _settings(BuildContext c) => Column(children: [
+    _section(c, 'Appearance', 'Light, dark and follow-system for Android and Windows.',
+      Column(children: [
+        _line(c, Icons.color_lens_outlined, 'Appearance mode',
+          'Use the active header toggle', trailing:
+          AppearanceButton(mode: mode, onChange: onMode)),
+        _line(c, Icons.animation_rounded, 'Animations',
+          'GPU-rendered transitions, device-dependent refresh rate'),
+      ]),
+    ),
+    const SizedBox(height: 14),
+    _section(c, 'Transfer and cleanup', 'These settings are planned, not active.',
+      Column(children: [
+        _line(c, Icons.wifi_rounded, 'Offline LAN', 'No login, PIN or internet'),
+        _line(c, Icons.cloud_outlined, 'Online guest QR',
+          'Requires app login and personal Cloudflare'),
+        _line(c, Icons.timer_outlined, 'LAN cleanup',
+          '24 hours after each transfer, grouped by send batch'),
+        _line(c, Icons.nightlight_round, 'QR cleanup',
+          'Midnight IST, bounded retry only on error'),
+      ]),
+    ),
+  ]);
+
+  Widget _profile(BuildContext c) => _section(c, 'My profile',
+    'Use local Wi-Fi sharing as a guest, or login to connect your personal cloud.',
+    Column(children: [
+      Center(child: CircleAvatar(
+        radius: 37, backgroundColor: FileTheme.violet.withValues(alpha: .15),
+        child: const Icon(Icons.person_outline, size: 35,
+          color: FileTheme.violet))),
+      const SizedBox(height: 12),
+      const DesignTag('GUEST / OFFLINE'),
+      const SizedBox(height: 10),
+      _line(c, Icons.email_outlined, 'Account', 'Not signed in'),
+      _line(c, Icons.cloud_off_outlined, 'Personal Cloudflare', 'Not connected'),
+      const SizedBox(height: 14),
+      SizedBox(width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: () => Navigator.push(c, fadePage(
+            LoginPage(mode: mode, onMode: onMode))),
+          icon: const Icon(Icons.login_rounded),
+          label: const Text('View login UI'),
+        )),
+    ]),
+  );
+}
