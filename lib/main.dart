@@ -1935,3 +1935,281 @@ class FeatureDesignPage extends StatelessWidget {
     ]),
   );
 }
+
+
+/// Manual owner-Worker pairing for integration testing. Full API-token
+/// provisioning + app email/password login require a central auth service.
+class CloudConnectPage extends StatefulWidget {
+  const CloudConnectPage({super.key,required this.mode,required this.onMode});
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+  @override
+  State<CloudConnectPage> createState() => _CloudConnectPageState();
+}
+
+class _CloudConnectPageState extends State<CloudConnectPage> {
+  final _url=TextEditingController();
+  final _secret=TextEditingController();
+  bool _busy=false, _show=false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _url.text=PersonalCloud.instance.endpoint ?? '';
+  }
+
+  @override
+  void dispose() {
+    _url.dispose();
+    _secret.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    if (_busy) return;
+    setState(() {_busy=true;_message=null;});
+    try {
+      await PersonalCloud.instance.connectWorker(_url.text,_secret.text);
+      await PersonalCloud.instance.loadQr();
+      await PersonalCloud.instance.refreshFiles();
+      if(mounted)setState((){_message='Worker connected securely. Inbox loaded.';});
+    }catch(e){
+      if(mounted)setState((){_message='Connection failed: '+e.toString();});
+    }finally{if(mounted)setState(()=>_busy=false);}
+  }
+
+  Future<void> _disconnect() async {
+    final confirm=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(
+      title:const Text('Disconnect this Worker?'),
+      content:const Text('Only the saved app connection is removed. Files on Cloudflare remain unchanged.'),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Disconnect')),
+      ],
+    ));
+    if(confirm!=true)return;
+    await PersonalCloud.instance.disconnect();
+    if(mounted)setState(()=>_message='Cloud connection removed.');
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:SafeArea(child:Center(child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:700),
+        child:ListView(padding:const EdgeInsets.all(18),children:[
+          Row(children:[
+            IconButton(tooltip:'Back',onPressed:()=>Navigator.pop(context),
+              icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('Personal Cloud Setup',style:TextStyle(
+              fontWeight:FontWeight.w800,fontSize:18,
+              color:FileTheme.foreground(context)))),
+            AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+          ]),
+          const SizedBox(height:18),
+          DesignPanel(child:Column(
+            crossAxisAlignment:CrossAxisAlignment.stretch,
+            children:[
+              const Icon(Icons.cloud_sync_outlined,color:FileTheme.violet,size:48),
+              const SizedBox(height:10),
+              Text('Connect your own Cloudflare Worker',
+                textAlign:TextAlign.center,style:TextStyle(
+                  fontWeight:FontWeight.w800,fontSize:19,
+                  color:FileTheme.foreground(context))),
+              const SizedBox(height:10),
+              Text('Advanced manual test connection. First deploy cloudflare/worker.js to YOUR account and configure D1, R2 and OWNER_TOKEN. This is not the final automatic API-token setup.',
+                textAlign:TextAlign.center,style:TextStyle(
+                  color:FileTheme.muted(context),fontSize:12,height:1.4)),
+              const SizedBox(height:20),
+              TextField(controller:_url,keyboardType:TextInputType.url,
+                enabled:!_busy,decoration:const InputDecoration(
+                  labelText:'Your Worker HTTPS URL',
+                  hintText:'https://name.account.workers.dev',
+                  prefixIcon:Icon(Icons.link_rounded))),
+              const SizedBox(height:12),
+              TextField(controller:_secret,obscureText:!_show,
+                enabled:!_busy,autocorrect:false,
+                decoration:InputDecoration(
+                  labelText:'Worker owner secret (not API Token)',
+                  prefixIcon:const Icon(Icons.lock_outline_rounded),
+                  suffixIcon:IconButton(
+                    tooltip:_show?'Hide owner secret':'Show owner secret',
+                    onPressed:()=>setState(()=>_show=!_show),
+                    icon:Icon(_show?Icons.visibility_off_outlined:Icons.visibility_outlined)))),
+              const SizedBox(height:16),
+              FilledButton.icon(onPressed:_busy?null:_connect,
+                icon:_busy?const SizedBox(width:18,height:18,
+                  child:CircularProgressIndicator(strokeWidth:2))
+                    :const Icon(Icons.verified_user_outlined),
+                label:const Text('Verify & Connect')),
+              if(PersonalCloud.instance.connected)...[
+                const SizedBox(height:12),
+                OutlinedButton.icon(onPressed:_busy?null:_disconnect,
+                  icon:const Icon(Icons.link_off_rounded),
+                  label:const Text('Disconnect stored cloud account')),
+              ],
+              if(_message!=null)...[
+                const SizedBox(height:14),
+                Text(_message!,style:TextStyle(
+                  color:FileTheme.foreground(context),fontSize:12)),
+              ],
+            ],
+          )),
+          const SizedBox(height:14),
+          DesignPanel(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+            children:[
+              Text('One-time deployment checklist',style:TextStyle(
+                fontWeight:FontWeight.w800,color:FileTheme.foreground(context))),
+              const SizedBox(height:12),
+              const Text('1. Create D1 and R2 in your own Cloudflare account.\n'
+                '2. Apply cloudflare/schema.sql to D1.\n'
+                '3. Deploy worker.js with the guest page assets.\n'
+                '4. Set a strong OWNER_TOKEN as a Worker secret.\n'
+                '5. Connect above, then open My QR and Generate.'),
+            ])),
+        ]),
+      ))),
+    ),
+  );
+}
+
+class MyQrPage extends StatefulWidget {
+  const MyQrPage({super.key,required this.mode,required this.onMode});
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+  @override
+  State<MyQrPage> createState()=>_MyQrPageState();
+}
+
+class _MyQrPageState extends State<MyQrPage> {
+  bool _busy=false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    if(PersonalCloud.instance.connected){
+      WidgetsBinding.instance.addPostFrameCallback((_)=>_run(()
+        =>PersonalCloud.instance.loadQr()));
+    }
+  }
+
+  Future<void> _run(Future<Object?> Function() work) async {
+    if(_busy)return;
+    setState((){_busy=true;_error=null;});
+    try{await work();}
+    catch(e){if(mounted)setState(()=>_error=e.toString());}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
+  Future<void> _revoke() async {
+    final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(
+      title:const Text('Revoke permanent QR?'),
+      content:const Text('Guests will no longer be able to use the old QR URL.'),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Revoke')),
+      ],
+    ));
+    if(yes==true) await _run(() => PersonalCloud.instance.revokeQr());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cloud=PersonalCloud.instance;
+    final link=cloud.qrLink;
+    return Scaffold(
+      body:Container(
+        decoration:BoxDecoration(gradient:FileTheme.background(context)),
+        child:SafeArea(child:Center(child:ConstrainedBox(
+          constraints:const BoxConstraints(maxWidth:690),
+          child:ListView(padding:const EdgeInsets.all(19),children:[
+            Row(children:[
+              IconButton(tooltip:'Back',onPressed:()=>Navigator.pop(context),
+                icon:const Icon(Icons.arrow_back_rounded)),
+              Expanded(child:Text('My Permanent QR',
+                style:TextStyle(fontWeight:FontWeight.w800,
+                  fontSize:19,color:FileTheme.foreground(context)))),
+              AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+            ]),
+            const SizedBox(height:20),
+            DesignPanel(child:Column(children:[
+              const Icon(Icons.qr_code_2_rounded,color:FileTheme.violet,size:40),
+              const SizedBox(height:13),
+              Text(link==null?'No active QR yet':'Your guest upload QR',
+                style:TextStyle(fontWeight:FontWeight.w800,fontSize:19,
+                  color:FileTheme.foreground(context))),
+              const SizedBox(height:10),
+              Text(cloud.connected
+                  ? 'Your QR remains until you revoke or regenerate it.'
+                  : 'Connect your own Cloudflare Worker first.',
+                style:TextStyle(color:FileTheme.muted(context),fontSize:12),
+                textAlign:TextAlign.center),
+              const SizedBox(height:22),
+              if(link!=null)
+                Container(padding:const EdgeInsets.all(14),
+                  decoration:BoxDecoration(color:Colors.white,
+                    borderRadius:BorderRadius.circular(17)),
+                  child:QrImageView(data:link,size:235,
+                    backgroundColor:Colors.white)),
+              if(link==null)
+                const Icon(Icons.qr_code_scanner_rounded,
+                  size:130,color:FileTheme.violet),
+              const SizedBox(height:16),
+              if(link!=null)
+                SelectableText(link,textAlign:TextAlign.center,
+                  style:TextStyle(color:FileTheme.foreground(context),fontSize:12)),
+              const SizedBox(height:20),
+              if(!cloud.connected)
+                FilledButton.icon(
+                  onPressed:()=>Navigator.pushReplacement(context,fadePage(
+                    CloudConnectPage(mode:widget.mode,onMode:widget.onMode))),
+                  icon:const Icon(Icons.cloud_outlined),
+                  label:const Text('Connect Personal Cloud')),
+              if(cloud.connected && link==null)
+                FilledButton.icon(
+                  onPressed:_busy?null:()=>_run(()=>cloud.createQr()),
+                  icon:const Icon(Icons.add_circle_outline_rounded),
+                  label:const Text('Generate Permanent QR')),
+              if(cloud.connected && link!=null)...[
+                Wrap(spacing:8,runSpacing:8,alignment:WrapAlignment.center,
+                  children:[
+                    OutlinedButton.icon(
+                      onPressed:()=>Clipboard.setData(ClipboardData(text:link)),
+                      icon:const Icon(Icons.copy_rounded),
+                      label:const Text('Copy Link')),
+                    OutlinedButton.icon(
+                      onPressed:()=>SharePlus.instance.share(ShareParams(text:link)),
+                      icon:const Icon(Icons.share_outlined),
+                      label:const Text('Share QR')),
+                    OutlinedButton.icon(
+                      onPressed:_busy?null:()=>_run(()=>cloud.regenerateQr()),
+                      icon:const Icon(Icons.refresh_rounded),
+                      label:const Text('Regenerate')),
+                    OutlinedButton.icon(
+                      onPressed:_busy?null:_revoke,
+                      icon:const Icon(Icons.delete_outline_rounded),
+                      label:const Text('Revoke')),
+                  ]),
+              ],
+              if(_busy)const Padding(padding:EdgeInsets.all(14),
+                child:CircularProgressIndicator()),
+              if(_error!=null)Padding(padding:const EdgeInsets.all(12),
+                child:Text(_error!,style:const TextStyle(
+                  color:Colors.deepOrange,fontSize:12))),
+            ])),
+            const SizedBox(height:14),
+            DesignPanel(child:Text(
+              'Guest limit: 200 MB total and 4 upload sessions per rolling 24 hours. '
+              'Every guest has a separate browser-based quota. All temporary QR '
+              'files expire at 12:00 AM IST.',
+              style:TextStyle(fontSize:12,height:1.5,
+                color:FileTheme.muted(context)))),
+          ]),
+        ))),
+      ),
+    );
+  }
+}
