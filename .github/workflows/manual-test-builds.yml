@@ -23,6 +23,8 @@ jobs:
         run: flutter create --project-name file_share --platforms=android .
       - name: Install Flutter dependencies
         run: flutter pub get
+      - name: Check Cloudflare Worker JavaScript syntax
+        run: node --input-type=module --check < cloudflare/worker.js
       - name: Flutter static analysis
         run: flutter analyze
       - name: Flutter widget tests
