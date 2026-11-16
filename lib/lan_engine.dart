@@ -374,8 +374,11 @@ class LanEngine extends ChangeNotifier {
 
   Future<void> cleanExpired() async {
     final now = DateTime.now();
-    for (final entry in files.where(
-      (item) => now.difference(item.created) >= expiry).toList()) {
+    for (final entry in files.where((item) =>
+      now.difference(item.created) >= expiry &&
+      item.state != TransferState.sending &&
+      item.state != TransferState.receiving &&
+      item.state != TransferState.preparing).toList()) {
       try { await remove(entry.id); } catch (e) {
         error = 'Cleanup retry needed: ' + e.toString();
       }
@@ -383,7 +386,12 @@ class LanEngine extends ChangeNotifier {
     if (_inbox == null) return;
     try {
       await for (final entity in _inbox!.list()) {
-        if (entity is! File || !entity.path.endsWith('.part')) continue;
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        if (!name.endsWith('.part') && !name.startsWith('stage_')) continue;
+        final inUse = files.any((f) => f.path == entity.path &&
+          (f.state == TransferState.sending || f.state == TransferState.preparing));
+        if (inUse) continue;
         if (now.difference((await entity.stat()).modified) > expiry) {
           await entity.delete();
         }
