@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fileshare-personal",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-16",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fileshare-personal-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "fileshare-personal-files"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "30 18 * * *",
+      "30 20 * * *",
+      "30 22 * * *"
+    ]
+  }
+}
