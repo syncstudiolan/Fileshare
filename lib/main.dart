@@ -2391,3 +2391,189 @@ class _MyQrPageState extends State<MyQrPage> {
     );
   }
 }
+
+
+/// Real nearby devices: the list is driven by the live UDP discovery engine,
+/// not the earlier placeholder names.
+class NearbyDevicesPage extends StatelessWidget {
+  const NearbyDevicesPage({super.key,required this.mode,required this.onMode});
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:SafeArea(child:Center(child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:750),
+        child:Column(children:[
+          Row(children:[
+            IconButton(tooltip:'Back',onPressed:()=>Navigator.pop(context),
+              icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('Nearby Devices',style:TextStyle(
+              fontSize:19,fontWeight:FontWeight.w800,
+              color:FileTheme.foreground(context)))),
+            IconButton(tooltip:'Refresh LAN devices',
+              onPressed:appLan.refresh,
+              icon:const Icon(Icons.refresh_rounded,color:FileTheme.violet)),
+            AppearanceButton(mode:mode,onChange:onMode),
+          ]),
+          Expanded(child:AnimatedBuilder(animation:appLan,builder:(context,_) {
+            final peers=appLan.peers.values.toList()
+              ..sort((a,b)=>a.name.compareTo(b.name));
+            return ListView(padding:const EdgeInsets.all(15),children:[
+              DesignPanel(child:Row(children:[
+                const Icon(Icons.wifi_rounded,color:FileTheme.violet,size:32),
+                const SizedBox(width:12),
+                Expanded(child:Text(
+                  peers.isEmpty?'No LAN devices connected'
+                    :peers.length.toString()+' LAN devices nearby',
+                  style:TextStyle(fontWeight:FontWeight.w800,
+                    color:FileTheme.foreground(context)))),
+              ])),
+              const SizedBox(height:10),
+              if(peers.isEmpty)
+                Padding(padding:const EdgeInsets.all(22),
+                  child:Text('Keep File Share open on another phone or Windows PC connected to the same Wi-Fi. Discovery does not need internet.',
+                    textAlign:TextAlign.center,
+                    style:TextStyle(color:FileTheme.muted(context)))),
+              for(final peer in peers)
+                Padding(padding:const EdgeInsets.only(bottom:10),
+                  child:DesignPanel(child:Row(children:[
+                    const Icon(Icons.devices_rounded,color:FileTheme.pink,size:30),
+                    const SizedBox(width:12),
+                    Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+                      children:[
+                        Text(peer.name,style:TextStyle(
+                          fontWeight:FontWeight.w800,
+                          color:FileTheme.foreground(context))),
+                        const SizedBox(height:4),
+                        Text(peer.address+' · Local Wi-Fi',
+                          style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+                      ])),
+                    const DesignTag('Nearby'),
+                  ]))),
+            ]);
+          })),
+        ]),
+      ))),
+    ),
+  );
+}
+
+class FileCategoriesPage extends StatelessWidget {
+  const FileCategoriesPage({super.key,required this.mode,required this.onMode});
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+  static bool _image(String name){
+    final ext=name.toLowerCase();
+    return ['.jpg','.jpeg','.png','.gif','.webp','.bmp','.heic']
+      .any(ext.endsWith);
+  }
+  Future<void> _save(LanFile item) async {
+    if(!item.incoming||item.state!=TransferState.delivered)return;
+    final dir=await getDownloadsDirectory();
+    if(dir==null)throw StateError('Downloads not available');
+    await dir.create(recursive:true);
+    final target=File(dir.path+Platform.pathSeparator+
+      LanEngine.newId()+'_'+LanEngine.safeFileName(item.name));
+    await File(item.path).openRead().pipe(target.openWrite());
+  }
+  Future<void> _share(LanFile item) async {
+    await SharePlus.instance.share(ShareParams(files:[XFile(item.path)]));
+  }
+  Future<void> _delete(LanFile item)=>appLan.remove(item.id);
+
+  Widget _rows(BuildContext context,List<LanFile> entries){
+    if(entries.isEmpty){
+      return Center(child:Text('No files in this category',
+        style:TextStyle(color:FileTheme.muted(context))));
+    }
+    return ListView.builder(
+      padding:const EdgeInsets.all(12),itemCount:entries.length,
+      itemBuilder:(context,i){
+        final item=entries[i];
+        return Padding(padding:const EdgeInsets.only(bottom:9),
+          child:DesignPanel(padding:const EdgeInsets.all(8),
+            child:ListTile(
+              leading:SizedBox(width:58,height:60,child:_image(item.name)
+                ?ClipRRect(borderRadius:BorderRadius.circular(9),
+                    child:Image.file(File(item.path),fit:BoxFit.cover,
+                      cacheWidth:150,errorBuilder:(_,__,___)=>
+                        const Icon(Icons.image_not_supported_outlined)))
+                :const Icon(Icons.description_outlined,color:FileTheme.pink)),
+              title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
+              subtitle:Text(_formatBytes(item.size)+' · '+item.state.name),
+              trailing:const Icon(Icons.chevron_right_rounded),
+              onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
+                builder:(_)=>FullScreenFilePreview(
+                  file:item,onSave:_save,onDelete:_delete,onShare:_share))),
+            )),
+        );
+      },
+    );
+  }
+
+  Widget _folders(BuildContext context,List<LanFile> entries){
+    final grouped=<String,List<LanFile>>{};
+    for(final item in entries){
+      grouped.putIfAbsent(item.batch,()=>[]).add(item);
+    }
+    if(grouped.isEmpty)return Center(child:Text('No transfer folders yet',
+      style:TextStyle(color:FileTheme.muted(context))));
+    return ListView(padding:const EdgeInsets.all(12),children:[
+      for(final group in grouped.values)
+        Padding(padding:const EdgeInsets.only(bottom:9),
+          child:DesignPanel(child:ExpansionTile(
+            leading:const Icon(Icons.folder_outlined,color:FileTheme.violet),
+            title:Text('Transfer group · '+group.length.toString()+' files'),
+            subtitle:Text(group.first.created.toLocal().toString().split('.').first),
+            children:[
+              for(final item in group)
+                ListTile(title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
+                  subtitle:Text(_formatBytes(item.size)),
+                  trailing:const Icon(Icons.chevron_right_rounded),
+                  onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
+                    builder:(_)=>FullScreenFilePreview(file:item,
+                      onSave:_save,onDelete:_delete,onShare:_share)))),
+            ],
+          ))),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) => DefaultTabController(
+    length:3,child:Scaffold(
+      body:Container(
+        decoration:BoxDecoration(gradient:FileTheme.background(context)),
+        child:SafeArea(child:Column(children:[
+          Row(children:[
+            IconButton(onPressed:()=>Navigator.pop(context),
+              tooltip:'Back',icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('Files',style:TextStyle(
+              fontSize:19,fontWeight:FontWeight.w800,
+              color:FileTheme.foreground(context)))),
+            AppearanceButton(mode:mode,onChange:onMode),
+          ]),
+          const TabBar(tabs:[
+            Tab(icon:Icon(Icons.image_outlined),text:'Images'),
+            Tab(icon:Icon(Icons.description_outlined),text:'Documents'),
+            Tab(icon:Icon(Icons.folder_outlined),text:'Folders'),
+          ]),
+          Expanded(child:AnimatedBuilder(
+            animation:appLan,builder:(context,_){
+              final all=appLan.files.where((item)=>
+                (item.state==TransferState.delivered||
+                item.state==TransferState.queued) &&
+                File(item.path).existsSync()).toList();
+              return TabBarView(children:[
+                _rows(context,all.where((e)=>_image(e.name)).toList()),
+                _rows(context,all.where((e)=>!_image(e.name)).toList()),
+                _folders(context,all),
+              ]);
+            },
+          )),
+        ])),
+      ),
+    ),
+  );
+}
