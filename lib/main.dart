@@ -1445,7 +1445,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       (_filter == 'Received' && f.incoming))).toList();
     final groupedLan = <String, List<LanFile>>{};
     for (final item in lan) {
-      final key = item.batch + ':' + item.peer + ':' + item.incoming.toString();
+      final key = item.batch + ':' +
+        (item.peerId.isNotEmpty ? item.peerId : item.peer) + ':' +
+        item.incoming.toString();
       groupedLan.putIfAbsent(key, () => []).add(item);
     }
     final timeline = groupedLan.values.map((group) =>
