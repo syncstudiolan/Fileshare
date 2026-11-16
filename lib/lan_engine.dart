@@ -260,7 +260,7 @@ class LanEngine extends ChangeNotifier {
         }
       }
       await socket.flush();
-      socket.shutdown(SocketDirection.send);
+      await socket.close(); // half-close write side; continue reading ACK
       final ok = await accepted.future.timeout(const Duration(seconds: 45));
       if (!ok) throw const SocketException('Receiver did not acknowledge file');
       record.state = TransferState.delivered;
