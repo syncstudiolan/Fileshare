@@ -24,9 +24,9 @@ class LanFile {
     required this.id, required this.batch, required this.name,
     required this.path, required this.peer, required this.incoming,
     required this.size, required this.created, required this.state,
-    this.done = 0, this.error,
+    this.done = 0, this.error, this.peerId = '',
   });
-  final String id, batch, name, path, peer;
+  final String id, batch, name, path, peer, peerId;
   final bool incoming;
   final int size;
   final DateTime created;
@@ -40,7 +40,7 @@ class LanFile {
 
   Map<String, dynamic> toJson() => {
     'id': id, 'batch': batch, 'name': name, 'path': path,
-    'peer': peer, 'incoming': incoming, 'size': size,
+    'peer': peer, 'peerId': peerId, 'incoming': incoming, 'size': size,
     'created': created.toUtc().toIso8601String(),
     'state': state.name, 'done': done,
   };
@@ -52,7 +52,8 @@ class LanFile {
       return LanFile(
         id: obj['id'] as String, batch: obj['batch'] as String,
         name: obj['name'] as String, path: obj['path'] as String,
-        peer: obj['peer'] as String, incoming: obj['incoming'] == true,
+        peer: obj['peer'] as String, peerId: (obj['peerId'] as String?) ?? '',
+        incoming: obj['incoming'] == true,
         size: (obj['size'] as num).toInt(),
         created: DateTime.parse(obj['created'] as String),
         state: TransferState.values.firstWhere((x) => x.name == status,
@@ -207,7 +208,7 @@ class LanEngine extends ChangeNotifier {
         final record = LanFile(
           id: newId(), batch: batch,
           name: safeFileName(file.uri.pathSegments.last),
-          path: file.path, peer: peer.name, incoming: false,
+          path: file.path, peer: peer.name, peerId: peer.id, incoming: false,
           size: size, created: DateTime.now(), state: TransferState.preparing);
         files.insert(0, record);
         tasks.add(_sendOne(file, peer, record));
@@ -242,6 +243,7 @@ class LanEngine extends ChangeNotifier {
         'protocol': 'fileshare-file-v1', 'id': record.id,
         'batch': record.batch, 'name': record.name,
         'size': record.size, 'sender': Platform.localHostname,
+        'senderId': deviceId,
       }) + '\n'));
       record.state = TransferState.sending;
       _notify();
@@ -323,6 +325,7 @@ class LanEngine extends ChangeNotifier {
           id: id, batch: safeFileName((meta['batch'] as String?) ?? id),
           name: name, path: destination,
           peer: safeFileName((meta['sender'] as String?) ?? socket.remoteAddress.address),
+          peerId: (meta['senderId'] as String?) ?? '',
           incoming: true, size: expected, created: DateTime.now(),
           state: TransferState.receiving);
         files.insert(0, record!);
