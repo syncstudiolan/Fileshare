@@ -28,7 +28,8 @@ class PersonalCloud extends ChangeNotifier {
   final List<CloudFile> files = [];
   String? error;
   bool loading = false;
-  bool get connected => _host != null && _ownerToken != null;
+  bool _loggedOut = false;
+  bool get connected => !_loggedOut && _host != null && _ownerToken != null;
   String? get endpoint => _host?.origin;
   String? get qrLink => _qrLink;
 
@@ -37,6 +38,7 @@ class PersonalCloud extends ChangeNotifier {
     try {
       final host = await _secrets.read(key: 'personal_worker_url');
       final secret = await _secrets.read(key: 'personal_owner_token');
+      _loggedOut = await _secrets.read(key: 'personal_signed_out') == 'yes';
       if (host != null && secret != null) {
         _host = _validWorker(host);
         _ownerToken = secret;
@@ -94,17 +96,32 @@ class PersonalCloud extends ChangeNotifier {
     await _secrets.write(key: 'personal_owner_token', value: ownerToken.trim());
     _host = url;
     _ownerToken = ownerToken.trim();
+    _loggedOut = false;
+    await _secrets.delete(key: 'personal_signed_out');
     error = null;
+    notifyListeners();
+  }
+
+  /// Local worker sign-out keeps encrypted setup for the same phone.
+  /// Real email/password login and cross-device recovery require the future
+  /// account auth service; this is NOT a replacement for authentication.
+  Future<void> signOutLocal() async {
+    _loggedOut = true;
+    _qrLink = null;
+    files.clear();
+    await _secrets.write(key: 'personal_signed_out', value: 'yes');
     notifyListeners();
   }
 
   Future<void> disconnect() async {
     _host = null;
     _ownerToken = null;
+    _loggedOut = false;
     _qrLink = null;
     files.clear();
     await _secrets.delete(key: 'personal_worker_url');
     await _secrets.delete(key: 'personal_owner_token');
+    await _secrets.delete(key: 'personal_signed_out');
     notifyListeners();
   }
 
