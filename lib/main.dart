@@ -1396,6 +1396,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       screen = CloudConnectPage(mode: widget.mode, onMode: widget.onMode);
     } else if (title == 'My QR') {
       screen = MyQrPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Devices') {
+      screen = NearbyDevicesPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Files') {
+      screen = FileCategoriesPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Login') {
+      screen = LoginPage(mode: widget.mode, onMode: widget.onMode);
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
@@ -1424,13 +1430,19 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       const Divider(),
       _nav('Home', Icons.home_outlined),
       _nav('Files', Icons.folder_outlined),
-      _nav('History', Icons.history_rounded),
       _nav('Devices', Icons.devices_rounded),
       _nav('My QR', Icons.qr_code_2_rounded),
       _nav('Cloud Setup', Icons.cloud_outlined),
       _nav('Settings', Icons.settings_outlined),
       _nav('Profile', Icons.person_outline_rounded),
-      _nav('Tools', Icons.handyman_outlined, enabled: false),
+      PersonalCloud.instance.connected
+        ? ListTile(leading:const Icon(Icons.logout_rounded,color:FileTheme.violet),
+            title:const Text('Logout'),onTap:() async {
+              Navigator.pop(context);
+              await PersonalCloud.instance.signOutLocal();
+              _snack('Signed out of cloud. Offline LAN remains available.');
+            })
+        : _nav('Login', Icons.login_rounded),
     ])),
   );
 
@@ -1845,7 +1857,6 @@ class FeatureDesignPage extends StatelessWidget {
             const SizedBox(height: 15),
             if (title == 'Home') _home(context),
             if (title == 'Files') _files(context),
-            if (title == 'History') _history(context),
             if (title == 'Devices') _devices(context),
             if (title == 'My QR') _qr(context),
             if (title == 'Cloud Setup') _cloud(context),
@@ -1950,19 +1961,6 @@ class FeatureDesignPage extends StatelessWidget {
       ]),
     ),
   ]);
-
-  Widget _history(BuildContext c) => _section(c, 'Activity history',
-    'History is a view of the SAME shared file timeline, never a second QR inbox.',
-    Column(children: [
-      _line(c, Icons.arrow_upward_rounded, 'Sent',
-        'Right-aligned in the unified chat'),
-      _line(c, Icons.arrow_downward_rounded, 'Received',
-        'Left-aligned, LAN and guest QR together'),
-      _line(c, Icons.schedule_rounded, 'LAN auto-delete',
-        '24 hours after each sending batch'),
-      _line(c, Icons.nightlight_round, 'Guest cloud auto-delete',
-        'Daily at 12:00 AM IST'),
-    ]));
 
   Widget _devices(BuildContext c) => Column(children: [
     _section(c, 'Nearby devices', 'Real device discovery is not active in this UI phase.',
