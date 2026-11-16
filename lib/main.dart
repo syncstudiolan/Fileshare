@@ -35,9 +35,11 @@ class FileShareApp extends StatefulWidget {
     super.key,
     this.initialMode = ThemeMode.system,
     this.offlineDefault = false,
+    this.enableBackends = true,
   });
   final ThemeMode initialMode;
   final bool offlineDefault;
+  final bool enableBackends;
 
   @override
   State<FileShareApp> createState() => _FileShareAppState();
@@ -61,7 +63,8 @@ class _FileShareAppState extends State<FileShareApp> {
         themeAnimationDuration: const Duration(milliseconds: 280),
         themeAnimationCurve: Curves.easeInOutCubic,
         home: widget.offlineDefault
-            ? DashboardPage(mode: _mode, onMode: _setMode)
+            ? DashboardPage(mode: _mode, onMode: _setMode,
+                enableBackends: widget.enableBackends)
             : WelcomePage(mode: _mode, onMode: _setMode),
       );
 }
@@ -1210,9 +1213,11 @@ class TimelineGroup {
   DateTime get created => lan?.first.created ?? cloud!.first.created;
 }
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key, required this.mode, required this.onMode});
+  const DashboardPage({super.key, required this.mode, required this.onMode,
+    this.enableBackends = true});
   final ThemeMode mode;
   final ValueChanged<ThemeMode> onMode;
+  final bool enableBackends;
   @override
   State<DashboardPage> createState() => _DashboardPageState();
 }
@@ -1229,7 +1234,7 @@ class _DashboardPageState extends State<DashboardPage> {
     super.initState();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) {
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
