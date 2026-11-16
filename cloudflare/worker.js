@@ -310,22 +310,24 @@ async function cleanup(env) {
   const now = Date.now();
   // A single short DB query is needed by the scheduled trigger. No R2 delete
   // request is issued if the table has no expired files.
-  const rows = await env.DB.prepare(
-    'SELECT id,object_key,upload_id FROM uploads ' +
-    'WHERE expires_at<=? LIMIT 500'
-  ).bind(now).all();
-  for (const item of rows.results) {
-    if (item.upload_id) {
-      await env.FILES.resumeMultipartUpload(item.object_key, item.upload_id)
-        .abort().catch(() => {});
+  // Process multiple batches in the same midnight job (for example 2,000
+  // one-MB files). Cap work per run; the +2h/+4h schedules retry leftovers.
+  for (let batch = 0; batch < 20; batch++) {
+    const rows = await env.DB.prepare(
+      'SELECT id,object_key,upload_id FROM uploads ' +
+      'WHERE expires_at<=? LIMIT 500'
+    ).bind(now).all();
+    if (!rows.results.length) break; // no R2 delete call on empty inbox
+    for (const item of rows.results) {
+      if (item.upload_id) {
+        await env.FILES.resumeMultipartUpload(item.object_key, item.upload_id)
+          .abort().catch(() => {});
+      }
     }
-  }
-  if (rows.results.length) {
-    // R2 accepts up to 1000 object keys per delete() operation.
     await env.FILES.delete(rows.results.map((item) => item.object_key));
-    const batches = rows.results.map((item) =>
+    const statements = rows.results.map((item) =>
       env.DB.prepare('DELETE FROM uploads WHERE id=?').bind(item.id));
-    await env.DB.batch(batches);
+    await env.DB.batch(statements);
   }
   // Keep guest usage data for rolling 24h even after midnight file cleanup.
   await env.DB.prepare('DELETE FROM guest_sessions WHERE created_at<?')
