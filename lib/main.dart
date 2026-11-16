@@ -1325,6 +1325,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   String _filter = 'All';
   bool _choosing = false;
   bool _showSamples = true;
+  bool _refreshing = false;
+  static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
 
   void _armMidnight() {
@@ -1353,7 +1355,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
-      appLan.start().then((_) {
+      appLan.start().then((_) async {
+        if (Platform.isAndroid) {
+          _native.setMethodCallHandler((call) async {
+            if(call.method=='sharesReceived') await _takeSharedFiles();
+          });
+          try { await _native.invokeMethod<bool>('startLanService'); }
+          catch(e){ _snack('Background LAN limited: '+e.toString()); }
+          await _takeSharedFiles();
+        }
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
       PersonalCloud.instance.restore().then((_) =>
@@ -1424,6 +1434,43 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     ])),
   );
 
+
+  /// Android shares from WhatsApp/File Manager are draft-only until Send.
+  Future<void> _takeSharedFiles() async {
+    if(!Platform.isAndroid||!mounted)return;
+    try {
+      final rows=await _native.invokeMethod<List<dynamic>>('takeSharedFiles');
+      final sources=<File>[], names=<String>[], sizes=<int>[];
+      for(final row in rows??<dynamic>[]){
+        if(row is! Map)continue;
+        final path=row['path'],name=row['name'];
+        if(path is! String||name is! String)continue;
+        final file=File(path);
+        if(!await file.exists())continue;
+        sources.add(file);
+        names.add(name);
+        sizes.add(await file.length());
+      }
+      if(sources.isEmpty)return;
+      setState((){
+        _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
+        _showSamples=false;
+      });
+      _snack('Shared files are ready. Tap Send when you want to transmit.');
+    }catch(e){_snack('Could not import shared files: '+e.toString());}
+  }
+
+  Future<void> _refreshNearby() async {
+    if(_refreshing)return;
+    setState(()=>_refreshing=true);
+    appLan.refresh();
+    if(PersonalCloud.instance.connected){
+      unawaited(PersonalCloud.instance.refreshFiles());
+    }
+    await Future<void>.delayed(const Duration(milliseconds:1200));
+    if(mounted)setState(()=>_refreshing=false);
+  }
+
   Future<File?> _preparePickedFile(PlatformFile picked) async {
     final local = picked.path;
     if (local != null && await File(local).exists()) return File(local);
@@ -1447,56 +1494,45 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _choose() async {
-    if (_choosing) return;
-    setState(() => _choosing = true);
+    if(_choosing)return;
+    setState(()=>_choosing=true);
     try {
-      final picked = await FilePicker.pickFiles(type: FileType.any);
-      if (picked.isEmpty) return;
-      final sources = <File>[];
-      final names = <String>[];
-      for (final file in picked) {
-        final source = await _preparePickedFile(file);
-        if (source == null) continue;
-        sources.add(source);
-        names.add(file.name);
+      final chosen=await FilePicker.pickFiles(type:FileType.any);
+      if(chosen.isEmpty)return;
+      final sources=<File>[],names=<String>[],sizes=<int>[];
+      for(final selected in chosen){
+        final f=await _preparePickedFile(selected);
+        if(f==null)continue;
+        sources.add(f);
+        names.add(selected.name);
+        sizes.add(await f.length());
       }
-      if (sources.isEmpty) {
+      if(sources.isEmpty){
         _snack('No readable files were selected.');
         return;
       }
-      final batch = PendingBatch(
-        LanEngine.newId(), sources, names, appLan.peers.isNotEmpty);
-      setState(() {
-        _showSamples = false;
-        _staged.add(batch);
+      // IMPORTANT: Picking files MUST NOT call the transfer engine.
+      setState((){
+        _showSamples=false;
+        _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
       });
-      if (batch.started) {
-        unawaited(appLan.send(batch.sources, appLan.peers.values.toList(),
-          batchId: batch.id));
-      } else {
-        _snack('Files staged. Connect another LAN device and tap Send.');
-      }
-    } catch (e) {
-      _snack('File selection failed: ' + e.toString());
-    } finally {
-      if (mounted) setState(() => _choosing = false);
-    }
+    }catch(e){_snack('File selection failed: '+e.toString());}
+    finally{if(mounted)setState(()=>_choosing=false);}
   }
 
-  void _send() {
-    if (_staged.isEmpty) return;
-    if (appLan.peers.isEmpty && _staged.any((x) => !x.started)) {
-      _snack('No nearby LAN devices. Keep the files staged until a device appears.');
-      return;
+  Future<void> _send() async {
+    if(_staged.isEmpty || !appLan.started)return;
+    final batches=List<PendingBatch>.from(_staged);
+    for(final batch in batches){
+      try {
+        // This persists a private copy and queues even with ZERO peers.
+        await appLan.enqueue(batch.sources,names:batch.labels);
+        if(mounted)setState(()=>_staged.remove(batch));
+      }catch(e){_snack('Could not queue selected files: '+e.toString());}
     }
-    for (final batch in _staged) {
-      if (!batch.started) {
-        batch.started = true;
-        unawaited(appLan.send(batch.sources, appLan.peers.values.toList(),
-          batchId: batch.id));
-      }
+    if(appLan.peers.isEmpty){
+      _snack('Saved to Pending. Will send when nearby devices appear.');
     }
-    setState(() => _staged.clear()); // same progress, no restart
   }
 
   Future<void> _saveReceived(LanFile item) async {
@@ -1594,31 +1630,43 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Widget _drafts(BuildContext context) {
-    if (_staged.isEmpty) return const SizedBox.shrink();
-    return DesignPanel(child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Selected files · ' + _staged.length.toString() + ' batch(es)',
-          style: TextStyle(fontWeight: FontWeight.w700,
-            color: FileTheme.foreground(context))),
-        const SizedBox(height: 5),
-        for (final batch in _staged)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.file_present_outlined, color: FileTheme.pink),
-            title: Text(batch.labels.take(2).join(', ') +
-              (batch.labels.length > 2 ? ' + more' : ''),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(batch.started
-              ? 'Transferring automatically · Send moves cards into chat'
-              : 'Waiting for LAN devices'),
-            trailing: IconButton(
-              tooltip: 'Remove from selected tray',
-              onPressed: batch.started ? null :
-                () => setState(() => _staged.remove(batch)),
-              icon: const Icon(Icons.close_rounded)),
-          ),
+    if(_staged.isEmpty)return const SizedBox.shrink();
+    bool isImage(String name){
+      final n=name.toLowerCase();
+      return n.endsWith('.jpg')||n.endsWith('.jpeg')||
+        n.endsWith('.png')||n.endsWith('.webp');
+    }
+    return DesignPanel(child:Column(
+      crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Text('Ready to send · '+_staged.fold<int>(0,(v,e)=>v+e.sources.length).toString()+' files',
+          style:TextStyle(fontWeight:FontWeight.w800,color:FileTheme.foreground(context))),
+        const SizedBox(height:5),
+        Text('Nothing goes to a device until you tap Send',
+          style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+        for(final batch in _staged)
+          for(var i=0;i<batch.sources.length;i++)
+            ListTile(
+              dense:true,contentPadding:EdgeInsets.zero,
+              leading:SizedBox(width:52,height:52,child:isImage(batch.labels[i])
+                ?ClipRRect(borderRadius:BorderRadius.circular(8),
+                    child:Image.file(batch.sources[i],fit:BoxFit.cover,
+                      cacheWidth:120,
+                      errorBuilder:(_,__,___)=>const Icon(Icons.image_outlined)))
+                :const Icon(Icons.insert_drive_file_outlined,color:FileTheme.pink)),
+              title:Text(batch.labels[i],maxLines:1,overflow:TextOverflow.ellipsis),
+              subtitle:Text(_formatBytes(batch.sizes[i])+' · Not sent',
+                style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+              trailing:IconButton(
+                tooltip:'Remove selected file',icon:const Icon(Icons.close_rounded),
+                onPressed:(){
+                  setState((){
+                    batch.sources.removeAt(i);
+                    batch.labels.removeAt(i);
+                    batch.sizes.removeAt(i);
+                    if(batch.sources.isEmpty)_staged.remove(batch);
+                  });
+                }),
+            ),
       ],
     ));
   }
@@ -1665,14 +1713,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     icon: const Icon(Icons.qr_code_2_rounded,
                       color: FileTheme.violet)),
                   AppearanceButton(mode: widget.mode, onChange: widget.onMode),
-                  IconButton(tooltip: 'Refresh nearby LAN devices',
-                    onPressed: () {
-                      appLan.refresh();
-                      if (PersonalCloud.instance.connected) {
-                        unawaited(PersonalCloud.instance.refreshFiles());
-                      }
-                    },
-                    icon: const Icon(Icons.refresh_rounded, color: FileTheme.violet)),
+                  IconButton(tooltip:'Refresh nearby LAN devices',
+                    onPressed:_refreshing?null:_refreshNearby,
+                    icon:AnimatedRotation(
+                      turns:_refreshing?2:0,
+                      duration:const Duration(milliseconds:1100),
+                      curve:Curves.linear,
+                      child:const Icon(Icons.refresh_rounded,color:FileTheme.violet))),
                 ]),
               ),
             ),
@@ -1751,7 +1798,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.muted(context)))),
                   IconButton.filled(
                     tooltip: 'Send selected files',
-                    onPressed: _staged.isEmpty ? null : _send,
+                    onPressed: _staged.isEmpty ? null : () => unawaited(_send()),
                     icon: const Icon(Icons.send_rounded)),
                 ]),
               ),
