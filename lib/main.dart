@@ -1596,12 +1596,18 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             Padding(
               padding: EdgeInsets.symmetric(horizontal: wide ? 24 : 10),
               child: Row(children: [
-                for (final choice in const ['All', 'Sent', 'Received'])
-                  Padding(padding: const EdgeInsets.only(right: 5),
-                    child: ChoiceChip(label: Text(choice),
-                      selected: choice == _filter,
-                      onSelected: (_) => setState(() => _filter = choice))),
-                const Spacer(),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      for (final choice in const ['All', 'Sent', 'Received'])
+                        Padding(padding: const EdgeInsets.only(right: 5),
+                          child: ChoiceChip(label: Text(choice),
+                            selected: choice == _filter,
+                            onSelected: (_) => setState(() => _filter = choice))),
+                    ]),
+                  ),
+                ),
                 if (groups.isEmpty)
                   TextButton(onPressed: () => setState(() =>
                     _showSamples = !_showSamples),

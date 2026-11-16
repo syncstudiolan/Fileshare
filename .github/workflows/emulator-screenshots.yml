@@ -42,21 +42,24 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          target: default
           arch: x86_64
-          profile: pixel_6
+          profile: pixel_4
           disable-animations: true
           script: |
             mkdir -p screenshots
             flutter build apk --debug --dart-define=FILE_SHARE_CAPTURE_UI=true
             adb install -r build/app/outputs/flutter-apk/app-debug.apk
-            adb shell monkey -p com.example.file_share -c android.intent.category.LAUNCHER 1
-            sleep 12
+            adb shell am start -n com.example.file_share/.MainActivity
+            sleep 8
+            # Dismiss any slow-launcher ANR overlay without touching real transfers.
+            adb shell input tap 290 1190
+            sleep 3
             adb exec-out screencap -p > screenshots/01-real-flutter-dashboard.png
-            adb shell input tap 850 155
+            adb shell input tap 820 212
             sleep 2
             adb exec-out screencap -p > screenshots/02-appearance-menu.png
-            adb shell input tap 780 320
+            adb shell input tap 780 400
             sleep 2
             adb exec-out screencap -p > screenshots/03-theme-selection.png
       - name: Upload genuine emulator captures
