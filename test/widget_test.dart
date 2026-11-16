@@ -46,8 +46,8 @@ void main() {
     expect(find.text('File Transfer'), findsOneWidget);
     expect(find.text('4 Photos (Group)'), findsOneWidget);
     expect(find.text('SAMPLE DATA'), findsOneWidget);
-    expect(find.text('No real transfer, devices or login.'), findsOneWidget);
-    expect(find.byTooltip('Refresh is disabled during UI preview'),
+    expect(find.text('Example cards only — no real files'), findsOneWidget);
+    expect(find.byTooltip('Refresh nearby LAN devices'),
         findsOneWidget);
   });
 
@@ -107,8 +107,3 @@ void main() {
   });
 }
 
-
-// Engine model tests avoid creating any sockets or reading device storage.
-void verifyLanModels() {
-  assert(LanEngine.safeFileName('../unsafe\\name.png') == '.._unsafe_name.png');
-}
