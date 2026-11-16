@@ -1222,16 +1222,37 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final _scaffold = GlobalKey<ScaffoldState>();
   final List<PendingBatch> _staged = [];
   String _filter = 'All';
   bool _choosing = false;
   bool _showSamples = true;
+  Timer? _midnight;
+
+  void _armMidnight() {
+    _midnight?.cancel();
+    final next=DateTime.fromMillisecondsSinceEpoch(PersonalCloud.nextMidnightIst());
+    final delay=next.difference(DateTime.now())+const Duration(milliseconds:400);
+    _midnight=Timer(delay,(){
+      PersonalCloud.instance.removeExpiredLocalEntries();
+      _armMidnight();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if(state==AppLifecycleState.resumed){
+      unawaited(appLan.cleanExpired());
+      PersonalCloud.instance.removeExpiredLocalEntries();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1249,6 +1270,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   void dispose() {
+    _midnight?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
     super.dispose();
