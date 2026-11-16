@@ -1,6 +1,5 @@
 import 'dart:io' show Platform;
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -908,7 +907,7 @@ class DesignFileCard extends StatelessWidget {
           crossAxisCount: 2,
           mainAxisSpacing: 8,
           crossAxisSpacing: 8,
-          childAspectRatio: 1.13,
+          childAspectRatio: MediaQuery.sizeOf(context).width < 390 ? .76 : 1.13,
         ),
         itemBuilder: (context, i) => Column(children: [
           Expanded(child: SizedBox(width: double.infinity,
