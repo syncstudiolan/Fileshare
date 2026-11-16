@@ -925,7 +925,7 @@ class DesignFileCard extends StatelessWidget {
         physics: const NeverScrollableScrollPhysics(),
         shrinkWrap: true,
         itemCount: 4,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           mainAxisSpacing: 8,
           crossAxisSpacing: 8,
@@ -1916,7 +1916,7 @@ class FeatureDesignPage extends StatelessWidget {
       Column(children: [
         _line(c, Icons.verified_user_outlined, '1. Verify token',
           'Check account, scope and permissions'),
-        _line(c, Icons.database_outlined, '2. Provision D1',
+        _line(c, Icons.storage_outlined, '2. Provision D1',
           'QR, guest sessions, delivery and quota records'),
         _line(c, Icons.storage_outlined, '3. Provision R2',
           'Private cloud files for this user'),
