@@ -194,10 +194,11 @@ class LanEngine extends ChangeNotifier {
 
   /// Send each selected original file to each nearby peer. No originals are
   /// deleted during cleanup, only temporary received copies in the app inbox.
-  Future<void> send(List<File> selected, Iterable<LanPeer> destinations) async {
+  Future<void> send(List<File> selected, Iterable<LanPeer> destinations,
+      {String? batchId}) async {
     final targets = destinations.toList();
     if (targets.isEmpty) throw StateError('No LAN receiver is available.');
-    final batch = newId();
+    final batch = batchId ?? newId();
     final tasks = <Future<void>>[];
     for (final file in selected) {
       if (!await file.exists()) continue;
