@@ -153,6 +153,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _replaceBackground({Uint8List? picture,Color? color})async {
     final selected=color??_background;
     if(color!=null)setState(()=>_background=color);
+    if(selected==Colors.transparent && picture==null){
+      _message('Transparent background retained');
+      return;
+    }
     await _apply('flatten',{
       'color':selected.toARGB32(),
       if(picture!=null)'backgroundBytes':picture,
@@ -190,7 +194,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     final data=_bytes;
     if(data==null||_busy)return;
     try{
-      final type=_format=='JPEG'?'jpg':'png';
+      final type=data.length>=2 && data[0]==0xff && data[1]==0xd8
+        ?'jpg':'png';
       final name='edited_${DateTime.now().millisecondsSinceEpoch}.$type';
       if(action=='cart'){
         final directory=await getApplicationSupportDirectory();
@@ -367,8 +372,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }));
 
   Future<void> _customColorDialog()async{
-    var red=_custom.r.toDouble(),green=_custom.g.toDouble(),
-      blue=_custom.b.toDouble();
+    var red=_custom.r*255,green=_custom.g*255,
+      blue=_custom.b*255;
     final color=await showDialog<Color>(context:context,builder:(context)=>
       StatefulBuilder(builder:(context,update)=>AlertDialog(
         title:const Text('Custom background color'),
@@ -437,7 +442,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Widget _preview(){
     return LayoutBuilder(builder:(context,constraints){
       final width=math.min(constraints.maxWidth,
-        constraints.maxHeight*_ratio).clamp(1.0,double.infinity);
+        constraints.maxHeight*_ratio).clamp(1.0,double.infinity).toDouble();
       final height=width/_ratio;
       final size=Size(width,height);
       return Center(child:SizedBox(width:width,height:height,
