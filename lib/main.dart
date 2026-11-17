@@ -685,6 +685,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _register=false,_hidden=true,_busy=false;
   bool _awaitingEmailVerification=false;
   bool _personalAccountRegistered=false;
+  bool _manualWorkerLogin=false;
   String? _error;
 
   @override void initState(){
@@ -748,14 +749,16 @@ class _LoginPageState extends State<LoginPage> {
           await _requestEmailVerification();
           return;
         }
-      }else if(directory.enabled){
-        // New devices use ONLY email/password. Directory discovers the
-        // correct personal Cloudflare Worker and verifies it.
+      }else if(directory.enabled && !_manualWorkerLogin){
+        // Second device: only email/password. Locate Worker automatically.
         await cloud.loginByEmail(_email.text,_password.text);
       }else{
-        // Explicit backwards-compatible fallback for private installations
-        // without the official global discovery service.
+        // Existing installations can migrate their personal Worker once.
         await cloud.loginAccount(_workerUrl.text,_email.text,_password.text);
+        if(directory.enabled && _manualWorkerLogin){
+          await _requestEmailVerification();
+          return;
+        }
       }
       await _enterDashboard();
     }catch(e){
@@ -835,7 +838,7 @@ class _LoginPageState extends State<LoginPage> {
                 TextButton(onPressed:_busy?null:_linkExistingAccount,
                   child:const Text('Resend verification email')),
               ]else Form(key:_key,child:Column(children:[
-                if(!AccountDirectory.instance.enabled && !_register)...[
+                if((!AccountDirectory.instance.enabled || _manualWorkerLogin) && !_register)...[
                   TextFormField(
                     controller:_workerUrl,enabled:!_register&&!_busy,
                     keyboardType:TextInputType.url,
@@ -898,6 +901,13 @@ class _LoginPageState extends State<LoginPage> {
                   onPressed:_busy?null:_openCloudSetup,
                   icon:const Icon(Icons.cloud_sync_outlined),
                   label:const Text('Set up or connect personal Cloudflare')),
+                if(AccountDirectory.instance.enabled && !_register)
+                  TextButton(
+                    onPressed:_busy?null:()=>setState(()=>
+                      _manualWorkerLogin=!_manualWorkerLogin),
+                    child:Text(_manualWorkerLogin
+                      ? 'Use automatic email-only login'
+                      : 'Existing Worker? Link it once')),
                 if(AccountDirectory.instance.enabled &&
                    PersonalCloud.instance.signedIn && !_register)
                   TextButton.icon(
