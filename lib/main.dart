@@ -1240,9 +1240,10 @@ final LanEngine appLan = LanEngine();
 /// as the file card; no duplicate upload is initiated from here.
 class FullScreenFilePreview extends StatelessWidget {
   const FullScreenFilePreview({super.key, required this.file,
-    required this.onSave, required this.onDelete, required this.onShare});
+    required this.onSave, required this.onDelete, required this.onShare,
+    required this.onTools});
   final LanFile file;
-  final Future<void> Function(LanFile) onSave, onDelete, onShare;
+  final Future<void> Function(LanFile) onSave, onDelete, onShare, onTools;
 
   bool get isPicture {
     final name=file.name.toLowerCase();
@@ -1296,19 +1297,14 @@ class FullScreenFilePreview extends StatelessWidget {
             },
             icon:const Icon(Icons.delete_outline_rounded,color:Colors.white)),
           IconButton(
-            tooltip:'Open in another app',
-            onPressed:file.state==TransferState.delivered
-              ?()=>OpenFilex.open(file.path):null,
-            icon:const Icon(Icons.open_in_new_rounded,color:Colors.white)),
-          IconButton(
             tooltip:'Share to another app',
             onPressed:file.state==TransferState.delivered
               ?()=>onShare(file):null,
             icon:const Icon(Icons.ios_share_rounded,color:Colors.white)),
-          const IconButton(
-            tooltip:'Toolbox coming later',
-            onPressed:null,
-            icon:Icon(Icons.auto_fix_high_rounded,color:Colors.white54)),
+          IconButton(
+            tooltip:'Open in Tools',
+            onPressed:File(file.path).existsSync()?()=>onTools(file):null,
+            icon:const Icon(Icons.auto_fix_high_rounded,color:Colors.white)),
         ]),
       ),
     ])),
@@ -1318,12 +1314,13 @@ class FullScreenFilePreview extends StatelessWidget {
 class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
     super.key, required this.items, required this.onSave,
-    required this.onDelete, required this.onShare,
+    required this.onDelete, required this.onShare, required this.onTools,
   });
   final List<LanFile> items;
   final Future<void> Function(LanFile) onSave;
   final Future<void> Function(LanFile) onDelete;
   final Future<void> Function(LanFile) onShare;
+  final Future<void> Function(LanFile) onTools;
 
   bool get incoming => items.first.incoming;
 
@@ -1336,9 +1333,10 @@ class LiveTransferCard extends StatelessWidget {
   Widget _visual(LanFile file) {
     if (_photo(file.name) && File(file.path).existsSync()) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Image.file(File(file.path), fit: BoxFit.cover,
-          cacheWidth: 250,
+        borderRadius: BorderRadius.circular(14),
+        child: Image.file(File(file.path), width: double.infinity,
+          height: double.infinity, fit: BoxFit.cover,
+          cacheWidth: 360,
           errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined,
             color: FileTheme.pink, size: 35)));
     }
@@ -1349,79 +1347,98 @@ class LiveTransferCard extends StatelessWidget {
         : Icons.insert_drive_file_outlined), color: FileTheme.pink, size: 34);
   }
 
-  Widget _buttons(BuildContext context, LanFile file) => Wrap(
-    spacing: 1,
-    runSpacing: 0,
-    children: [
-      if (incoming)
-        IconButton(
-          tooltip: 'Save received file',
-          onPressed: file.state == TransferState.delivered
-            ? () => onSave(file) : null,
-          icon: const Icon(Icons.download_rounded, color: FileTheme.pink)),
+  Widget _buttons(BuildContext context, LanFile file) {
+    final exists = File(file.path).existsSync();
+    final canShare = exists &&
+      (file.state == TransferState.delivered || !file.incoming);
+    final canDownload = exists && file.incoming &&
+      file.state == TransferState.delivered;
+    Widget action(String label, IconData icon, VoidCallback? callback) =>
       IconButton(
-        tooltip: 'Delete local card',
-        onPressed: () => onDelete(file),
-        icon: const Icon(Icons.delete_outline_rounded, color: FileTheme.pink)),
-      IconButton(
-        tooltip: 'Share to another app',
-        onPressed: file.state == TransferState.delivered
-            ? () => onShare(file) : null,
-        icon: const Icon(Icons.ios_share_rounded, color: FileTheme.pink)),
-      IconButton(
-        tooltip: 'Open in another app',
-        onPressed: file.state == TransferState.delivered
-          ? () => OpenFilex.open(file.path) : null,
-        icon: const Icon(Icons.open_in_new_rounded, color: FileTheme.pink)),
-      const IconButton(
-        tooltip: 'Toolbox coming later',
-        onPressed: null,
-        icon: Icon(Icons.auto_fix_high_rounded, color: FileTheme.pink)),
-    ],
-  );
+        tooltip: label, onPressed: callback,
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon, color: callback == null
+          ? FileTheme.pink.withValues(alpha: .30) : FileTheme.pink),
+      );
+    return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+      if (file.incoming)
+        action('Download', Icons.download_rounded,
+          canDownload ? () => onSave(file) : null),
+      action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
+      action('Share', Icons.ios_share_rounded,
+        canShare ? () => onShare(file) : null),
+      action('Open in Tools', Icons.auto_fix_high_rounded,
+        canShare ? () => onTools(file) : null),
+    ]);
+  }
 
   void _preview(BuildContext context,LanFile file){
     if(file.state!=TransferState.delivered &&
        file.state!=TransferState.queued)return;
     Navigator.push(context,MaterialPageRoute<void>(builder:(_)=>
       FullScreenFilePreview(file:file,onSave:onSave,
-        onDelete:onDelete,onShare:onShare)));
+        onDelete:onDelete,onShare:onShare,onTools:onTools)));
   }
 
-  Widget _file(BuildContext context, LanFile file) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(children: [
-      GestureDetector(
-        onTap:()=>_preview(context,file),
-        child:SizedBox(width: 78,height:78,child:Center(child:_visual(file))),
-      ),
-      const SizedBox(width: 9),
-      Expanded(child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _file(BuildContext context, LanFile file) =>
+      LayoutBuilder(builder: (context, constraints) {
+    final side = constraints.maxWidth >= 420 ? 142.0 :
+      constraints.maxWidth >= 310 ? 122.0 : 104.0;
+    final active = file.state == TransferState.sending ||
+      file.state == TransferState.receiving ||
+      file.state == TransferState.preparing;
+    final status = switch (file.state) {
+      TransferState.delivered => 'Delivered',
+      TransferState.queued => 'Pending',
+      TransferState.sending => 'Sending',
+      TransferState.receiving => 'Receiving',
+      TransferState.preparing => 'Preparing',
+      TransferState.failed => 'Failed',
+    };
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontWeight: FontWeight.w700,
-              color: FileTheme.foreground(context), fontSize: 13)),
-          Text(_formatBytes(file.size) + ' · ' + file.state.name,
-            style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          const SizedBox(height: 5),
-          if (file.state == TransferState.sending ||
-              file.state == TransferState.receiving ||
-              file.state == TransferState.preparing)
-            LinearProgressIndicator(value: file.progress,
-              minHeight: 5, borderRadius: BorderRadius.circular(9)),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => _preview(context, file),
+              child: SizedBox(width: side, height: side, child: _visual(file)),
+            ),
+            const SizedBox(width: 13),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(file.name, maxLines: 3, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800,
+                    color: FileTheme.foreground(context))),
+                const SizedBox(height: 8),
+                Text(_formatBytes(file.size),
+                  style: TextStyle(color: FileTheme.muted(context), fontSize: 12)),
+                const SizedBox(height: 7),
+                Text(status,
+                  style: const TextStyle(color: FileTheme.violet,
+                    fontWeight: FontWeight.w700, fontSize: 12)),
+                if (active) ...[
+                  const SizedBox(height: 9),
+                  LinearProgressIndicator(value: file.progress,
+                    minHeight: 5, borderRadius: BorderRadius.circular(9)),
+                ],
+              ],
+            )),
+          ]),
+          const SizedBox(height: 7),
           _buttons(context, file),
         ],
-      )),
-    ]),
-  );
+      ),
+    );
+  });
 
   @override
   Widget build(BuildContext context) {
     final first = items.first;
     final multiple = items.length > 1;
     final wide = MediaQuery.sizeOf(context).width > 750;
-    final bodyWidth = wide ? 580.0 : MediaQuery.sizeOf(context).width * .89;
+    final bodyWidth = wide ? 760.0 : MediaQuery.sizeOf(context).width * .93;
     return Align(
       alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
@@ -1442,16 +1459,14 @@ class LiveTransferCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text(multiple
-                ? items.length.toString() + ' Files (Group)' : first.name,
+                 ? items.length.toString() + ' files · ' + first.peer
+                 : (incoming ? 'From ' : 'To ') + first.peer + ' · Offline LAN',
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(color: FileTheme.foreground(context),
                 fontWeight: FontWeight.w800, fontSize: 14))),
             DesignTag(incoming ? 'Received' : 'Sent', received: incoming),
           ]),
-          const SizedBox(height: 5),
-          Text((incoming ? 'From ' : 'To ') + first.peer + ' · Offline LAN',
-            style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          const SizedBox(height: 6),
+          const SizedBox(height: 7),
           ...items.take(multiple ? 4 : 1).map((entry) => _file(context, entry)),
           if (items.length > 4)
             Text('+ ' + (items.length - 4).toString() + ' more files',
