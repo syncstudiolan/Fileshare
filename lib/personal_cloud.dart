@@ -373,7 +373,7 @@ class PersonalCloud extends ChangeNotifier {
   Future<File> _downloadFile(CloudFile item) async {
     if(!connected)throw StateError('Cloud not connected');
     final cache=await _cacheDir();
-    final safe=item.name.replaceAll(RegExp(r'[/\\\\\\x00-\\x1f]'),'_');
+    final safe=item.name.replaceAll(RegExp(r'[/\\\x00-\x1f]'),'_');
     final target=File(cache.path+Platform.pathSeparator+'cloud_'+
       nextMidnightIst().toString()+'_'+item.id+'_'+safe);
     if(await target.exists()){
