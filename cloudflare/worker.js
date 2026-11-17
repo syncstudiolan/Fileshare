@@ -2,6 +2,7 @@
 // Bindings: DB (D1), FILES (private R2), ASSETS (static guest page).
 // Secret: OWNER_TOKEN (set with Cloudflare secret storage; NEVER commit it).
 // No account-token management, no global tokens, no paid dependency.
+const GUEST_HTML = ''; // Embedded by first-time setup.
 const MB = 1024 * 1024;
 const QUOTA = 200 * MB;
 const CHUNK = 6 * MB; // R2 multipart parts: all non-final parts >=5 MiB.
@@ -27,9 +28,11 @@ const safeName = (name) => String(name).replace(/[\\/\x00-\x1f]/g, '_').slice(-1
 const guestCookie = (request) =>
   request.headers.get('cookie')?.match(/(?:^|;\s*)fs_guest=([a-zA-Z0-9-]{36})/)?.[1] ?? null;
 
-function owner(request, env) {
+async function owner(request, env) {
   const credential = request.headers.get('authorization');
-  return !!env.OWNER_TOKEN && credential === 'Bearer ' + env.OWNER_TOKEN;
+  if (!env.OWNER_TOKEN || !credential?.startsWith('Bearer ')) return false;
+  const token = credential.slice(7);
+  return token === env.OWNER_TOKEN || !!(await readSession(token, env));
 }
 
 function originAllowed(request) {
@@ -232,8 +235,94 @@ async function finish(request, env, session) {
   return json({ok: true});
 }
 
+
+const AUTH_PERIOD = 24 * 60 * 60 * 1000;
+const enc = new TextEncoder(), dec = new TextDecoder();
+const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes)))
+  .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
+const from64 = value => Uint8Array.from(atob(value.replace(/-/g,'+')
+  .replace(/_/g,'/').padEnd(Math.ceil(value.length/4)*4,'=')),c=>c.charCodeAt(0));
+async function derivePassword(password,salt){
+  const key=await crypto.subtle.importKey('raw',enc.encode(password),'PBKDF2',false,['deriveBits']);
+  return b64url(await crypto.subtle.deriveBits(
+    {name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},key,256));
+}
+const hmacKey=env=>crypto.subtle.importKey('raw',enc.encode(env.OWNER_TOKEN),
+  {name:'HMAC',hash:'SHA-256'},false,['sign','verify']);
+async function makeSession(email,env){
+  const exp=Date.now()+AUTH_PERIOD;
+  const payload=b64url(enc.encode(JSON.stringify({v:1,email,exp})));
+  const mac=await crypto.subtle.sign('HMAC',await hmacKey(env),
+    enc.encode('fileshare.session.'+payload));
+  return {token:payload+'.'+b64url(mac),exp};
+}
+async function readSession(token,env){
+  try{
+    if(typeof token!=='string'||token.length>1600)return null;
+    const parts=token.split('.');if(parts.length!==2)return null;
+    const ok=await crypto.subtle.verify('HMAC',await hmacKey(env),
+      from64(parts[1]),enc.encode('fileshare.session.'+parts[0]));
+    if(!ok)return null;
+    const data=JSON.parse(dec.decode(from64(parts[0])));
+    return data.v===1 && typeof data.email==='string' &&
+      Number.isFinite(data.exp) && data.exp>Date.now() ? data:null;
+  }catch(_){return null;}
+}
+async function authApi(request,env,url){
+  if(url.pathname==='/v1/auth/me'&&request.method==='GET'){
+    const token=request.headers.get('authorization')?.replace(/^Bearer /,'');
+    const session=await readSession(token,env);
+    return session?json({ok:true,email:session.email,expiresAt:session.exp}):
+      fail('Session expired: please log in again',401);
+  }
+  if(request.method!=='POST' ||
+     !['/v1/auth/register','/v1/auth/login'].includes(url.pathname)){
+    return fail('Unsupported auth request',405);
+  }
+  const input=await request.json().catch(()=>null);
+  const email=String(input?.email??'').trim().toLowerCase(),password=input?.password;
+  if(!/^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]+$/.test(email)||
+     typeof password!=='string'||password.length<10||password.length>1024){
+    return fail('Valid email and password with at least 10 characters required');
+  }
+  if(url.pathname==='/v1/auth/register'){
+    if(request.headers.get('authorization')!=='Bearer '+env.OWNER_TOKEN)
+      return fail('Owner setup secret required for first registration',403);
+    if(await env.DB.prepare('SELECT email FROM accounts LIMIT 1').first())
+      return fail('Owner account already registered',409);
+    const salt=crypto.getRandomValues(new Uint8Array(16));
+    const result=await env.DB.prepare(
+      'INSERT OR IGNORE INTO accounts(email,salt,hash,created_at) VALUES(?,?,?,?)'
+    ).bind(email,b64url(salt),await derivePassword(password,salt),Date.now()).run();
+    if(result.meta?.changes!==1)return fail('Account already exists',409);
+    const session=await makeSession(email,env);
+    return json({ok:true,email,session:session.token,expiresAt:session.exp},201);
+  }
+  const ip=request.headers.get('cf-connecting-ip')||'unknown';
+  const key=await digest(env.OWNER_TOKEN+':'+ip+':'+email),now=Date.now();
+  await env.DB.prepare('DELETE FROM auth_attempts WHERE changed_at<?')
+    .bind(now-15*60*1000).run();
+  const attempts=await env.DB.prepare('SELECT failures FROM auth_attempts WHERE id=?')
+    .bind(key).first();
+  if((attempts?.failures??0)>=8)return fail('Too many attempts; retry later',429);
+  const account=await env.DB.prepare('SELECT salt,hash FROM accounts WHERE email=?')
+    .bind(email).first();
+  const computed=await derivePassword(password,
+    account?from64(account.salt):new Uint8Array(16));
+  if(!account||account.hash!==computed){
+    await env.DB.prepare(
+      'INSERT INTO auth_attempts(id,failures,changed_at) VALUES(?,1,?) '+
+      'ON CONFLICT(id) DO UPDATE SET failures=failures+1,changed_at=excluded.changed_at'
+    ).bind(key,now).run();
+    return fail('Incorrect email or password',401);
+  }
+  await env.DB.prepare('DELETE FROM auth_attempts WHERE id=?').bind(key).run();
+  const session=await makeSession(email,env);
+  return json({ok:true,email,session:session.token,expiresAt:session.exp});
+}
+
 async function ownerApi(request, env, url) {
-  if (!owner(request, env)) return fail('Owner authentication required', 401);
+  if (!await owner(request, env)) return fail('Owner authentication required', 401);
   if (url.pathname === '/v1/owner/qr' && request.method === 'GET') {
     const code = await env.DB.prepare(
       'SELECT token,created_at FROM qr_codes WHERE active=1 ORDER BY created_at DESC LIMIT 1'
@@ -345,14 +434,21 @@ export default {
       if (!originAllowed(request) && request.method !== 'GET') {
         return fail('Cross-origin request refused', 403);
       }
+      if (url.pathname.startsWith('/v1/auth/')) return authApi(request, env, url);
       if (url.pathname.startsWith('/v1/owner/')) {
         return ownerApi(request, env, url);
       }
       const qrPage = url.pathname.match(/^\/q\/([a-zA-Z0-9-]+)$/);
       if (qrPage && request.method === 'GET') {
         if (!await qrActive(env, qrPage[1])) return fail('QR revoked or missing', 404);
-        const response = await env.ASSETS.fetch(new Request(
-          new URL('/guest.html', request.url)));
+        const response = env.ASSETS
+          ? await env.ASSETS.fetch(new Request(new URL('/guest.html', request.url)))
+          : new Response(GUEST_HTML,{headers:{
+              'content-type':'text/html; charset=utf-8',
+              'x-content-type-options':'nosniff',
+              'content-security-policy':
+                "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'"
+            }});
         const headers = new Headers(response.headers);
         headers.set('cache-control', 'no-store');
         headers.set('x-content-type-options', 'nosniff');
