@@ -31,6 +31,15 @@ class PersonalCloud extends ChangeNotifier {
   String? _qrLink;
   final List<CloudFile> files = [];
   final Map<String, Future<File>> _downloadsInFlight = {};
+  // A single foreground WebSocket replaces all periodic inbox polling.
+  WebSocket? _inboxSocket;
+  StreamSubscription<dynamic>? _inboxSubscription;
+  Timer? _inboxReconnect;
+  bool _inboxLiveEnabled=false;
+  bool _inboxConnecting=false;
+  bool _inboxRefreshPending=false;
+  int _inboxReconnectFailures=0;
+
   String? error;
   bool loading = false;
   bool _loggedOut = false;
@@ -230,6 +239,7 @@ class PersonalCloud extends ChangeNotifier {
   /// Real email/password login and cross-device recovery require the future
   /// account auth service; this is NOT a replacement for authentication.
   Future<void> signOutLocal() async {
+    stopLiveInbox();
     _loggedOut = true;
     _sessionToken=null;
     _qrLink = null;
@@ -240,6 +250,7 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    stopLiveInbox();
     _host = null;
     _ownerToken = null;
     _sessionToken=null;
@@ -285,7 +296,93 @@ class PersonalCloud extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Lightweight metadata sync; dashboard schedules this only while visible.
+  /// Open one authenticated WebSocket while the dashboard is foregrounded.
+  /// Only a 'files-changed' signal crosses the socket; metadata is fetched
+  /// once on reconnect and when a real upload/delete event arrives.
+  void startLiveInbox() {
+    if(_inboxLiveEnabled)return;
+    _inboxLiveEnabled=true;
+    _inboxReconnectFailures=0;
+    unawaited(_connectLiveInbox());
+  }
+
+  void stopLiveInbox() {
+    _inboxLiveEnabled=false;
+    _inboxReconnect?.cancel();
+    _inboxReconnect=null;
+    final old=_inboxSocket;
+    _inboxSocket=null;
+    unawaited(_inboxSubscription?.cancel()??Future<void>.value());
+    _inboxSubscription=null;
+    if(old!=null)unawaited(old.close());
+  }
+
+  Future<void> _connectLiveInbox() async {
+    if(!_inboxLiveEnabled || _inboxConnecting || _inboxSocket!=null ||
+       !signedIn || _host==null)return;
+    _inboxConnecting=true;
+    try {
+      final uri=_host!.replace(scheme:'wss',path:'/v1/owner/events');
+      final socket=await WebSocket.connect(uri.toString(),headers:{
+        HttpHeaders.authorizationHeader:'Bearer '+_sessionToken!,
+      }).timeout(const Duration(seconds:12));
+      if(!_inboxLiveEnabled || !signedIn){
+        await socket.close();
+        return;
+      }
+      _inboxSocket=socket;
+      _inboxReconnectFailures=0;
+      // Reconcile missed upload events after any network interruption.
+      unawaited(_refreshAfterEvent());
+      _inboxSubscription=socket.listen((message){
+        if(message=='files-changed')unawaited(_refreshAfterEvent());
+      },onError:(Object _){
+        _lostLiveInbox(socket);
+      },onDone:(){
+        _lostLiveInbox(socket);
+      },cancelOnError:true);
+    }catch(_){
+      // Old Workers without INBOX_EVENTS cannot push; the manual Refresh
+      // button remains usable until the user upgrades their own Worker.
+      _scheduleInboxReconnect();
+    }finally{
+      _inboxConnecting=false;
+    }
+  }
+
+  void _lostLiveInbox(WebSocket socket) {
+    if(!identical(_inboxSocket,socket))return;
+    _inboxSocket=null;
+    unawaited(_inboxSubscription?.cancel()??Future<void>.value());
+    _inboxSubscription=null;
+    _scheduleInboxReconnect();
+  }
+
+  void _scheduleInboxReconnect() {
+    if(!_inboxLiveEnabled || !signedIn || _inboxReconnect!=null)return;
+    const seconds=[2,4,8,16,30,60];
+    final index=_inboxReconnectFailures.clamp(0,seconds.length-1);
+    _inboxReconnectFailures++;
+    // Backoff only after a broken socket; never poll a healthy connection.
+    _inboxReconnect=Timer(Duration(seconds:seconds[index]),(){
+      _inboxReconnect=null;
+      unawaited(_connectLiveInbox());
+    });
+  }
+
+  Future<void> _refreshAfterEvent() async {
+    if(loading){
+      _inboxRefreshPending=true;
+      return;
+    }
+    await refreshFiles();
+    if(_inboxRefreshPending && _inboxLiveEnabled){
+      _inboxRefreshPending=false;
+      await refreshFiles();
+    }
+  }
+
+  /// Metadata fetch is event-triggered or explicit, never timed polling.
   Future<void> refreshFiles() async {
     if (!connected || loading) return;
     loading = true;
