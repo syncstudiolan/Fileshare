@@ -1486,8 +1486,9 @@ class LiveTransferCard extends StatelessWidget {
 
   Widget _file(BuildContext context, LanFile file) =>
       LayoutBuilder(builder: (context, constraints) {
-    final side = constraints.maxWidth >= 420 ? 142.0 :
-      constraints.maxWidth >= 310 ? 122.0 : 104.0;
+    final side = constraints.maxWidth >= 570 ? 206.0 :
+      constraints.maxWidth >= 420 ? 160.0 :
+      constraints.maxWidth >= 310 ? 128.0 : 106.0;
     final active = file.state == TransferState.sending ||
       file.state == TransferState.receiving ||
       file.state == TransferState.preparing;
