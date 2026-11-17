@@ -321,8 +321,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           ]),
           _slider('Quality',_quality.toDouble(),5,100,
             (v)=>setState(()=>_quality=v.round()),(){}),
-          _slider('Target size (KB)',_targetKb.toDouble(),10,15000,
-            (v)=>setState(()=>_targetKb=v.round()),(){}),
+          TextFormField(
+            initialValue:_targetKb.toString(),
+            keyboardType:TextInputType.number,
+            decoration:const InputDecoration(
+              labelText:'Target file size (KB)',
+              helperText:'Enter any value from 1 to 500000 KB; quality may need to decrease.'),
+            onChanged:(v){
+              final n=int.tryParse(v);
+              if(n!=null && n>=1 && n<=500000)_targetKb=n;
+            }),
+          const SizedBox(height:12),
           FilledButton.icon(onPressed:_busy?null:_compress,
             icon:const Icon(Icons.compress_rounded),label:const Text('Compress')),
         ]);
