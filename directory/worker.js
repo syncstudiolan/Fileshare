@@ -104,7 +104,7 @@ async function claim(request, env) {
     return json({ok:true,linked:true,alreadyLinked:true});
   }
   const result = await env.DB.prepare(
-    'INSERT OR IGNORE INTO accounts(email,worker_url,verified_at) VALUES(?,?,?)'
+    'INSERT OR IGNORE INTO accounts(email,worker_url,linked_at) VALUES(?,?,?)'
   ).bind(email,worker,Date.now()).run();
   if (result.meta?.changes !== 1) {
     const current = await env.DB.prepare(
