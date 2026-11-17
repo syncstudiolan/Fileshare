@@ -35,33 +35,47 @@ logs them. Existing per-user Worker stores only its salted password verifier.
 To avoid account takeover, claiming another email requires both a valid
 Worker account session **and** proof of email ownership by OTP.
 
-## Operator setup — NOT run as part of this draft
+## Operator setup and deployment status — 2026-11-17
 
-The app publisher (NOT each end-user) must:
+Operator infrastructure created (without Android/Windows builds):
 
-1. Create a dedicated Cloudflare D1 database named
-   "fileshare-directory-db" and replace the placeholder D1 database ID in
-   wrangler.jsonc. Run directory/schema.sql in this D1.
+- Cloudflare Worker `fileshare-directory` has been uploaded and enabled at
+  `https://fileshare-directory.modeltech0.workers.dev`.
+- Dedicated D1 `fileshare-directory-db` was created; `schema.sql` applied.
+- Cloudflare bindings `DB` and `DIRECTORY_OTP_SECRET` were configured.
+- Daily D1 cleanup schedule `0 3 * * *` configured.
+- Both Flutter platform targets share `AccountDirectory`, now pointed at
+  this operator-owned HTTPS endpoint by default.
+
+**Not yet operational end-to-end:** no transactional sender credentials,
+verified sender domain, or `EMAIL_FROM` have been configured. Therefore
+`/v1/directory/claim` intentionally returns 503. Do not represent new-user
+email verification, account creation, or second-device login as passed.
+No personal user Worker was provisioned and no real Android/Windows login was
+performed during this infrastructure-only setup. Do not run release/build
+workflows without a separate instruction.
+
+Remaining operator steps:
+
+1. Keep the existing D1 binding and schema intact; do not create a duplicate.
 2. Configure a transactional email sender (Resend is supported). Set
    Worker secrets **DIRECTORY_OTP_SECRET** (random 32+ bytes) and
    **RESEND_API_KEY**. Configure **EMAIL_FROM** with an authenticated sending
    address and, if needed, **ALLOWED_ORIGIN** for official web clients.
    Secrets stay in Cloudflare, NEVER in GitHub or the APK.
-3. Deploy directory/worker.js under a single permanent HTTPS URL. Set the
-   official app build variable **FILE_SHARE_DIRECTORY_URL** to that URL.
-   This is operator configuration in a future approved build, NOT a setting
-   individual users must enter.
+3. The directory Worker and default app URL are now configured. Confirm
+   HTTPS `/health` and email delivery before enabling production sign-up.
+   Override with **FILE_SHARE_DIRECTORY_URL** only for isolated staging.
 4. Verify outbound email availability, usage/quota, TLS, abuse controls,
    D1 migrations, rate limiting and password security on a **test** account.
    Prefer free tiers; do not enable a paid provider without approval.
 5. Monitor errors, provider limits and abuse protections. Enable Cloudflare
    WAF/Turnstile if the global public directory faces excessive traffic.
 
-The directory's Worker URL is NOT hardcoded here because no directory has
-yet been deployed. Without an official configured directory endpoint, the
-app retains the existing personal Worker URL manual-login fallback. Do not
-claim global email-only login works until this global service is actually
-deployed, the official build points to it, and E2E tests pass.
+The directory URL is now configured in the shared Flutter app. This alone
+DOES NOT make email-only login operational until OTP sending is configured,
+a personal Worker is provisioned, and E2E tests pass. A prior-user personal
+Worker manual-login fallback remains available in the app.
 
 ### Routes
 
@@ -83,6 +97,6 @@ and requires sender-domain verification for production recipients. Cloudflare
 Email Service arbitrary-recipient sending may require Workers Paid.
 The operator must explicitly choose a provider and plan before deployment.
 
-The current project has intentionally *not* built, run, deployed or merged
-this new code, per project-owner instructions. Directory code and tests
-are saved on the same draft pull request.
+The app has not been built, merged, or released. Only the separate directory
+Cloudflare infrastructure has been deployed and its API resources inspected.
+The code remains saved in the existing Draft PR #1.
