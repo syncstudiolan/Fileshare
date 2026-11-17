@@ -273,9 +273,10 @@ class LanEngine extends ChangeNotifier {
     try {
       final obj = jsonDecode(await _db!.readAsString());
       if (obj is List) {
+        final seen = files.map((item) => item.id).toSet();
         for (final raw in obj) {
           final file = LanFile.fromJson(raw);
-          if (file == null) continue;
+          if (file == null || !seen.add(file.id)) continue;
           if (file.state != TransferState.delivered &&
               file.state != TransferState.queued) {
             file.state = TransferState.failed;
@@ -291,8 +292,11 @@ class LanEngine extends ChangeNotifier {
     if(_queueDb==null||!await _queueDb!.exists())return;
     try {
       final raw=jsonDecode(await _queueDb!.readAsString());
-      if(raw is List)queuedBatches.addAll(raw.map(QueuedLanBatch.fromJson)
-        .whereType<QueuedLanBatch>());
+      if(raw is List){
+        final seen = queuedBatches.map((batch) => batch.id).toSet();
+        queuedBatches.addAll(raw.map(QueuedLanBatch.fromJson)
+          .whereType<QueuedLanBatch>().where((batch) => seen.add(batch.id)));
+      }
     }catch(e){error='Pending queue read failed: '+e.toString();}
   }
   void _saveQueue(){
