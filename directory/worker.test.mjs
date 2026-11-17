@@ -4,7 +4,6 @@ import worker from './worker.js';
 
 class FakeD1 {
   accounts = new Map();
-  claims = new Map();
   limits = new Map();
   prepare(sql) {
     let args = [];
@@ -19,9 +18,6 @@ class FakeD1 {
         if (sql.includes('FROM accounts WHERE email')) {
           return db.accounts.get(args[0]) ?? null;
         }
-        if (sql.includes('FROM claims WHERE email')) {
-          return db.claims.get(args[0]) ?? null;
-        }
         throw Error('Unknown D1 first: '+sql);
       },
       async run() {
@@ -32,23 +28,6 @@ class FakeD1 {
             {count:old.count+1,starts_at:old.starts_at} :
             {count:1,starts_at:now});
           return {meta:{changes:1}};
-        }
-        if (sql.startsWith('INSERT INTO claims')) {
-          const [email, worker_url, nonce, otp_hash, expires_at] = args;
-          db.claims.set(email,{worker_url,nonce,otp_hash,expires_at,attempts:0});
-          return {meta:{changes:1}};
-        }
-        if (sql.startsWith('DELETE FROM claims')) {
-          const [email,nonce] = args;
-          const current=db.claims.get(email);
-          if (current && (nonce===undefined||current.nonce===nonce))
-            db.claims.delete(email);
-          return {meta:{changes:1}};
-        }
-        if (sql.startsWith('UPDATE claims SET attempts')) {
-          const record=db.claims.get(args[0]);
-          if(record)record.attempts++;
-          return {meta:{changes:record?1:0}};
         }
         if (sql.startsWith('INSERT OR IGNORE INTO accounts')) {
           const [email,worker_url,verified_at]=args;
@@ -69,7 +48,6 @@ const email='user@example.com';
 const session='private-session-abcdefghijklmnopqrstuvwxyz';
 const env=()=>({
   DB:new FakeD1(), DIRECTORY_RATE_SECRET:'directory-secret-abcdefghijklmnopqrstuvwxyz',
-  RESEND_API_KEY:'fake-not-real-token',EMAIL_FROM:'File Share <verify@example.com>',
 });
 const make=(path,values)=>new Request('https://directory.example.net'+path,{
   method:'POST',
@@ -133,8 +111,8 @@ test('first personal cloud binding requires session; different Worker cannot tak
       'correct-secure-password'),false);
   }finally{globalThis.fetch=originalFetch;}
 });
-test('a directory without OTP mail configuration still serves health',async()=>{
-  const state=env();delete state.RESEND_API_KEY;delete state.EMAIL_FROM;
+test('directory health requires no mail service',async()=>{
+  const state=env();
   const response=await worker.fetch(
     new Request('https://directory.example.net/health'),state);
   assert.equal(response.status,200);
