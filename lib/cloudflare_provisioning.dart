@@ -68,7 +68,7 @@ class CloudflareProvisioner extends ChangeNotifier {
     }).timeout(const Duration(seconds:25));
     if(response.statusCode==404)return false;
     if(response.statusCode>=200&&response.statusCode<300)return true;
-    throw StateError('Cannot check existing Cloudflare resource (HTTP ${response.statusCode})');
+    throw StateError('Cannot check existing Cloudflare resource (HTTP ' + response.statusCode.toString() + ')');
   }
   Future<void> _upload(String token,String account,String worker,String code,
       String database,String bucket,String secret)async{
@@ -92,7 +92,7 @@ class CloudflareProvisioner extends ChangeNotifier {
     try{result=jsonDecode(response.body);}catch(_){result=null;}
     if(response.statusCode<200||response.statusCode>=300||
        result is! Map||result['success']!=true){
-      throw StateError('Worker upload refused: ${result is Map ? result['errors'] : response.statusCode}');
+      throw StateError('Worker upload refused: ' + (result is Map ? result['errors'].toString() : response.statusCode.toString()));
     }
   }
 
@@ -169,7 +169,7 @@ class CloudflareProvisioner extends ChangeNotifier {
       if(!script.contains(placeholder)){
         throw StateError('Bundled personal Worker template is incompatible');
       }
-      script=script.replaceFirst(placeholder,'const GUEST_HTML = ${jsonEncode(guest)};');
+      script=script.replaceFirst(placeholder,'const GUEST_HTML = ' + jsonEncode(guest) + ';');
       _progress('Uploading Worker and encrypted owner secret');
       await _upload(token,id,worker,script,dbId,bucket,bootstrap);
       _progress('Enabling your workers.dev address');
