@@ -1,7 +1,9 @@
 name: Validate File Share background LAN and compact releases
 
 on:
-  # Manual-only by project owner's request: edits must never launch builds.
+  # Android test build on the explicitly requested merge into main.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -48,6 +50,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
