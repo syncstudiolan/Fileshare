@@ -360,7 +360,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           FilledButton.icon(onPressed:_busy?null:_removeBackground,
             icon:const Icon(Icons.auto_fix_high),
             label:const Text('AI Remove Background')),
-          if(!Platform.isAndroid) ...[
+          if(true) ...[
             const SizedBox(height:8),
             _slider('Plain background tolerance',_tolerance,5,120,
               (v)=>setState(()=>_tolerance=v),(){}),
@@ -380,12 +380,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
                   child:color==_background?const Icon(Icons.check,size:18):null)),
           ]),
           const SizedBox(height:8),
-          Row(children:[
-            OutlinedButton.icon(onPressed:_pickBackground,
+          Wrap(spacing:8,runSpacing:8,children:[
+            OutlinedButton.icon(onPressed:_busy?null:_pickBackground,
               icon:const Icon(Icons.photo_library_outlined),
               label:const Text('Gallery background')),
             const SizedBox(width:8),
-            OutlinedButton.icon(onPressed:()=>_customColorDialog(),
+            OutlinedButton.icon(onPressed:_busy?null:()=>_customColorDialog(),
               icon:const Icon(Icons.palette_outlined),label:const Text('Custom')),
           ]),
         ]);
@@ -435,10 +435,34 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           ]),
         ]);
       case 'Filters':
-        return Wrap(spacing:8,runSpacing:8,children:[
-          for(final type in ['Normal','Vivid','Warm','Cool','B&W','Vintage','Soft'])
-            ActionChip(label:Text(type),onPressed:()=>_apply('filter',{
-              'name':type},description:'Filter: $type')),
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Live filter previews',style:TextStyle(fontSize:12)),
+          const SizedBox(height:12),
+          SizedBox(height:112,
+            child:ListView(scrollDirection:Axis.horizontal,children:[
+              for(final type in const ['Normal','Vivid','Warm','Cool','B&W','Vintage','Soft'])
+                Padding(padding:const EdgeInsets.only(right:10),
+                  child:InkWell(
+                    onTap:_busy?null:(){
+                      setState(()=>_selectedFilter=type);
+                      unawaited(_apply('filter',{'name':type},
+                        description:'Filter: $type'));
+                    },
+                    borderRadius:BorderRadius.circular(14),
+                    child:Column(children:[
+                      Container(width:76,height:76,clipBehavior:Clip.antiAlias,
+                        decoration:BoxDecoration(
+                          borderRadius:BorderRadius.circular(12),
+                          border:Border.all(
+                            color:_selectedFilter==type?FileTheme.violet:
+                              FileTheme.violet.withValues(alpha:.2),width:2)),
+                        child:_filterThumbnail(type)),
+                      const SizedBox(height:5),
+                      Text(type,style:TextStyle(fontSize:11,
+                        color:FileTheme.foreground(context))),
+                    ]),
+                  )),
+            ])),
         ]);
       case 'Erase':
         return Column(children:[
@@ -468,6 +492,25 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       default:return const SizedBox.shrink();
     }
   }
+  Widget _filterThumbnail(String type){
+    final bytes=_bytes;
+    if(bytes==null)return const Icon(Icons.image_outlined);
+    final child=Image.memory(bytes,fit:BoxFit.cover,cacheWidth:140,
+      gaplessPlayback:true);
+    final matrix=switch(type){
+      'B&W'=><double>[.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,
+        .2126,.7152,.0722,0,0,0,0,0,1,0],
+      'Vivid'=><double>[1.18,0,0,0,0,0,1.12,0,0,0,0,0,1.1,0,0,0,0,0,1,0],
+      'Warm'=><double>[1.13,0,0,0,4,0,1.04,0,0,2,0,0,.83,0,0,0,0,0,1,0],
+      'Cool'=><double>[.85,0,0,0,0,0,1.02,0,0,0,0,0,1.15,0,3,0,0,0,1,0],
+      'Vintage'=><double>[.393,.769,.189,0,0,.349,.686,.168,0,0,
+        .272,.534,.131,0,0,0,0,0,1,0],
+      _=>null,
+    };
+    return matrix==null?child:ColorFiltered(
+      colorFilter:ColorFilter.matrix(matrix),child:child);
+  }
+
   String _cropRatio='Free',_eraseMode='Erase';
   void _setCropRatio(String ratio){
     setState((){
