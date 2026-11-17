@@ -1481,6 +1481,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _showSamples = true;
   bool _refreshing = false;
   bool _desktopSidebarVisible = true;
+  final _desktopNavigator = GlobalKey<NavigatorState>();
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
 
@@ -1560,7 +1561,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
-    Navigator.of(context).push(fadePage(screen));
+    if (Platform.isWindows && MediaQuery.sizeOf(context).width >= 820) {
+      final nav = _desktopNavigator.currentState;
+      if (nav != null) {
+        nav.popUntil((route) => route.isFirst);
+        if (title != 'Home') nav.push(fadePage(screen));
+        return;
+      }
+    }
+    if (title != 'Home') Navigator.of(context).push(fadePage(screen));
   }
 
   Widget _nav(String label, IconData icon, {bool enabled = true,
@@ -1572,7 +1581,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       : const DesignTag('Later'),
     onTap: enabled ? () {
       if (!pinned) Navigator.pop(context);
-      if (label != 'Home') _navigate(label);
+      if (pinned || label != 'Home') _navigate(label);
     } : null,
   );
 
@@ -1870,8 +1879,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     ));
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _dashboardColumn(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
     final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
     final groups = _timeline();
@@ -1879,14 +1887,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final samples = mockTransfers.where((f) =>
       _filter == 'All' || (_filter == 'Sent' && f.sent) ||
       (_filter == 'Received' && !f.sent)).toList();
-    return RootBackGuard(child: Scaffold(
-      key: _scaffold,
-      drawer: _drawer(),
-      body: Container(
-        decoration: BoxDecoration(gradient: FileTheme.background(context)),
-        child: SafeArea(child: Row(children: [
-          if (desktop && _desktopSidebarVisible) _desktopSidebar(),
-          Expanded(child: Column(children: [
+    return Column(children: [
             Padding(
               padding: EdgeInsets.fromLTRB(wide ? 24 : 10, 10,
                 wide ? 24 : 10, 5),
@@ -2011,8 +2012,26 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 ]),
               ),
             ),
-          ]),
-          ),
+          ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
+    return RootBackGuard(child: Scaffold(
+      key: _scaffold,
+      drawer: _drawer(),
+      body: Container(
+        decoration: BoxDecoration(gradient: FileTheme.background(context)),
+        child: SafeArea(child: Row(children: [
+          if (desktop && _desktopSidebarVisible) _desktopSidebar(),
+          Expanded(child: desktop
+            ? Navigator(
+                key: _desktopNavigator,
+                onGenerateRoute: (_) => MaterialPageRoute<void>(
+                  builder: (pageContext) => _dashboardColumn(pageContext)),
+              )
+            : _dashboardColumn(context)),
         ])),
       ),
     ));
