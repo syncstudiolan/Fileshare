@@ -79,6 +79,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       await ImageEditingHistory.instance.load();
       final path=widget.draft?.filePath??widget.sourcePath;
       if(path==null)return; // Empty canvas: Camera and Browse stay visible.
+      if(path==null)throw StateError('No image selected');
       final bytes=await File(path).readAsBytes();
       final dimensions=await ImageEditingEngine.dimensions(bytes);
       _draftId=widget.draft?.id??
@@ -694,11 +695,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _=>tool,
   };
   IconData _toolIcon(String tool)=>switch(tool){
-    'Background'=>Icons.person_remove_alt_1_outlined,
+    'Background'=>Icons.person_outline_rounded,
     'Compress'=>Icons.compress_rounded,
     'Crop'=>Icons.crop_rotate_rounded,
     'Filters'=>Icons.filter_vintage_outlined,
-    'Erase'=>Icons.auto_fix_off_outlined,
+    'Erase'=>Icons.auto_fix_off,
     _=>Icons.tune_rounded,
   };
   void _selectTool(String tool){
@@ -724,10 +725,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             Icon(_toolIcon(tool),size:19,
               color:selected?Colors.white:FileTheme.violet),
             const SizedBox(width:9),
-            Flexible(child:Text(title,maxLines:1,
-              overflow:TextOverflow.ellipsis,
-              style:TextStyle(fontWeight:FontWeight.w650,fontSize:13,
-                color:selected?Colors.white:FileTheme.foreground(context)))),
+            Text(title,maxLines:1,overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontWeight:FontWeight.w600,fontSize:13,
+                color:selected?Colors.white:FileTheme.foreground(context))),
           ]),
         ),
       ),
@@ -1007,7 +1007,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       IconButton(tooltip:'Before / After',onPressed:_bytes==null?null:
         ()=>setState(()=>_showOriginal=!_showOriginal),
         icon:Icon(_showOriginal?Icons.visibility_off_outlined:
-          Icons.compare_outlined)),
+          Icons.compare)),
       _menu(),
     ]),
     body:Container(
