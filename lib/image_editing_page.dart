@@ -44,6 +44,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   double _ratio=1, _brightness=1, _contrast=1,_saturation=1,_exposure=0;
   double _eraseRadius=.035,_softness=.45, _tolerance=42;
   Rect _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+  List<Offset> _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+    const Offset(.94,.94),const Offset(.06,.94)];
+  int? _activeCropHandle;
   final List<Offset> _stroke=[];
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
@@ -135,6 +138,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
         _undo.clear();_redo.clear();_steps.clear();
         _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+        const Offset(.94,.94),const Offset(.06,.94)];
         _error=null;
         _showOriginal=false;
       });
@@ -175,6 +180,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       _ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+        const Offset(.94,.94),const Offset(.06,.94)];
     });
     await _saveDraft();
   }
@@ -192,6 +199,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       _ratio=size[0]/size[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+        const Offset(.94,.94),const Offset(.06,.94)];
     });
     await _saveDraft();
   }
@@ -539,6 +548,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       final w=math.min(.9,.8*value/_ratio);
       final h=math.min(.9,w*_ratio/value);
       _crop=Rect.fromLTWH((1-w)/2,(1-h)/2,w,h);
+      _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,
+        _crop.bottomLeft];
     });
   }
   void _commitAdjust(){
@@ -552,9 +563,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     });
     unawaited(_apply('adjust',options));
   }
-  void _commitCrop()=>unawaited(_apply('crop',{
-    'x':_crop.left,'y':_crop.top,'w':_crop.width,'h':_crop.height,
-  }));
+  void _commitCrop(){
+    final points=_cropCorners;
+    unawaited(_apply('perspective',{
+      'tlx':points[0].dx,'tly':points[0].dy,
+      'trx':points[1].dx,'try':points[1].dy,
+      'brx':points[2].dx,'bry':points[2].dy,
+      'blx':points[3].dx,'bly':points[3].dy,
+    },description:'Perspective freeform crop'));
+  }
 
   Future<void> _customColorDialog()async{
     var red=_custom.r*255,green=_custom.g*255,
@@ -589,7 +606,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     final point=Offset(d.localPosition.dx/size.width,
       d.localPosition.dy/size.height);
     if(_tool=='Crop'){
-      _cropResize=(point-_crop.bottomRight).distance<.15;
+      _activeCropHandle=null;
+      for(var i=0;i<_cropCorners.length;i++){
+        if((point-_cropCorners[i]).distance<.12){
+          _activeCropHandle=i;break;
+        }
+      }
     }else if(_tool=='Erase'){
       _stroke..clear()..add(point);
     }
@@ -598,14 +620,24 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_tool=='Crop'){
       final dx=d.delta.dx/size.width,dy=d.delta.dy/size.height;
       setState((){
-        if(_cropResize){
-          _crop=Rect.fromLTRB(_crop.left,_crop.top,
-            (_crop.right+dx).clamp(_crop.left+.05,1).toDouble(),
-            (_crop.bottom+dy).clamp(_crop.top+.05,1).toDouble());
+        final index=_activeCropHandle;
+        if(index!=null){
+          final old=_cropCorners[index];
+          _cropCorners[index]=Offset(
+            (old.dx+dx).clamp(0.0,1.0).toDouble(),
+            (old.dy+dy).clamp(0.0,1.0).toDouble());
         }else{
-          final l=(_crop.left+dx).clamp(0,1-_crop.width).toDouble();
-          final t=(_crop.top+dy).clamp(0,1-_crop.height).toDouble();
-          _crop=Rect.fromLTWH(l,t,_crop.width,_crop.height);
+          // Drag inside polygon to move the entire crop, without changing
+          // its shape or dragging individual corner handles by accident.
+          final left=_cropCorners.map((p)=>p.dx).reduce(math.min);
+          final right=_cropCorners.map((p)=>p.dx).reduce(math.max);
+          final top=_cropCorners.map((p)=>p.dy).reduce(math.min);
+          final bottom=_cropCorners.map((p)=>p.dy).reduce(math.max);
+          final tx=dx.clamp(-left,1-right).toDouble();
+          final ty=dy.clamp(-top,1-bottom).toDouble();
+          _cropCorners=[
+            for(final point in _cropCorners)point+Offset(tx,ty),
+          ];
         }
       });
     }else if(_tool=='Erase'){
@@ -653,7 +685,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           child:CustomPaint(painter:_CheckerPainter())),
         _liveAdjustment(Image.memory(_bytes!,fit:BoxFit.fill,
           gaplessPlayback:true,filterQuality:FilterQuality.medium)),
-        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_crop)),
+        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners)),
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
