@@ -13,6 +13,7 @@ import 'package:image/image.dart' as img;
 import 'main.dart' show FileTheme;
 import 'image_editing_engine.dart';
 import 'image_editing_storage.dart';
+import 'image_editing_windows_ai.dart';
 
 /// File Share's native-feeling editing workspace. The main canvas, transition
 /// animations and controls are Flutter GPU rendered; expensive file encodes and
@@ -134,8 +135,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           await segmenter.close();
           if(await temporary.exists())await temporary.delete();
         }
+      }else if(Platform.isWindows){
+        // Portable U²-NetP runs locally on Windows after one verified model
+        // download. No Cloudflare requests or hosted photo processing.
+        width=WindowsBackgroundAi.modelSize;
+        height=WindowsBackgroundAi.modelSize;
+        mask=await WindowsBackgroundAi.segmentationMask(data);
       }else{
-        // Windows color-background remover: not falsely presented as AI.
         final decoded=img.decodeImage(data)!;
         width=decoded.width;height=decoded.height;
         mask=await ImageEditingEngine.simpleBackgroundMask(data,tolerance:_tolerance);
@@ -144,9 +150,26 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         'mask':mask,'maskWidth':width,'maskHeight':height,
       });
       await _commit(data,result,Platform.isAndroid
-        ?'Google ML Kit background removal':'Color background removal');
+        ?'Google ML Kit background removal':'U2NetP background removal');
       _format='PNG';
     }catch(e){_message('Background removal failed: $e');}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
+  Future<void> _removePlainBackground()async{
+    final data=_bytes;
+    if(data==null||_busy)return;
+    setState(()=>_busy=true);
+    try {
+      final decoded=img.decodeImage(data)!;
+      final mask=await ImageEditingEngine.simpleBackgroundMask(
+        data,tolerance:_tolerance);
+      final result=await ImageEditingEngine.edit(data,'background',{
+        'mask':mask,'maskWidth':decoded.width,'maskHeight':decoded.height,
+      });
+      await _commit(data,result,'Remove plain-color background');
+      _format='PNG';
+    }catch(e){_message('Plain background removal failed: $e');}
     finally{if(mounted)setState(()=>_busy=false);}
   }
 
@@ -243,14 +266,22 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       case 'Background':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           Text(Platform.isAndroid?'Fast recommended: Google ML Kit':
-            'Windows: plain-color removal (not AI segmentation)',
+            Platform.isWindows?'Windows: U²-NetP on-device AI (4.6 MB first download)':
+            'Plain-color background remover',
             style:TextStyle(color:FileTheme.muted(context))),
           const SizedBox(height:10),
           FilledButton.icon(onPressed:_busy?null:_removeBackground,
             icon:const Icon(Icons.auto_fix_high),
-            label:const Text('Remove Background')),
-          if(!Platform.isAndroid)_slider('Color tolerance',_tolerance,5,120,
-            (v)=>setState(()=>_tolerance=v),(){}),
+            label:const Text('AI Remove Background')),
+          if(!Platform.isAndroid) ...[
+            const SizedBox(height:8),
+            _slider('Plain background tolerance',_tolerance,5,120,
+              (v)=>setState(()=>_tolerance=v),(){}),
+            OutlinedButton.icon(
+              onPressed:_busy?null:_removePlainBackground,
+              icon:const Icon(Icons.colorize_outlined),
+              label:const Text('Remove plain-color background')),
+          ],
           const SizedBox(height:16),
           const Text('Replace background',style:TextStyle(fontWeight:FontWeight.bold)),
           const SizedBox(height:7),
