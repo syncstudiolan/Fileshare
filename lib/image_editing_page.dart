@@ -1083,54 +1083,131 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     if(mounted)ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content:Text('Added to File Share Cart')));
   }
+  Future<void> _historyAction(ImageEditingDraft entry,String action)async{
+    try{
+      switch(action){
+        case 'edit':
+          await Navigator.of(context).push(fadePage<void>(
+            ImageEditingPage(draft:entry)));
+        case 'share':
+          await SharePlus.instance.share(ShareParams(
+            files:[XFile(entry.filePath)]));
+        case 'cart':
+          await _cart(entry);
+        case 'download':
+          final bytes=await File(entry.filePath).readAsBytes();
+          final jpeg=bytes.length>1&&bytes[0]==0xff&&bytes[1]==0xd8;
+          await FilePicker.saveFile(fileName:'edited_${entry.id}.${jpeg?'jpg':'png'}',
+            bytes:bytes,mimeType:jpeg?'image/jpeg':'image/png');
+        case 'delete':
+          final confirmed=await showDialog<bool>(context:context,
+            builder:(ctx)=>AlertDialog(
+              title:const Text('Delete this image draft?'),
+              content:const Text('This removes the local editing history copy. '
+                'Your original file is not affected.'),
+              actions:[
+                TextButton(onPressed:()=>Navigator.pop(ctx,false),
+                  child:const Text('Cancel')),
+                FilledButton(onPressed:()=>Navigator.pop(ctx,true),
+                  child:const Text('Delete')),
+              ]));
+          if(confirmed==true){
+            await ImageEditingHistory.instance.delete(entry);
+          }
+      }
+    }catch(_){
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content:Text('Image action failed. Please retry.')));
+    }
+  }
+
   @override Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('Image History')),
-    body:ListenableBuilder(listenable:ImageEditingHistory.instance,
-      builder:(context,_) {
-        final items=ImageEditingHistory.instance.drafts;
-        if(items.isEmpty)return const Center(child:Text('No image drafts yet'));
-        return ListView.builder(itemCount:items.length,
-          itemBuilder:(context,index){
-            final entry=items[index];
-            return Card(margin:const EdgeInsets.symmetric(horizontal:10,vertical:6),
-              child:Padding(padding:const EdgeInsets.all(10),child:Column(children:[
-                Row(children:[
-                  ClipRRect(borderRadius:BorderRadius.circular(12),
-                    child:Image.file(File(entry.filePath),width:85,height:85,
-                      fit:BoxFit.cover,cacheWidth:170)),
-                  const SizedBox(width:12),
-                  Expanded(child:Column(
-                    crossAxisAlignment:CrossAxisAlignment.start,children:[
-                      Text(entry.name,maxLines:2,overflow:TextOverflow.ellipsis),
-                      Text(entry.updated.toLocal().toString().substring(0,16),
-                        style:TextStyle(color:FileTheme.muted(context))),
-                      Text('${entry.steps.length} edits',
-                        style:TextStyle(color:FileTheme.muted(context))),
-                    ])),
-                ]),
-                Wrap(spacing:3,runSpacing:3,children:[
-                  TextButton.icon(onPressed:()=>Navigator.push(context,
-                    MaterialPageRoute<void>(builder:(_)=>ImageEditingPage(draft:entry))),
-                    icon:const Icon(Icons.edit),label:const Text('Re-edit')),
-                  TextButton.icon(onPressed:()=>SharePlus.instance.share(
-                    ShareParams(files:[XFile(entry.filePath)])),
-                    icon:const Icon(Icons.share),label:const Text('Share')),
-                  TextButton.icon(onPressed:()=>_cart(entry),
-                    icon:const Icon(Icons.send),label:const Text('Cart')),
-                  TextButton.icon(onPressed:()async{
-                    final data=await File(entry.filePath).readAsBytes();
-                    final isJpg=data.length>1 && data[0]==0xff && data[1]==0xd8;
-                    await FilePicker.saveFile(
-                      fileName:'edited_${entry.id}.${isJpg?'jpg':'png'}',
-                      bytes:data,mimeType:isJpg?'image/jpeg':'image/png');
-                  },icon:const Icon(Icons.download),label:const Text('Download')),
-                  TextButton.icon(onPressed:()async{
-                    await ImageEditingHistory.instance.delete(entry);
-                  },icon:const Icon(Icons.delete_outline),label:const Text('Delete')),
-                ]),
-              ])));
-          });
-      }),
+    appBar:AppBar(title:const Row(children:[
+      Icon(Icons.history,color:FileTheme.violet),
+      SizedBox(width:10),Text('Image History'),
+    ])),
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:ListenableBuilder(listenable:ImageEditingHistory.instance,
+        builder:(context,_){
+          final items=ImageEditingHistory.instance.drafts;
+          if(items.isEmpty)return Center(child:Column(
+            mainAxisSize:MainAxisSize.min,children:[
+              const Icon(Icons.photo_library_outlined,
+                size:60,color:FileTheme.violet),
+              const SizedBox(height:12),
+              Text('No saved images yet',
+                style:Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height:6),
+              const Text('Your edits are saved locally as you work.'),
+            ]));
+          return Center(child:ConstrainedBox(
+            constraints:const BoxConstraints(maxWidth:850),
+            child:ListView.separated(
+              padding:const EdgeInsets.all(15),
+              itemCount:items.length,
+              separatorBuilder:(_,__)=>const SizedBox(height:12),
+              itemBuilder:(context,index){
+                final entry=items[index];
+                return Material(
+                  color:Theme.of(context).colorScheme.surface,
+                  borderRadius:BorderRadius.circular(18),
+                  child:Container(
+                    padding:const EdgeInsets.all(12),
+                    decoration:BoxDecoration(
+                      borderRadius:BorderRadius.circular(18),
+                      border:Border.all(color:FileTheme.violet.withValues(alpha:.2))),
+                    child:Row(children:[
+                      ClipRRect(borderRadius:BorderRadius.circular(12),
+                        child:Image.file(File(entry.filePath),
+                          width:98,height:86,fit:BoxFit.cover,cacheWidth:196,
+                          errorBuilder:(_,__,___)=>const Icon(
+                            Icons.broken_image_outlined,size:40))),
+                      const SizedBox(width:12),
+                      Expanded(child:Column(
+                        crossAxisAlignment:CrossAxisAlignment.start,
+                        children:[
+                          Text(entry.name,maxLines:2,
+                            overflow:TextOverflow.ellipsis,
+                            style:const TextStyle(
+                              fontWeight:FontWeight.w800,fontSize:14)),
+                          const SizedBox(height:5),
+                          Text(entry.updated.toLocal().toString().substring(0,16),
+                            style:TextStyle(fontSize:12,
+                              color:FileTheme.muted(context))),
+                          const SizedBox(height:5),
+                          Text('${entry.steps.length} edit steps',
+                            style:const TextStyle(fontSize:11,
+                              color:FileTheme.violet)),
+                        ])),
+                      PopupMenuButton<String>(
+                        tooltip:'Image history actions',
+                        onSelected:(action)=>unawaited(
+                          _historyAction(entry,action)),
+                        itemBuilder:(_)=>const [
+                          PopupMenuItem(value:'edit',child:ListTile(
+                            dense:true,leading:Icon(Icons.edit_outlined),
+                            title:Text('Re-edit'))),
+                          PopupMenuItem(value:'share',child:ListTile(
+                            dense:true,leading:Icon(Icons.share_outlined),
+                            title:Text('Share'))),
+                          PopupMenuItem(value:'cart',child:ListTile(
+                            dense:true,leading:Icon(Icons.send_outlined),
+                            title:Text('Send to File Share'))),
+                          PopupMenuItem(value:'download',child:ListTile(
+                            dense:true,leading:Icon(Icons.download_outlined),
+                            title:Text('Download'))),
+                          PopupMenuItem(value:'delete',child:ListTile(
+                            dense:true,leading:Icon(Icons.delete_outline),
+                            title:Text('Delete'))),
+                        ]),
+                    ]),
+                  ),
+                );
+              }),
+          ));
+        }),
+    ),
   );
 }
 
