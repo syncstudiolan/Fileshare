@@ -78,75 +78,64 @@ const make=(path,values)=>new Request('https://directory.example.net'+path,{
   body:JSON.stringify(values),
 });
 const originalFetch=globalThis.fetch;
-test('email-only discovery requires Worker ownership proof AND email OTP',async()=>{
-  const state=env();let lastEmail='';
+test('first personal cloud binding requires session; different Worker cannot take over', async () => {
+  const state=env();
+  const other='https://other-test.customer.workers.dev';
   globalThis.fetch=async(input,options)=>{
     const url=String(input);
-    if(url==='https://api.resend.com/emails'){
-      lastEmail=JSON.parse(options.body).text;
-      return Response.json({id:'email-1'});
+    if(url.endsWith('/v1/auth/me')) {
+      const signed=options.headers.authorization==='Bearer '+session;
+      return Response.json({ok:signed,email},{status:signed?200:401});
     }
-    if(url===personalOrigin+'/v1/auth/me'){
-      return Response.json({ok:true,email},{status:
-        options.headers.authorization==='Bearer '+session?200:401});
-    }
-    if(url===personalOrigin+'/v1/auth/login'){
+    if(url.endsWith('/v1/auth/login')) {
       const payload=JSON.parse(options.body);
-      if(payload.password!=='correct-secure-password'){
+      if(payload.password!=='correct-secure-password')
         return Response.json({ok:false},{status:401});
-      }
-      return Response.json({ok:true,email,session,
-        expiresAt:Date.now()+3600_000});
+      return Response.json({ok:true,email,session,expiresAt:Date.now()+3600000});
     }
-    throw Error('Unexpected network operation: '+url);
+    throw Error('unexpected '+url);
   };
   try {
-    const invalid =await worker.fetch(make('/v1/directory/claim',{
-      email,workerUrl:'http://127.0.0.1:8080/',personalSession:session,
+    const bad=await worker.fetch(make('/v1/directory/claim',{
+      email,workerUrl:personalOrigin,personalSession:'invalid'
     }),state);
-    assert.equal(invalid.status,400);
-    const missingProof=await worker.fetch(make('/v1/directory/claim',{
-      email,workerUrl:personalOrigin,personalSession:'fake',
+    assert.equal(bad.status,403);
+    const first=await worker.fetch(make('/v1/directory/claim',{
+      email,workerUrl:personalOrigin,personalSession:session
     }),state);
-    assert.equal(missingProof.status,403);
-    const started=await worker.fetch(make('/v1/directory/claim',{
-      email,workerUrl:personalOrigin,personalSession:session,
-    }),state);
-    assert.equal(started.status,200);
-    const code=lastEmail.match(/(\d{8})/)?.[1];
-    assert.ok(code);
-    assert.equal(state.DB.claims.get(email).otp_hash.includes(code),false);
-    const invalidOtp=await worker.fetch(make('/v1/directory/verify',{
-      email,code:'00000000',
-    }),state);
-    assert.equal(invalidOtp.status,403);
-    const verified=await worker.fetch(make('/v1/directory/verify',{
-      email,code,
-    }),state);
-    assert.equal(verified.status,200);
+    assert.equal(first.status,200);
     assert.equal(state.DB.accounts.get(email).worker_url,personalOrigin);
-    assert.equal(JSON.stringify([...state.DB.accounts.values()]).includes(
-      'correct-secure-password'),false);
-    const denied=await worker.fetch(make('/v1/directory/login',{
-      email,password:'incorrect-password',
+    const same=await worker.fetch(make('/v1/directory/claim',{
+      email,workerUrl:personalOrigin,personalSession:session
     }),state);
-    assert.equal(denied.status,401);
-    const good=await worker.fetch(make('/v1/directory/login',{
-      email,password:'correct-secure-password',
+    assert.equal(same.status,200);
+    const otherCloud=await worker.fetch(make('/v1/directory/claim',{
+      email,workerUrl:other,personalSession:session
     }),state);
-    assert.equal(good.status,200);
-    const answer=await good.json();
-    assert.equal(answer.workerUrl,personalOrigin);
-    assert.equal(answer.session,session);
-    assert.equal(answer.email,email);
+    assert.equal(otherCloud.status,409);
+    assert.equal(state.DB.accounts.get(email).worker_url,personalOrigin);
+    const oldVerify=await worker.fetch(make('/v1/directory/verify',{
+      email,code:'1234'
+    }),state);
+    assert.equal(oldVerify.status,404);
+    const rejected=await worker.fetch(make('/v1/directory/login',{
+      email,password:'incorrect-password'
+    }),state);
+    assert.equal(rejected.status,401);
+    const success=await worker.fetch(make('/v1/directory/login',{
+      email,password:'correct-secure-password'
+    }),state);
+    assert.equal(success.status,200);
+    const result=await success.json();
+    assert.equal(result.workerUrl,personalOrigin);
+    assert.equal(result.email,email);
     assert.equal(JSON.stringify([...state.DB.accounts.values()]).includes(
       'correct-secure-password'),false);
   }finally{globalThis.fetch=originalFetch;}
 });
-test('unconfigured email sender fails closed',async()=>{
-  const state=env();delete state.RESEND_API_KEY;
-  const response=await worker.fetch(make('/v1/directory/claim',{
-    email,workerUrl:personalOrigin,personalSession:session,
-  }),state);
-  assert.equal(response.status,503);
+test('a directory without OTP mail configuration still serves health',async()=>{
+  const state=env();delete state.RESEND_API_KEY;delete state.EMAIL_FROM;
+  const response=await worker.fetch(
+    new Request('https://directory.example.net/health'),state);
+  assert.equal(response.status,200);
 });
