@@ -28,6 +28,7 @@ class ImageEditingPage extends StatefulWidget {
 
 class _ImageEditingPageState extends State<ImageEditingPage> {
   Uint8List? _bytes;
+  Uint8List? _originalBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
   String _tool='Background';
@@ -67,7 +68,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       _steps.addAll(widget.draft?.steps??[]);
       _ratio=data.width/data.height;
-      if(mounted)setState(()=>_bytes=Uint8List.fromList(bytes));
+      if(mounted)setState((){
+        _bytes=Uint8List.fromList(bytes);
+        _originalBytes=Uint8List.fromList(bytes);
+      });
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
   }
@@ -195,8 +199,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(picked.isEmpty)return;
       final first=picked.first;
       final path=first.path;
-      if(path==null)throw StateError('Gallery image path unavailable');
-      await _replaceBackground(picture:await File(path).readAsBytes());
+      await _replaceBackground(picture:path==null
+        ?await first.readAsBytes():await File(path).readAsBytes());
     }catch(e){_message('Choose background failed: $e');}
   }
 
@@ -502,9 +506,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _liveAdjustment(Image.memory(_bytes!,fit:BoxFit.fill,
           gaplessPlayback:true,filterQuality:FilterQuality.medium)),
         if(_tool=='Crop')CustomPaint(painter:_CropPainter(_crop)),
-        if(_showOriginal)
-          Image.file(File(widget.sourcePath??widget.draft!.filePath),
-            fit:BoxFit.fill),
+        if(_showOriginal && _originalBytes!=null)
+          Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
       if(_tool=='Crop'||_tool=='Erase'){
         canvas=GestureDetector(
@@ -655,7 +658,8 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     final root=await getApplicationSupportDirectory();
     final cart=Directory('${root.path}${Platform.pathSeparator}image_editing_cart');
     await cart.create(recursive:true);
-    final name='edited_${DateTime.now().microsecondsSinceEpoch}.png';
+    final isJpg=draft.filePath.toLowerCase().endsWith('.jpg');
+    final name='edited_${DateTime.now().microsecondsSinceEpoch}.${isJpg?'jpg':'png'}';
     final file=await original.copy('${cart.path}${Platform.pathSeparator}$name');
     ImageEditingCart.instance.add(file,name);
     if(mounted)ScaffoldMessenger.of(context).showSnackBar(
