@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -30,6 +31,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Uint8List? _originalBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
+  bool _imagePickerBusy=false;
+  String? _selectedFilter;
   String _tool='Background';
   String _format='PNG';
   String? _draftId;
@@ -59,7 +62,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     try {
       await ImageEditingHistory.instance.load();
       final path=widget.draft?.filePath??widget.sourcePath;
-      if(path==null)throw StateError('Choose an image before editing');
+      if(path==null)return; // Empty canvas: Camera and Browse stay visible.
       final bytes=await File(path).readAsBytes();
       final dimensions=await ImageEditingEngine.dimensions(bytes);
       _draftId=widget.draft?.id??
@@ -72,6 +75,56 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       });
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
+  }
+
+  Future<void> _chooseSource({required bool camera}) async {
+    if(_busy || _imagePickerBusy)return;
+    setState(()=>_imagePickerBusy=true);
+    try{
+      String? path;
+      String? name;
+      if(camera){
+        if(!Platform.isAndroid && !Platform.isIOS){
+          _message('Camera capture is available on Android. Use Browse on Windows.');
+          return;
+        }
+        final taken=await ImagePicker().pickImage(source:ImageSource.camera,
+          imageQuality:100);
+        if(taken==null)return;
+        path=taken.path;
+        name=taken.name;
+      }else{
+        final selection=await FilePicker.pickFiles(type:FileType.image);
+        if(selection.isEmpty)return;
+        final picked=selection.first;
+        path=picked.path;
+        name=picked.name;
+        if(path==null){
+          final folder=await getApplicationSupportDirectory();
+          final target=File('${folder.path}${Platform.pathSeparator}'
+            'editing_import_${DateTime.now().microsecondsSinceEpoch}.bin');
+          await target.writeAsBytes(await picked.readAsBytes(),flush:true);
+          path=target.path;
+        }
+      }
+      final bytes=await File(path).readAsBytes();
+      final dimensions=await ImageEditingEngine.dimensions(bytes);
+      if(!mounted)return;
+      setState((){
+        _bytes=Uint8List.fromList(bytes);
+        _originalBytes=Uint8List.fromList(bytes);
+        _ratio=dimensions[0]/dimensions[1];
+        _name=name??'image.png';
+        _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+        _undo.clear();_redo.clear();_steps.clear();
+        _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+        _error=null;
+        _showOriginal=false;
+      });
+      await _saveDraft();
+    }catch(_){
+      _message('Could not open this image. Try a JPG or PNG.');
+    }finally{if(mounted)setState(()=>_imagePickerBusy=false);}
   }
 
   Future<void> _saveDraft() async {
