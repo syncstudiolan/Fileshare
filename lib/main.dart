@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:tray_manager/tray_manager.dart' as desktop_tray;
+import 'package:local_notifier/local_notifier.dart';
+import 'package:launch_at_startup/launch_at_startup.dart';
 
 import 'lan_engine.dart';
 import 'personal_cloud.dart';
@@ -21,6 +26,21 @@ Future<void> main() async {
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
   final offline = await prefs.getBool('offline_start') ?? false;
+  appLan.onReceived = (file) => Platform.isAndroid
+      ? const MethodChannel('file_share.native').invokeMethod<void>(
+          'notifyReceived', {'name': file.name, 'sender': file.peer})
+      : Platform.isWindows
+          ? WindowsBackground.instance.notifyReceived(file)
+          : Future<void>.value();
+  if (Platform.isWindows) {
+    try { await WindowsBackground.instance.initialize(); }
+    catch (e) { debugPrint('Windows tray unavailable: $e'); }
+  }
+  if (offline && (Platform.isAndroid || Platform.isWindows)) {
+    unawaited(appLan.start().catchError((Object e) {
+      debugPrint('Background LAN start failed: $e');
+    }));
+  }
   runApp(FileShareApp(
     initialMode: switch (mode) {
       'light' => ThemeMode.light,
@@ -29,6 +49,124 @@ Future<void> main() async {
     },
     offlineDefault: offline,
   ));
+}
+
+
+/// Windows: one live Flutter process, even when its window is hidden.
+class WindowsBackground with WindowListener, desktop_tray.TrayListener {
+  WindowsBackground._();
+  static final instance = WindowsBackground._();
+  final ValueNotifier<bool> autoStartEnabled = ValueNotifier(false);
+  bool _trayReady = false, _exiting = false, _notificationsReady = false;
+
+  Future<void> initialize() async {
+    if (!Platform.isWindows) return;
+    await windowManager.ensureInitialized();
+    final icon = await _writeTrayIcon();
+    await desktop_tray.trayManager.setIcon(icon.path);
+    await desktop_tray.trayManager.setToolTip('File Share — LAN receiver');
+    await desktop_tray.trayManager.setContextMenu(desktop_tray.Menu(items: [
+      desktop_tray.MenuItem(key: 'show', label: 'Open File Share'),
+      desktop_tray.MenuItem.separator(),
+      desktop_tray.MenuItem(key: 'exit', label: 'Exit Completely'),
+    ]));
+    desktop_tray.trayManager.addListener(this);
+    windowManager.addListener(this);
+    await windowManager.setPreventClose(true);
+    _trayReady = true;
+    try {
+      launchAtStartup.setup(appName: 'File Share',
+        appPath: Platform.resolvedExecutable);
+      autoStartEnabled.value = await launchAtStartup.isEnabled();
+    } catch (e) { debugPrint('Startup preference error: $e'); }
+    try {
+      await localNotifier.setup(appName: 'File Share',
+        shortcutPolicy: ShortcutPolicy.requireCreate);
+      _notificationsReady = true;
+    } catch (e) { debugPrint('Windows toast setup error: $e'); }
+  }
+
+  Future<void> setAutoStart(bool value) async {
+    if (!Platform.isWindows) return;
+    if (value) { await launchAtStartup.enable(); }
+    else { await launchAtStartup.disable(); }
+    autoStartEnabled.value = await launchAtStartup.isEnabled();
+  }
+
+  Future<void> notifyReceived(LanFile file) async {
+    if (!Platform.isWindows || !_notificationsReady) return;
+    try {
+      final notification = LocalNotification(
+        title: 'File received from ' + file.peer, body: file.name);
+      notification.onClick = () { unawaited(showWindow()); };
+      await notification.show();
+    } catch (e) { debugPrint('Windows toast error: $e'); }
+  }
+
+  Future<void> showWindow() async {
+    if (!Platform.isWindows) return;
+    await windowManager.show();
+    await windowManager.focus();
+  }
+
+  @override
+  void onWindowClose() {
+    if (_trayReady && !_exiting) unawaited(windowManager.hide());
+  }
+
+  @override
+  void onTrayIconMouseDown() { unawaited(showWindow()); }
+
+  @override
+  void onTrayMenuItemClick(desktop_tray.MenuItem item) {
+    if (item.key == 'show') unawaited(showWindow());
+    if (item.key == 'exit') unawaited(exitCompletely());
+  }
+
+  Future<void> exitCompletely() async {
+    if (_exiting) return;
+    _exiting = true;
+    try { await appLan.stop(); } catch (_) { }
+    try { await desktop_tray.trayManager.destroy(); } catch (_) { }
+    try { await windowManager.setPreventClose(false); } catch (_) { }
+    await windowManager.destroy();
+  }
+
+  // Tiny, programmatically created ICO. No image resource increases APK size.
+  Future<File> _writeTrayIcon() async {
+    const side = 16, pixelBytes = side * side * 4, maskBytes = side * 4;
+    const imageBytes = 40 + pixelBytes + maskBytes;
+    final data = ByteData(22 + imageBytes);
+    data.setUint16(2, 1, Endian.little);
+    data.setUint16(4, 1, Endian.little);
+    data.setUint8(6, side);
+    data.setUint8(7, side);
+    data.setUint16(10, 1, Endian.little);
+    data.setUint16(12, 32, Endian.little);
+    data.setUint32(14, imageBytes, Endian.little);
+    data.setUint32(18, 22, Endian.little);
+    data.setUint32(22, 40, Endian.little);
+    data.setInt32(26, side, Endian.little);
+    data.setInt32(30, side * 2, Endian.little);
+    data.setUint16(34, 1, Endian.little);
+    data.setUint16(36, 32, Endian.little);
+    data.setUint32(42, pixelBytes, Endian.little);
+    final bytes = data.buffer.asUint8List();
+    for (var y = 0; y < side; y++) {
+      for (var x = 0; x < side; x++) {
+        final p = 62 + (y * side + x) * 4;
+        final painted = x > 1 && x < 14 && y > 1 && y < 14;
+        bytes[p] = painted ? 197 : 0;
+        bytes[p + 1] = painted ? 93 : 0;
+        bytes[p + 2] = painted ? 224 : 0;
+        bytes[p + 3] = painted ? 255 : 0;
+      }
+    }
+    final folder = await getApplicationSupportDirectory();
+    final icon = File(folder.path + Platform.pathSeparator + 'file_share_tray.ico');
+    await icon.writeAsBytes(bytes, flush: true);
+    return icon;
+  }
 }
 
 class FileShareApp extends StatefulWidget {
