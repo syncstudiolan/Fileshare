@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
+import 'account_directory.dart';
 
 /// An owner-facing client for a user's OWN workers.dev endpoint.
 /// It does not receive a Cloudflare admin API token; that token is only for
@@ -24,11 +25,22 @@ class PersonalCloud extends ChangeNotifier {
 
   Uri? _host;
   String? _ownerToken;
+  String? _sessionToken;
+  String? _accountEmail;
+  int _sessionExpiry = 0;
   String? _qrLink;
   final List<CloudFile> files = [];
   String? error;
   bool loading = false;
-  bool get connected => _host != null && _ownerToken != null;
+  bool _loggedOut = false;
+  bool get signedIn => !_loggedOut && _sessionToken != null &&
+      _sessionExpiry > DateTime.now().millisecondsSinceEpoch;
+  String? get accountEmail => _accountEmail;
+  bool get connected => !_loggedOut && _host != null &&
+    (signedIn || (_ownerToken != null && _accountEmail == null));
+  bool get cloudSetupSaved => _host != null;
+  bool get canRegisterAccount => _ownerToken != null && _host != null;
+  String? get workerOrigin => _host?.origin;
   String? get endpoint => _host?.origin;
   String? get qrLink => _qrLink;
 
@@ -37,7 +49,16 @@ class PersonalCloud extends ChangeNotifier {
     try {
       final host = await _secrets.read(key: 'personal_worker_url');
       final secret = await _secrets.read(key: 'personal_owner_token');
-      if (host != null && secret != null) {
+      _loggedOut = await _secrets.read(key: 'personal_signed_out') == 'yes';
+      _sessionToken = await _secrets.read(key: 'personal_auth_session');
+      _accountEmail = await _secrets.read(key: 'personal_auth_email');
+      _sessionExpiry = int.tryParse(await _secrets.read(
+        key: 'personal_auth_expiry') ?? '') ?? 0;
+      if(_sessionExpiry <= DateTime.now().millisecondsSinceEpoch){
+        _sessionToken=null;
+        await _secrets.delete(key:'personal_auth_session');
+      }
+      if(host != null) {
         _host = _validWorker(host);
         _ownerToken = secret;
         notifyListeners();
@@ -57,12 +78,17 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _request(
-    Uri host, String token, String method, String path) async {
+    Uri host, String token, String method, String path,
+    [Map<String, dynamic>? payload]) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
     try {
       final request = await client.openUrl(method, host.resolve(path));
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + token);
+      if(token.isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + token);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      if(payload != null){
+        request.headers.contentType=ContentType.json;
+        request.add(utf8.encode(jsonEncode(payload)));
+      }
       final response = await request.close().timeout(const Duration(seconds: 18));
       final body = await utf8.decoder.bind(response).join();
       final data = jsonDecode(body);
@@ -78,8 +104,95 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _call(String method, String path) {
-    if (!connected) throw StateError('Connect your personal cloud first');
-    return _request(_host!, _ownerToken!, method, path);
+    if (!connected) throw StateError('Please login. Your Cloudflare setup is retained.');
+    return _request(_host!, signedIn ? _sessionToken! : _ownerToken!, method, path);
+  }
+
+
+  // Real signup and login live in the owner's own Cloudflare Worker/D1.
+  // The worker URL is required on a second device without a central directory.
+  Future<void> _acceptLogin(Map<String, dynamic> data, Uri host) async {
+    final token=data['session'], email=data['email'], expiry=data['expiresAt'];
+    if(token is! String || email is! String || expiry is! num ||
+       token.isEmpty || expiry.toInt() <= DateTime.now().millisecondsSinceEpoch){
+      throw const FormatException('Invalid account session from Worker');
+    }
+    await _secrets.write(key:'personal_worker_url',value:host.origin);
+    await _secrets.write(key:'personal_auth_session',value:token);
+    await _secrets.write(key:'personal_auth_email',value:email);
+    await _secrets.write(key:'personal_auth_expiry',value:expiry.toInt().toString());
+    await _secrets.delete(key:'personal_signed_out');
+    _host=host;
+    _sessionToken=token;
+    _accountEmail=email;
+    _sessionExpiry=expiry.toInt();
+    _loggedOut=false;
+    error=null;
+    notifyListeners();
+  }
+
+  Future<void> registerAccount(String email,String password) async {
+    if(!canRegisterAccount) {
+      throw StateError('Connect or provision your personal Worker first');
+    }
+    final data=await _request(_host!,_ownerToken!,'POST','/v1/auth/register',{
+      'email':email.trim().toLowerCase(),'password':password,
+    });
+    await _acceptLogin(data,_host!);
+  }
+
+  Future<void> loginAccount(String workerUrl,String email,String password) async {
+    final host=_validWorker(workerUrl);
+    final data=await _request(host,'','POST','/v1/auth/login',{
+      'email':email.trim().toLowerCase(),'password':password,
+    });
+    await _acceptLogin(data,host);
+    // Authenticate with the session, not a Cloudflare administrative API key.
+    await refreshFiles();
+  }
+
+  /// Verified central-directory login: the second device needs only
+  /// email and password, not a manually supplied Worker URL.
+  Future<void> loginByEmail(String email,String password) async {
+    final login=await AccountDirectory.instance.signIn(email,password);
+    if(login.email!=email.trim().toLowerCase()){
+      throw StateError('Account directory returned a different email');
+    }
+    final host=_validWorker(login.workerUrl);
+    // Never trust a directory response alone: verify the personal Worker's
+    // signed session against the user's own Worker before saving it.
+    final proof=await _request(host,login.session,'GET','/v1/auth/me');
+    if(proof['email']!=login.email){
+      throw StateError('Personal cloud did not verify this account');
+    }
+    await _acceptLogin({
+      'session':login.session,'email':login.email,
+      'expiresAt':login.expiresAt,
+    },host);
+    await refreshFiles();
+  }
+
+  /// Bind this account to exactly one personal cloud for email/password
+  /// sign-in across devices. No email delivery or OTP is involved.
+  Future<void> linkAccountDirectory() async {
+    if(!signedIn || _accountEmail==null || _host==null || _sessionToken==null) {
+      throw StateError('Log in to your personal cloud before linking');
+    }
+    await AccountDirectory.instance.linkAccount(
+      email:_accountEmail!, workerUrl:_host!.origin,
+      personalSession:_sessionToken!,
+    );
+  }
+
+  Future<void> validateAccountSession() async {
+    if(!signedIn || _host==null)return;
+    try{
+      await _request(_host!,_sessionToken!,'GET','/v1/auth/me');
+    }catch(_){
+      _sessionToken=null;
+      await _secrets.delete(key:'personal_auth_session');
+      notifyListeners();
+    }
   }
 
   /// This is an advanced/manual pairing method, not Cloudflare API-token
@@ -94,17 +207,40 @@ class PersonalCloud extends ChangeNotifier {
     await _secrets.write(key: 'personal_owner_token', value: ownerToken.trim());
     _host = url;
     _ownerToken = ownerToken.trim();
+    _loggedOut = false;
+    await _secrets.delete(key: 'personal_signed_out');
     error = null;
+    notifyListeners();
+  }
+
+  /// Local worker sign-out keeps encrypted setup for the same phone.
+  /// Real email/password login and cross-device recovery require the future
+  /// account auth service; this is NOT a replacement for authentication.
+  Future<void> signOutLocal() async {
+    _loggedOut = true;
+    _sessionToken=null;
+    _qrLink = null;
+    files.clear();
+    await _secrets.write(key: 'personal_signed_out', value: 'yes');
+    await _secrets.delete(key:'personal_auth_session');
     notifyListeners();
   }
 
   Future<void> disconnect() async {
     _host = null;
     _ownerToken = null;
+    _sessionToken=null;
+    _sessionExpiry=0;
+    _accountEmail=null;
+    _loggedOut = false;
     _qrLink = null;
     files.clear();
     await _secrets.delete(key: 'personal_worker_url');
     await _secrets.delete(key: 'personal_owner_token');
+    await _secrets.delete(key: 'personal_signed_out');
+    await _secrets.delete(key:'personal_auth_session');
+    await _secrets.delete(key:'personal_auth_email');
+    await _secrets.delete(key:'personal_auth_expiry');
     notifyListeners();
   }
 
@@ -219,7 +355,8 @@ class PersonalCloud extends ChangeNotifier {
     try {
       final request = await client.getUrl(
         _host!.resolve('/v1/owner/file/' + item.id));
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + _ownerToken!);
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' +
+        (signedIn ? _sessionToken! : _ownerToken!));
       final response = await request.close();
       if (response.statusCode != 200) {
         throw StateError('Cloud download returned HTTP ' +

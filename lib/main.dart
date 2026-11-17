@@ -1,12 +1,19 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:tray_manager/tray_manager.dart' as desktop_tray;
+import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
 import 'personal_cloud.dart';
+import 'cloudflare_provisioning.dart';
+import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:flutter/material.dart';
@@ -15,11 +22,40 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // Phase 1: native-feeling UI shell only. Authentication and transfer engines are
 // intentionally NOT simulated. No network polling or cloud API calls occur.
-Future<void> main() async {
+Future<void> main([List<String> args = const []]) async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
-  final offline = await prefs.getBool('offline_start') ?? false;
+  final previousOffline = await prefs.getBool('offline_start') ?? false;
+  // CI emulator only: run the real LAN backend without first-use tapping.
+  const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
+  // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
+  final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
+  final offline = ciLanTest || previousOffline || windowsSmoke;
+  appLan.onReceived = (file) => Platform.isAndroid
+      ? const MethodChannel('file_share.native').invokeMethod<void>(
+          'notifyReceived', {'name': file.name, 'sender': file.peer})
+      : Platform.isWindows
+          ? WindowsBackground.instance.notifyReceived(file)
+          : Future<void>.value();
+  if (Platform.isWindows) {
+    // Exit a second Windows process before it can bind the same LAN port.
+    if (!await WindowsBackground.instance.acquireSingleInstance()) {
+      exit(0);
+    }
+    try { await WindowsBackground.instance.initialize(); }
+    catch (e) { debugPrint('Windows tray unavailable: $e'); }
+  }
+  if (offline && (Platform.isAndroid || Platform.isWindows)) {
+    unawaited(appLan.start().catchError((Object e) {
+      debugPrint('Background LAN start failed: $e');
+    }));
+  }
+  if (Platform.isWindows && args.contains('--background')) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(windowManager.hide());
+    });
+  }
   runApp(FileShareApp(
     initialMode: switch (mode) {
       'light' => ThemeMode.light,
@@ -28,6 +64,185 @@ Future<void> main() async {
     },
     offlineDefault: offline,
   ));
+}
+
+
+/// Windows: one live Flutter process, even when its window is hidden.
+class WindowsBackground with WindowListener, desktop_tray.TrayListener {
+  WindowsBackground._();
+  static final instance = WindowsBackground._();
+  final ValueNotifier<bool> autoStartEnabled = ValueNotifier(false);
+  bool _trayReady = false, _exiting = false, _notificationsReady = false;
+  RandomAccessFile? _instanceLock;
+  ServerSocket? _controlChannel;
+
+  /// A private OS file lock prevents two copies of the Windows EXE from
+  /// owning the fixed LAN TCP listener. If a copy is already active, ask it
+  /// to open its tray window rather than showing a second broken dashboard.
+  Future<bool> acquireSingleInstance() async {
+    if (!Platform.isWindows) return true;
+    final folder = await getApplicationSupportDirectory();
+    final lockFile = File(folder.path + Platform.pathSeparator +
+      'file_share_process.lock');
+    RandomAccessFile? handle;
+    try {
+      handle = await lockFile.open(mode: FileMode.append);
+      // Nonblocking exclusive lock; OS releases it after a process crash.
+      await handle.lock(FileLock.exclusive, 0, 1);
+      _instanceLock = handle;
+    } on FileSystemException {
+      await handle?.close();
+      try {
+        final existing = await Socket.connect(
+          InternetAddress.loopbackIPv4, 49312,
+          timeout: const Duration(milliseconds: 600));
+        existing.write('SHOW\n');
+        await existing.flush();
+        existing.destroy();
+      } catch (e) {
+        debugPrint('Existing File Share window could not be focused: $e');
+      }
+      return false;
+    }
+    try {
+      _controlChannel = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4, 49312);
+      _controlChannel!.listen((socket) {
+        socket.destroy();
+        unawaited(showWindow());
+      });
+    } catch (e) {
+      debugPrint('Optional local show-window channel unavailable: $e');
+    }
+    return true;
+  }
+
+  Future<void> initialize() async {
+    if (!Platform.isWindows) return;
+    await windowManager.ensureInitialized();
+    // Maximize the normal Windows window; do not hide the system taskbar.
+    await windowManager.maximize();
+    final icon = await _writeTrayIcon();
+    await desktop_tray.trayManager.setIcon(icon.path);
+    await desktop_tray.trayManager.setToolTip('File Share — LAN receiver');
+    await desktop_tray.trayManager.setContextMenu(desktop_tray.Menu(items: [
+      desktop_tray.MenuItem(key: 'show', label: 'Open File Share'),
+      desktop_tray.MenuItem.separator(),
+      desktop_tray.MenuItem(key: 'exit', label: 'Exit Completely'),
+    ]));
+    desktop_tray.trayManager.addListener(this);
+    windowManager.addListener(this);
+    await windowManager.setPreventClose(true);
+    _trayReady = true;
+    try {
+      final result = await Process.run('reg', [
+        'query', _windowsRunKey, '/v', 'FileShare',
+      ]);
+      autoStartEnabled.value = result.exitCode == 0 &&
+        result.stdout.toString().contains(Platform.resolvedExecutable);
+    } catch (e) { debugPrint('Startup preference error: $e'); }
+    try {
+      await localNotifier.setup(appName: 'File Share',
+        shortcutPolicy: ShortcutPolicy.requireCreate);
+      _notificationsReady = true;
+    } catch (e) { debugPrint('Windows toast setup error: $e'); }
+  }
+
+  static const _windowsRunKey =
+    r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
+
+  Future<void> setAutoStart(bool value) async {
+    if (!Platform.isWindows) return;
+    final args = value
+      ? ['add', _windowsRunKey, '/v', 'FileShare', '/t', 'REG_SZ',
+          '/d', '"' + Platform.resolvedExecutable + '" --background', '/f']
+      : ['delete', _windowsRunKey, '/v', 'FileShare', '/f'];
+    final result = await Process.run('reg', args);
+    if (result.exitCode != 0) {
+      throw ProcessException('reg', args, result.stderr.toString(), result.exitCode);
+    }
+    autoStartEnabled.value = value;
+  }
+
+  Future<void> notifyReceived(LanFile file) async {
+    if (!Platform.isWindows || !_notificationsReady) return;
+    try {
+      final notification = LocalNotification(
+        title: 'File received from ' + file.peer, body: file.name);
+      notification.onClick = () { unawaited(showWindow()); };
+      await notification.show();
+    } catch (e) { debugPrint('Windows toast error: $e'); }
+  }
+
+  Future<void> showWindow() async {
+    if (!Platform.isWindows) return;
+    await windowManager.show();
+    await windowManager.focus();
+  }
+
+  @override
+  void onWindowClose() {
+    if (_trayReady && !_exiting) unawaited(windowManager.hide());
+  }
+
+  @override
+  void onTrayIconMouseDown() { unawaited(showWindow()); }
+
+  @override
+  void onTrayMenuItemClick(desktop_tray.MenuItem item) {
+    if (item.key == 'show') unawaited(showWindow());
+    if (item.key == 'exit') unawaited(exitCompletely());
+  }
+
+  Future<void> exitCompletely() async {
+    if (_exiting) return;
+    _exiting = true;
+    try { await appLan.stop(); } catch (_) { }
+    try { await _controlChannel?.close(); } catch (_) { }
+    _controlChannel = null;
+    try { await _instanceLock?.unlock(); } catch (_) { }
+    try { await _instanceLock?.close(); } catch (_) { }
+    _instanceLock = null;
+    try { await desktop_tray.trayManager.destroy(); } catch (_) { }
+    try { await windowManager.setPreventClose(false); } catch (_) { }
+    await windowManager.destroy();
+  }
+
+  // Tiny, programmatically created ICO. No image resource increases APK size.
+  Future<File> _writeTrayIcon() async {
+    const side = 16, pixelBytes = side * side * 4, maskBytes = side * 4;
+    const imageBytes = 40 + pixelBytes + maskBytes;
+    final data = ByteData(22 + imageBytes);
+    data.setUint16(2, 1, Endian.little);
+    data.setUint16(4, 1, Endian.little);
+    data.setUint8(6, side);
+    data.setUint8(7, side);
+    data.setUint16(10, 1, Endian.little);
+    data.setUint16(12, 32, Endian.little);
+    data.setUint32(14, imageBytes, Endian.little);
+    data.setUint32(18, 22, Endian.little);
+    data.setUint32(22, 40, Endian.little);
+    data.setInt32(26, side, Endian.little);
+    data.setInt32(30, side * 2, Endian.little);
+    data.setUint16(34, 1, Endian.little);
+    data.setUint16(36, 32, Endian.little);
+    data.setUint32(42, pixelBytes, Endian.little);
+    final bytes = data.buffer.asUint8List();
+    for (var y = 0; y < side; y++) {
+      for (var x = 0; x < side; x++) {
+        final p = 62 + (y * side + x) * 4;
+        final painted = x > 1 && x < 14 && y > 1 && y < 14;
+        bytes[p] = painted ? 197 : 0;
+        bytes[p + 1] = painted ? 93 : 0;
+        bytes[p + 2] = painted ? 224 : 0;
+        bytes[p + 3] = painted ? 255 : 0;
+      }
+    }
+    final folder = await getApplicationSupportDirectory();
+    final icon = File(folder.path + Platform.pathSeparator + 'file_share_tray.ico');
+    await icon.writeAsBytes(bytes, flush: true);
+    return icon;
+  }
 }
 
 class FileShareApp extends StatefulWidget {
@@ -514,161 +729,214 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _key = GlobalKey<FormState>();
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  bool _register = false;
-  bool _hidden = true;
+  final _key=GlobalKey<FormState>();
+  final _email=TextEditingController();
+  final _password=TextEditingController();
+  final _workerUrl=TextEditingController();
+  bool _register=false,_hidden=true,_busy=false;
+  bool _personalAccountRegistered=false;
+  bool _manualWorkerLogin=false;
+  String? _error;
 
-  @override
-  void dispose() {
-    _email.dispose();
-    _password.dispose();
+  @override void initState(){
+    super.initState();
+    final cloud=PersonalCloud.instance;
+    _workerUrl.text=cloud.workerOrigin??'';
+    _register=cloud.canRegisterAccount && cloud.accountEmail==null && !cloud.signedIn;
+    _email.text=cloud.accountEmail??'';
+  }
+  @override void dispose(){
+    _email.dispose();_password.dispose();_workerUrl.dispose();
     super.dispose();
   }
+  Future<void> _enterDashboard()async{
+    await SharedPreferencesAsync().setBool('offline_start',true);
+    if(!mounted)return;
+    Navigator.of(context).pushAndRemoveUntil(fadePage(
+      DashboardPage(mode:widget.mode,onMode:widget.onMode)),(_)=>false);
+  }
 
+  Future<void> _submit()async{
+    if(_busy||!(_key.currentState?.validate()??false))return;
+    final cloud=PersonalCloud.instance;
+    final directory=AccountDirectory.instance;
+    setState((){_busy=true;_error=null;});
+    try{
+      if(_register){
+        if(!_personalAccountRegistered && !cloud.signedIn){
+          await cloud.registerAccount(_email.text,_password.text);
+          _personalAccountRegistered=true;
+        }
+        if(directory.enabled) {
+          await cloud.linkAccountDirectory();
+        }
+      }else if(directory.enabled && !_manualWorkerLogin){
+        // Second device: only email/password. Locate Worker automatically.
+        await cloud.loginByEmail(_email.text,_password.text);
+      }else{
+        // Existing installations can migrate their personal Worker once.
+        await cloud.loginAccount(_workerUrl.text,_email.text,_password.text);
+        if(directory.enabled && _manualWorkerLogin) {
+          await cloud.linkAccountDirectory();
+        }
+      }
+      await _enterDashboard();
+    }catch(e){
+      if(mounted)setState(()=>_error=e.toString().replaceFirst('Bad state: ',''));
+    }finally{if(mounted)setState(()=>_busy=false);}
+  }
+
+  Future<void> _linkExistingAccount()async{
+    if(_busy)return;
+    setState((){_busy=true;_error=null;});
+    try{await PersonalCloud.instance.linkAccountDirectory();
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content:Text('Account linked to your personal Cloudflare Worker')));
+    }
+    catch(e){if(mounted)setState(()=>_error=e.toString());}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
+  void _openCloudSetup(){
+    Navigator.push(context,fadePage(
+      CloudConnectPage(mode:widget.mode,onMode:widget.onMode)
+    )).then((_){
+      if(mounted)setState((){
+        _workerUrl.text=PersonalCloud.instance.workerOrigin??'';
+        _register=PersonalCloud.instance.canRegisterAccount &&
+          PersonalCloud.instance.accountEmail==null;
+      });
+    });
+  }
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: Container(
-          decoration: BoxDecoration(gradient: FileTheme.background(context)),
-          child: SafeArea(
-            child: Column(children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                child: Row(children: [
-                  IconButton(
-                    tooltip: 'Back',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_rounded),
+  Widget build(BuildContext context)=>Scaffold(
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:SafeArea(child:Column(children:[
+        Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),
+          child:Row(children:[
+            IconButton(tooltip:'Back',onPressed:()=>Navigator.maybePop(context),
+              icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('File Share Account',
+              style:Theme.of(context).textTheme.titleLarge)),
+            AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+          ])),
+        Expanded(child:Center(child:ConstrainedBox(
+          constraints:const BoxConstraints(maxWidth:520),
+          child:ListView(shrinkWrap:true,
+            padding:const EdgeInsets.all(24),children:[
+              const Center(child:AppLogo(size:68)),
+              const SizedBox(height:22),
+              Text(_register?'Create your account':'Welcome back',
+                textAlign:TextAlign.center,style:TextStyle(
+                  fontSize:28,fontWeight:FontWeight.w800,
+                  color:FileTheme.foreground(context))),
+              const SizedBox(height:9),
+              Text('Use email and password on your linked devices. '
+                'Your first personal cloud is bound to this account; '
+                'email ownership is not verified.',
+                textAlign:TextAlign.center,
+                style:TextStyle(color:FileTheme.muted(context),height:1.4)),
+              const SizedBox(height:24),
+              Form(key:_key,child:Column(children:[
+                if((!AccountDirectory.instance.enabled || _manualWorkerLogin) && !_register)...[
+                  TextFormField(
+                    controller:_workerUrl,enabled:!_register&&!_busy,
+                    keyboardType:TextInputType.url,
+                    decoration:const InputDecoration(
+                      labelText:'Personal Worker URL',
+                      hintText:'https://name.account.workers.dev',
+                      prefixIcon:Icon(Icons.cloud_outlined)),
+                    validator:(value)=>_register?null:
+                      ((value??'').contains('.workers.dev')?null:
+                        'Enter your own Worker URL or connect Cloudflare first'),
                   ),
-                  Expanded(
-                    child: Text('Account',
-                        style: Theme.of(context).textTheme.titleLarge),
-                  ),
-                  AppearanceButton(mode: widget.mode, onChange: widget.onMode),
-                ]),
-              ),
-              Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 500),
-                    child: ListView(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.all(24),
-                      children: [
-                        const Center(child: AppLogo(size: 68)),
-                        const SizedBox(height: 22),
-                        Text(
-                          _register ? 'Create your account' : 'Welcome back',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: FileTheme.foreground(context),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Login to connect your personal Cloudflare and QR.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: FileTheme.muted(context)),
-                        ),
-                        const SizedBox(height: 28),
-                        Form(
-                          key: _key,
-                          child: Column(children: [
-                            TextFormField(
-                              controller: _email,
-                              keyboardType: TextInputType.emailAddress,
-                              autofillHints: const [AutofillHints.email],
-                              decoration: const InputDecoration(
-                                labelText: 'Email address',
-                                prefixIcon: Icon(Icons.mail_outline_rounded),
-                              ),
-                              validator: (value) =>
-                                  (value == null ||
-                                          !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                                              .hasMatch(value.trim()))
-                                      ? 'Enter a valid email'
-                                      : null,
-                            ),
-                            const SizedBox(height: 14),
-                            TextFormField(
-                              controller: _password,
-                              obscureText: _hidden,
-                              autofillHints: [
-                                _register
-                                    ? AutofillHints.newPassword
-                                    : AutofillHints.password
-                              ],
-                              decoration: InputDecoration(
-                                labelText: 'Password',
-                                prefixIcon:
-                                    const Icon(Icons.lock_outline_rounded),
-                                suffixIcon: IconButton(
-                                  tooltip:
-                                      _hidden ? 'Show password' : 'Hide password',
-                                  onPressed: () =>
-                                      setState(() => _hidden = !_hidden),
-                                  icon: Icon(_hidden
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined),
-                                ),
-                              ),
-                              validator: (value) =>
-                                  (value == null || value.length < 8)
-                                      ? 'Use at least 8 characters'
-                                      : null,
-                            ),
-                            const SizedBox(height: 18),
-                            SizedBox(
-                              height: 54,
-                              width: double.infinity,
-                              child: FilledButton(
-                                onPressed: () {
-                                  if (!_key.currentState!.validate()) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        'Authentication backend is not connected. No credentials were sent.',
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child: Text(_register
-                                    ? 'Create account'
-                                    : 'Login'),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextButton(
-                              onPressed: () =>
-                                  setState(() => _register = !_register),
-                              child: Text(_register
-                                  ? 'Already have an account? Login'
-                                  : 'New here? Create account'),
-                            ),
-                            const SizedBox(height: 18),
-                            Text('Phase 1 UI only · Authentication is not active',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: FileTheme.muted(context),
-                                )),
-                          ]),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      );
+                  const SizedBox(height:12),
+                ],
+                TextFormField(
+                  controller:_email,enabled:!_busy,
+                  keyboardType:TextInputType.emailAddress,
+                  autofillHints:const [AutofillHints.email],
+                  decoration:const InputDecoration(labelText:'Email address',
+                    prefixIcon:Icon(Icons.mail_outline_rounded)),
+                  validator:(value)=>RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                    .hasMatch(value?.trim()??'')?null:'Enter valid email'),
+                const SizedBox(height:12),
+                TextFormField(controller:_password,
+                  obscureText:_hidden,enabled:!_busy,
+                  autofillHints:[_register?AutofillHints.newPassword:
+                    AutofillHints.password],
+                  decoration:InputDecoration(
+                    labelText:'Password (10+ characters)',
+                    prefixIcon:const Icon(Icons.lock_outline_rounded),
+                    suffixIcon:IconButton(
+                      tooltip:_hidden?'Show password':'Hide password',
+                      onPressed:()=>setState(()=>_hidden=!_hidden),
+                      icon:Icon(_hidden?Icons.visibility_outlined:
+                        Icons.visibility_off_outlined))),
+                  validator:(value)=>(value??'').length>=10?null:
+                    'Use at least 10 characters'),
+                const SizedBox(height:16),
+                if(_register&&!PersonalCloud.instance.canRegisterAccount)
+                  Padding(padding:const EdgeInsets.only(bottom:12),
+                    child:Text('First connect or provision your personal '
+                      'Cloudflare Worker to register the account securely.',
+                      textAlign:TextAlign.center,
+                      style:TextStyle(color:FileTheme.muted(context)))),
+                if(_error!=null)Padding(
+                  padding:const EdgeInsets.only(bottom:10),
+                  child:Text(_error!,textAlign:TextAlign.center,
+                    style:const TextStyle(color:Colors.deepOrange))),
+                if(_register && _personalAccountRegistered &&
+                   PersonalCloud.instance.signedIn) ...[
+                  const SizedBox(height:8),
+                  OutlinedButton(
+                    onPressed:_busy?null:_enterDashboard,
+                    child:const Text('Continue on this device (directory linking pending)')),
+                  const SizedBox(height:8),
+                ],
+                SizedBox(height:52,width:double.infinity,
+                  child:FilledButton(
+                    onPressed:_busy?null:_submit,
+                    child:_busy?const SizedBox(width:22,height:22,
+                      child:CircularProgressIndicator(strokeWidth:2)):
+                      Text(_register?'Create account':'Login'))),
+                const SizedBox(height:11),
+                TextButton(
+                  onPressed:_busy?null:()=>setState(()=>_register=!_register),
+                  child:Text(_register?'Already registered? Login':
+                    'New here? Create account')),
+                OutlinedButton.icon(
+                  onPressed:_busy?null:_openCloudSetup,
+                  icon:const Icon(Icons.cloud_sync_outlined),
+                  label:const Text('Set up or connect personal Cloudflare')),
+                if(AccountDirectory.instance.enabled && !_register)
+                  TextButton(
+                    onPressed:_busy?null:()=>setState(()=>
+                      _manualWorkerLogin=!_manualWorkerLogin),
+                    child:Text(_manualWorkerLogin
+                      ? 'Use automatic email-only login'
+                      : 'Existing Worker? Link it once')),
+                if(AccountDirectory.instance.enabled &&
+                   PersonalCloud.instance.signedIn && !_register)
+                  TextButton.icon(
+                    onPressed:_busy?null:_linkExistingAccount,
+                    icon:const Icon(Icons.link_rounded),
+                    label:const Text('Link this account to its personal cloud')),
+              ])),
+              const SizedBox(height:15),
+              Text(AccountDirectory.instance.enabled
+                ? 'Once this account is linked to its first personal cloud, '
+                  'Android and Windows can sign in with email and password. '
+                  'The email address itself is not verified.'
+                : 'Email-only sign-in needs the official File Share directory '
+                  'deployment. Until configured, use your Worker URL too.',
+                textAlign:TextAlign.center,
+                style:TextStyle(fontSize:12,color:FileTheme.muted(context))),
+            ])))),
+      ])),
+    ),
+  );
 }
 
 /* Full UI design preview: all transfer items, counts, progress and devices
@@ -967,25 +1235,153 @@ class DesignFileCard extends StatelessWidget {
 
 
 class PendingBatch {
-  PendingBatch(this.id, this.sources, this.labels, this.started);
+  PendingBatch(this.id, this.sources, this.labels, this.sizes);
   final String id;
   final List<File> sources;
   final List<String> labels;
-  bool started;
+  final List<int> sizes;
 }
 
 /// This singleton stays active while the user navigates between pages.
 final LanEngine appLan = LanEngine();
 
+
+/// Real file preview. Uses a zoomable full-screen image and the same actions
+/// as the file card; no duplicate upload is initiated from here.
+class FullScreenFilePreview extends StatelessWidget {
+  const FullScreenFilePreview({super.key, required this.file,
+    required this.onSave, required this.onDelete, required this.onShare,
+    required this.onTools});
+  final LanFile file;
+  final Future<void> Function(LanFile) onSave, onDelete, onShare, onTools;
+
+  bool get isPicture {
+    final name=file.name.toLowerCase();
+    return name.endsWith('.jpg')||name.endsWith('.jpeg')||
+      name.endsWith('.png')||name.endsWith('.webp')||name.endsWith('.gif');
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text(file.name,maxLines:1,overflow:TextOverflow.ellipsis),
+    ),
+    body:SafeArea(child:Column(children:[
+      Expanded(child:Center(
+        child:isPicture
+          ? InteractiveViewer(
+              minScale:.8,maxScale:5,
+              child:Image.file(File(file.path),
+                fit:BoxFit.contain,
+                errorBuilder:(_,__,___)=>const Icon(
+                  Icons.broken_image_outlined,size:80,color:Colors.white70)),
+            )
+          : Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+              const Icon(Icons.insert_drive_file_outlined,
+                color:Colors.white,size:92),
+              const SizedBox(height:12),
+              Text(file.name,style:const TextStyle(color:Colors.white)),
+              const SizedBox(height:6),
+              Text(_formatBytes(file.size),
+                style:const TextStyle(color:Colors.white70)),
+            ]),
+      )),
+      Container(
+        padding:const EdgeInsets.symmetric(horizontal:12,vertical:9),
+        color:const Color(0xFF20172F),
+        child:Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[
+          if(file.incoming)
+            IconButton(
+              tooltip:'Download file',
+              onPressed:file.state==TransferState.delivered
+                ?()=>onSave(file):null,
+              icon:const Icon(Icons.download_rounded,color:Colors.white)),
+          IconButton(
+            tooltip:'Delete file',
+            onPressed:()async{
+              await onDelete(file);
+              if(context.mounted)Navigator.pop(context);
+            },
+            icon:const Icon(Icons.delete_outline_rounded,color:Colors.white)),
+          IconButton(
+            tooltip:'Share to another app',
+            onPressed:File(file.path).existsSync() &&
+              (!file.incoming || file.state==TransferState.delivered)
+              ?()=>onShare(file):null,
+            icon:const Icon(Icons.ios_share_rounded,color:Colors.white)),
+          IconButton(
+            tooltip:'Open in Tools',
+            onPressed:File(file.path).existsSync()?()=>onTools(file):null,
+            icon:const Icon(Icons.auto_fix_high_rounded,color:Colors.white)),
+        ]),
+      ),
+    ])),
+  );
+}
+
+/// The selected file is handed to Toolbox. Editing engines are a later phase.
+class SelectedFileToolsPage extends StatelessWidget {
+  const SelectedFileToolsPage({super.key, required this.file});
+  final LanFile file;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Open in Tools')),
+    body: Container(
+      decoration: BoxDecoration(gradient: FileTheme.background(context)),
+      child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 580),
+        child: ListView(shrinkWrap: true, padding: const EdgeInsets.all(22),
+          children: [
+            DesignPanel(child: Row(children: [
+              const Icon(Icons.auto_fix_high_rounded,
+                color: FileTheme.pink, size: 38),
+              const SizedBox(width: 14),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.w800,
+                      color: FileTheme.foreground(context))),
+                  Text(_formatBytes(file.size),
+                    style: TextStyle(color: FileTheme.muted(context))),
+                ],
+              )),
+            ])),
+            const SizedBox(height: 16),
+            Text('File selected for Toolbox', textAlign: TextAlign.center,
+              style: TextStyle(color: FileTheme.foreground(context),
+                fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text('This file is ready for Toolbox. Photo and document '
+              'editing engines will be added in the Toolbox phase.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: FileTheme.muted(context))),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: File(file.path).existsSync()
+                ? () => OpenFilex.open(file.path) : null,
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Open with another app')),
+          ],
+        ),
+      )),
+    ),
+  );
+}
+
 class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
     super.key, required this.items, required this.onSave,
-    required this.onDelete, required this.onShare,
+    required this.onDelete, required this.onShare, required this.onTools,
   });
   final List<LanFile> items;
   final Future<void> Function(LanFile) onSave;
   final Future<void> Function(LanFile) onDelete;
   final Future<void> Function(LanFile) onShare;
+  final Future<void> Function(LanFile) onTools;
 
   bool get incoming => items.first.incoming;
 
@@ -996,11 +1392,12 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   Widget _visual(LanFile file) {
-    if (file.state == TransferState.delivered && _photo(file.name)) {
+    if (_photo(file.name) && File(file.path).existsSync()) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Image.file(File(file.path), fit: BoxFit.cover,
-          cacheWidth: 250,
+        borderRadius: BorderRadius.circular(14),
+        child: Image.file(File(file.path), width: double.infinity,
+          height: double.infinity, fit: BoxFit.cover,
+          cacheWidth: 360,
           errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined,
             color: FileTheme.pink, size: 35)));
     }
@@ -1011,63 +1408,99 @@ class LiveTransferCard extends StatelessWidget {
         : Icons.insert_drive_file_outlined), color: FileTheme.pink, size: 34);
   }
 
-  Widget _buttons(BuildContext context, LanFile file) => Wrap(
-    spacing: 1,
-    runSpacing: 0,
-    children: [
-      if (incoming)
-        IconButton(
-          tooltip: 'Save received file',
-          onPressed: file.state == TransferState.delivered
-            ? () => onSave(file) : null,
-          icon: const Icon(Icons.download_rounded, color: FileTheme.pink)),
+  Widget _buttons(BuildContext context, LanFile file) {
+    final exists = File(file.path).existsSync();
+    final canShare = exists &&
+      (file.state == TransferState.delivered || !file.incoming);
+    final canDownload = exists && file.incoming &&
+      file.state == TransferState.delivered;
+    Widget action(String label, IconData icon, VoidCallback? callback) =>
       IconButton(
-        tooltip: 'Delete local card',
-        onPressed: () => onDelete(file),
-        icon: const Icon(Icons.delete_outline_rounded, color: FileTheme.pink)),
-      IconButton(
-        tooltip: 'Share to another app',
-        onPressed: file.state == TransferState.delivered
-            ? () => onShare(file) : null,
-        icon: const Icon(Icons.ios_share_rounded, color: FileTheme.pink)),
-      const IconButton(
-        tooltip: 'Toolbox coming later',
-        onPressed: null,
-        icon: Icon(Icons.auto_fix_high_rounded, color: FileTheme.pink)),
-    ],
-  );
+        tooltip: label, onPressed: callback,
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon, color: callback == null
+          ? FileTheme.pink.withValues(alpha: .30) : FileTheme.pink),
+      );
+    return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+      if (file.incoming)
+        action('Download', Icons.download_rounded,
+          canDownload ? () => onSave(file) : null),
+      action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
+      action('Share', Icons.ios_share_rounded,
+        canShare ? () => onShare(file) : null),
+      action('Open in Tools', Icons.auto_fix_high_rounded,
+        canShare ? () => onTools(file) : null),
+    ]);
+  }
 
-  Widget _file(BuildContext context, LanFile file) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(children: [
-      SizedBox(width: 78, height: 78, child: Center(child: _visual(file))),
-      const SizedBox(width: 9),
-      Expanded(child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  void _preview(BuildContext context,LanFile file){
+    if(!File(file.path).existsSync() ||
+       (file.incoming && file.state!=TransferState.delivered))return;
+    Navigator.push(context,MaterialPageRoute<void>(builder:(_)=>
+      FullScreenFilePreview(file:file,onSave:onSave,
+        onDelete:onDelete,onShare:onShare,onTools:onTools)));
+  }
+
+  Widget _file(BuildContext context, LanFile file) =>
+      LayoutBuilder(builder: (context, constraints) {
+    final side = constraints.maxWidth >= 570 ? 206.0 :
+      constraints.maxWidth >= 420 ? 160.0 :
+      constraints.maxWidth >= 310 ? 128.0 : 106.0;
+    final active = file.state == TransferState.sending ||
+      file.state == TransferState.receiving ||
+      file.state == TransferState.preparing;
+    final status = switch (file.state) {
+      TransferState.delivered => 'Delivered',
+      TransferState.queued => 'Pending',
+      TransferState.sending => 'Sending',
+      TransferState.receiving => 'Receiving',
+      TransferState.preparing => 'Preparing',
+      TransferState.failed => 'Failed',
+    };
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontWeight: FontWeight.w700,
-              color: FileTheme.foreground(context), fontSize: 13)),
-          Text(_formatBytes(file.size) + ' · ' + file.state.name,
-            style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          const SizedBox(height: 5),
-          if (file.state == TransferState.sending ||
-              file.state == TransferState.receiving ||
-              file.state == TransferState.preparing)
-            LinearProgressIndicator(value: file.progress,
-              minHeight: 5, borderRadius: BorderRadius.circular(9)),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => _preview(context, file),
+              child: SizedBox(width: side, height: side, child: _visual(file)),
+            ),
+            const SizedBox(width: 13),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(file.name, maxLines: 3, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800,
+                    color: FileTheme.foreground(context))),
+                const SizedBox(height: 8),
+                Text(_formatBytes(file.size),
+                  style: TextStyle(color: FileTheme.muted(context), fontSize: 12)),
+                const SizedBox(height: 7),
+                Text(status,
+                  style: const TextStyle(color: FileTheme.violet,
+                    fontWeight: FontWeight.w700, fontSize: 12)),
+                if (active) ...[
+                  const SizedBox(height: 9),
+                  LinearProgressIndicator(value: file.progress,
+                    minHeight: 5, borderRadius: BorderRadius.circular(9)),
+                ],
+              ],
+            )),
+          ]),
+          const SizedBox(height: 7),
           _buttons(context, file),
         ],
-      )),
-    ]),
-  );
+      ),
+    );
+  });
 
   @override
   Widget build(BuildContext context) {
     final first = items.first;
     final multiple = items.length > 1;
     final wide = MediaQuery.sizeOf(context).width > 750;
-    final bodyWidth = wide ? 580.0 : MediaQuery.sizeOf(context).width * .89;
+    final bodyWidth = wide ? 760.0 : MediaQuery.sizeOf(context).width * .93;
     return Align(
       alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
@@ -1088,16 +1521,14 @@ class LiveTransferCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text(multiple
-                ? items.length.toString() + ' Files (Group)' : first.name,
+                 ? items.length.toString() + ' files · ' + first.peer
+                 : (incoming ? 'From ' : 'To ') + first.peer + ' · Offline LAN',
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(color: FileTheme.foreground(context),
                 fontWeight: FontWeight.w800, fontSize: 14))),
             DesignTag(incoming ? 'Received' : 'Sent', received: incoming),
           ]),
-          const SizedBox(height: 5),
-          Text((incoming ? 'From ' : 'To ') + first.peer + ' · Offline LAN',
-            style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          const SizedBox(height: 6),
+          const SizedBox(height: 7),
           ...items.take(multiple ? 4 : 1).map((entry) => _file(context, entry)),
           if (items.length > 4)
             Text('+ ' + (items.length - 4).toString() + ' more files',
@@ -1228,6 +1659,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   String _filter = 'All';
   bool _choosing = false;
   bool _showSamples = true;
+  bool _refreshing = false;
+  bool _desktopSidebarVisible = true;
+  final _sidebarVisibleNotifier = ValueNotifier<bool>(true);
+  final _desktopNavigator = GlobalKey<NavigatorState>();
+
+  void _toggleSidebar(){
+    setState(()=>_desktopSidebarVisible=!_desktopSidebarVisible);
+    _sidebarVisibleNotifier.value=_desktopSidebarVisible;
+  }
+  static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
 
   void _armMidnight() {
@@ -1256,7 +1697,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
-      appLan.start().then((_) {
+      appLan.start().then((_) async {
+        if (Platform.isAndroid) {
+          _native.setMethodCallHandler((call) async {
+            if(call.method=='sharesReceived') await _takeSharedFiles();
+          });
+          try { await _native.invokeMethod<bool>('startLanService'); }
+          catch(e){ _snack('Background LAN limited: '+e.toString()); }
+          await _takeSharedFiles();
+        }
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
       PersonalCloud.instance.restore().then((_) =>
@@ -1271,6 +1720,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
+    _sidebarVisibleNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
@@ -1289,43 +1739,128 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       screen = CloudConnectPage(mode: widget.mode, onMode: widget.onMode);
     } else if (title == 'My QR') {
       screen = MyQrPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Devices') {
+      screen = NearbyDevicesPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Files') {
+      screen = FileCategoriesPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Login') {
+      screen = LoginPage(mode: widget.mode, onMode: widget.onMode);
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
-    Navigator.of(context).push(fadePage(screen));
+    if (Platform.isWindows && MediaQuery.sizeOf(context).width >= 820) {
+      final nav = _desktopNavigator.currentState;
+      if (nav != null) {
+        nav.popUntil((route) => route.isFirst);
+        if (title != 'Home') nav.push(fadePage(screen));
+        return;
+      }
+    }
+    if (title != 'Home') Navigator.of(context).push(fadePage(screen));
   }
 
-  Widget _nav(String label, IconData icon, {bool enabled = true}) => ListTile(
+  Widget _nav(String label, IconData icon, {bool enabled = true,
+    bool pinned = false}) => ListTile(
     leading: Icon(icon, color: FileTheme.violet),
     title: Text(label),
     enabled: enabled,
     trailing: enabled ? const Icon(Icons.chevron_right_rounded)
       : const DesignTag('Later'),
     onTap: enabled ? () {
-      Navigator.pop(context);
-      _navigate(label);
+      if (!pinned) Navigator.pop(context);
+      if (pinned || label != 'Home') _navigate(label);
     } : null,
+  );
+
+  Widget _navContents({required bool pinned}) => SafeArea(
+    child: ListView(children: [
+      Padding(padding: const EdgeInsets.all(20),
+        child: Row(children: [
+          const AppLogo(),
+          const SizedBox(width: 12),
+          Expanded(child: Text('File Share', style: TextStyle(
+            fontWeight: FontWeight.w800, fontSize: 20,
+            color: FileTheme.foreground(context)))),
+          if (pinned) IconButton(
+            tooltip: 'Hide sidebar',
+            onPressed: _toggleSidebar,
+            icon: const Icon(Icons.menu_open_rounded, color: FileTheme.violet)),
+        ])),
+      const Divider(height: 12),
+      _nav('Home', Icons.home_outlined, pinned: pinned),
+      _nav('Files', Icons.folder_outlined, pinned: pinned),
+      _nav('Devices', Icons.devices_rounded, pinned: pinned),
+      _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
+      _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
+      _nav('Settings', Icons.settings_outlined, pinned: pinned),
+      _nav('Profile', Icons.person_outline_rounded, pinned: pinned),
+      AnimatedBuilder(
+        animation: PersonalCloud.instance,
+        builder: (_, __) => PersonalCloud.instance.signedIn
+          ? ListTile(
+              leading: const Icon(Icons.logout_rounded, color: FileTheme.violet),
+              title: const Text('Logout'),
+              onTap: () async {
+                if (!pinned) Navigator.pop(context);
+                await PersonalCloud.instance.signOutLocal();
+                _snack('Cloud signed out. Offline LAN stays available.');
+              })
+          : _nav('Login', Icons.login_rounded, pinned: pinned),
+      ),
+    ]),
   );
 
   Widget _drawer() => Drawer(
     backgroundColor: FileTheme.surface(context),
-    child: SafeArea(child: ListView(children: [
-      const Padding(padding: EdgeInsets.all(20),
-        child: Row(children: [AppLogo(), SizedBox(width: 15),
-          Expanded(child: Text('File Share',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 21)))])),
-      const Divider(),
-      _nav('Home', Icons.home_outlined),
-      _nav('Files', Icons.folder_outlined),
-      _nav('History', Icons.history_rounded),
-      _nav('Devices', Icons.devices_rounded),
-      _nav('My QR', Icons.qr_code_2_rounded),
-      _nav('Cloud Setup', Icons.cloud_outlined),
-      _nav('Settings', Icons.settings_outlined),
-      _nav('Profile', Icons.person_outline_rounded),
-      _nav('Tools', Icons.handyman_outlined, enabled: false),
-    ])),
+    child: _navContents(pinned: false),
   );
+
+  Widget _desktopSidebar() => Container(
+    width: 248,
+    decoration: BoxDecoration(
+      color: FileTheme.surface(context).withValues(alpha: .93),
+      border: Border(right: BorderSide(
+        color: FileTheme.violet.withValues(alpha: .13))),
+    ),
+    child: _navContents(pinned: true),
+  );
+
+
+  /// Android shares from WhatsApp/File Manager are draft-only until Send.
+  Future<void> _takeSharedFiles() async {
+    if(!Platform.isAndroid||!mounted)return;
+    try {
+      final rows=await _native.invokeMethod<List<dynamic>>('takeSharedFiles');
+      final sources=<File>[], names=<String>[], sizes=<int>[];
+      for(final row in rows??<dynamic>[]){
+        if(row is! Map)continue;
+        final path=row['path'],name=row['name'];
+        if(path is! String||name is! String)continue;
+        final file=File(path);
+        if(!await file.exists())continue;
+        sources.add(file);
+        names.add(name);
+        sizes.add(await file.length());
+      }
+      if(sources.isEmpty)return;
+      setState((){
+        _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
+        _showSamples=false;
+      });
+      _snack('Shared files are ready. Tap Send when you want to transmit.');
+    }catch(e){_snack('Could not import shared files: '+e.toString());}
+  }
+
+  Future<void> _refreshNearby() async {
+    if(_refreshing)return;
+    setState(()=>_refreshing=true);
+    appLan.refresh();
+    if(PersonalCloud.instance.connected){
+      unawaited(PersonalCloud.instance.refreshFiles());
+    }
+    await Future<void>.delayed(const Duration(milliseconds:1200));
+    if(mounted)setState(()=>_refreshing=false);
+  }
 
   Future<File?> _preparePickedFile(PlatformFile picked) async {
     final local = picked.path;
@@ -1350,56 +1885,45 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _choose() async {
-    if (_choosing) return;
-    setState(() => _choosing = true);
+    if(_choosing)return;
+    setState(()=>_choosing=true);
     try {
-      final picked = await FilePicker.pickFiles(type: FileType.any);
-      if (picked.isEmpty) return;
-      final sources = <File>[];
-      final names = <String>[];
-      for (final file in picked) {
-        final source = await _preparePickedFile(file);
-        if (source == null) continue;
-        sources.add(source);
-        names.add(file.name);
+      final chosen=await FilePicker.pickFiles(type:FileType.any);
+      if(chosen.isEmpty)return;
+      final sources=<File>[],names=<String>[],sizes=<int>[];
+      for(final selected in chosen){
+        final f=await _preparePickedFile(selected);
+        if(f==null)continue;
+        sources.add(f);
+        names.add(selected.name);
+        sizes.add(await f.length());
       }
-      if (sources.isEmpty) {
+      if(sources.isEmpty){
         _snack('No readable files were selected.');
         return;
       }
-      final batch = PendingBatch(
-        LanEngine.newId(), sources, names, appLan.peers.isNotEmpty);
-      setState(() {
-        _showSamples = false;
-        _staged.add(batch);
+      // IMPORTANT: Picking files MUST NOT call the transfer engine.
+      setState((){
+        _showSamples=false;
+        _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
       });
-      if (batch.started) {
-        unawaited(appLan.send(batch.sources, appLan.peers.values.toList(),
-          batchId: batch.id));
-      } else {
-        _snack('Files staged. Connect another LAN device and tap Send.');
-      }
-    } catch (e) {
-      _snack('File selection failed: ' + e.toString());
-    } finally {
-      if (mounted) setState(() => _choosing = false);
-    }
+    }catch(e){_snack('File selection failed: '+e.toString());}
+    finally{if(mounted)setState(()=>_choosing=false);}
   }
 
-  void _send() {
-    if (_staged.isEmpty) return;
-    if (appLan.peers.isEmpty && _staged.any((x) => !x.started)) {
-      _snack('No nearby LAN devices. Keep the files staged until a device appears.');
-      return;
+  Future<void> _send() async {
+    if(_staged.isEmpty || !appLan.started)return;
+    final batches=List<PendingBatch>.from(_staged);
+    for(final batch in batches){
+      try {
+        // This persists a private copy and queues even with ZERO peers.
+        await appLan.enqueue(batch.sources,names:batch.labels);
+        if(mounted)setState(()=>_staged.remove(batch));
+      }catch(e){_snack('Could not queue selected files: '+e.toString());}
     }
-    for (final batch in _staged) {
-      if (!batch.started) {
-        batch.started = true;
-        unawaited(appLan.send(batch.sources, appLan.peers.values.toList(),
-          batchId: batch.id));
-      }
+    if(appLan.peers.isEmpty){
+      _snack('Saved to Pending. Will send when nearby devices appear.');
     }
-    setState(() => _staged.clear()); // same progress, no restart
   }
 
   Future<void> _saveReceived(LanFile item) async {
@@ -1425,7 +1949,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   Future<void> _share(LanFile file) async {
     try {
-      if (file.state != TransferState.delivered) return;
+      if (!File(file.path).existsSync() ||
+          (file.incoming && file.state != TransferState.delivered)) return;
       await SharePlus.instance.share(ShareParams(
         files: [XFile(file.path)], text: file.name));
     } catch (e) { _snack('Sharing failed: ' + e.toString()); }
@@ -1436,11 +1961,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     catch (e) { _snack('Delete failed: ' + e.toString()); }
   }
 
+  Future<void> _openFileTools(LanFile file) async {
+    final navigator = Platform.isWindows && _desktopNavigator.currentState != null
+      ? _desktopNavigator.currentState! : Navigator.of(context);
+    await navigator.push(MaterialPageRoute<void>(
+      builder: (_) => SelectedFileToolsPage(file: file)));
+  }
+
 
   List<TimelineGroup> _timeline() {
     final hidden = _staged.map((item) => item.id).toSet();
+    final visibleToPeers = appLan.files.where((e) =>
+      !e.incoming && e.state != TransferState.queued)
+      .map((e) => e.batch).toSet();
     final lan = appLan.files.where((f) =>
       !hidden.contains(f.batch) &&
+      (f.state != TransferState.queued || !visibleToPeers.contains(f.batch)) &&
       (_filter == 'All' || (_filter == 'Sent' && !f.incoming) ||
       (_filter == 'Received' && f.incoming))).toList();
     final groupedLan = <String, List<LanFile>>{};
@@ -1497,67 +2033,81 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Widget _drafts(BuildContext context) {
-    if (_staged.isEmpty) return const SizedBox.shrink();
-    return DesignPanel(child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Selected files · ' + _staged.length.toString() + ' batch(es)',
-          style: TextStyle(fontWeight: FontWeight.w700,
-            color: FileTheme.foreground(context))),
-        const SizedBox(height: 5),
-        for (final batch in _staged)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.file_present_outlined, color: FileTheme.pink),
-            title: Text(batch.labels.take(2).join(', ') +
-              (batch.labels.length > 2 ? ' + more' : ''),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(batch.started
-              ? 'Transferring automatically · Send moves cards into chat'
-              : 'Waiting for LAN devices'),
-            trailing: IconButton(
-              tooltip: 'Remove from selected tray',
-              onPressed: batch.started ? null :
-                () => setState(() => _staged.remove(batch)),
-              icon: const Icon(Icons.close_rounded)),
-          ),
+    if(_staged.isEmpty)return const SizedBox.shrink();
+    bool isImage(String name){
+      final n=name.toLowerCase();
+      return n.endsWith('.jpg')||n.endsWith('.jpeg')||
+        n.endsWith('.png')||n.endsWith('.webp');
+    }
+    return DesignPanel(child:Column(
+      crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Text('Ready to send · '+_staged.fold<int>(0,(v,e)=>v+e.sources.length).toString()+' files',
+          style:TextStyle(fontWeight:FontWeight.w800,color:FileTheme.foreground(context))),
+        const SizedBox(height:5),
+        Text('Nothing goes to a device until you tap Send',
+          style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+        for(final batch in _staged)
+          for(var i=0;i<batch.sources.length;i++)
+            ListTile(
+              dense:true,contentPadding:EdgeInsets.zero,
+              leading:SizedBox(width:52,height:52,child:isImage(batch.labels[i])
+                ?ClipRRect(borderRadius:BorderRadius.circular(8),
+                    child:Image.file(batch.sources[i],fit:BoxFit.cover,
+                      cacheWidth:120,
+                      errorBuilder:(_,__,___)=>const Icon(Icons.image_outlined)))
+                :const Icon(Icons.insert_drive_file_outlined,color:FileTheme.pink)),
+              title:Text(batch.labels[i],maxLines:1,overflow:TextOverflow.ellipsis),
+              subtitle:Text(_formatBytes(batch.sizes[i])+' · Not sent',
+                style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+              trailing:IconButton(
+                tooltip:'Remove selected file',icon:const Icon(Icons.close_rounded),
+                onPressed:(){
+                  setState((){
+                    batch.sources.removeAt(i);
+                    batch.labels.removeAt(i);
+                    batch.sizes.removeAt(i);
+                    if(batch.sources.isEmpty)_staged.remove(batch);
+                  });
+                }),
+            ),
       ],
     ));
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _dashboardColumn(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
+    final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
     final groups = _timeline();
     final useDemo = _showSamples && groups.isEmpty && _staged.isEmpty;
     final samples = mockTransfers.where((f) =>
       _filter == 'All' || (_filter == 'Sent' && f.sent) ||
       (_filter == 'Received' && !f.sent)).toList();
-    return RootBackGuard(child: Scaffold(
-      key: _scaffold,
-      drawer: _drawer(),
-      body: Container(
-        decoration: BoxDecoration(gradient: FileTheme.background(context)),
-        child: SafeArea(child: Center(child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(children: [
+    return Column(children: [
             Padding(
               padding: EdgeInsets.fromLTRB(wide ? 24 : 10, 10,
                 wide ? 24 : 10, 5),
               child: DesignPanel(
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 5),
                 child: Row(children: [
-                  IconButton(tooltip: 'Open navigation',
-                    onPressed: () => _scaffold.currentState?.openDrawer(),
-                    icon: const Icon(Icons.menu_rounded, color: FileTheme.violet)),
+                  IconButton(
+                    tooltip: desktop
+                      ? (_desktopSidebarVisible ? 'Hide sidebar' : 'Show sidebar')
+                      : 'Open navigation',
+                    onPressed: desktop
+                      ? _toggleSidebar
+                      : () => _scaffold.currentState?.openDrawer(),
+                    icon: Icon(desktop && _desktopSidebarVisible
+                      ? Icons.menu_open_rounded : Icons.menu_rounded,
+                      color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('File Transfer', style: TextStyle(fontSize: wide ? 21 : 17,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
                       Text(appLan.peers.length.toString() + ' nearby LAN devices · ' +
-                        (appLan.started ? 'LAN active' : 'Starting LAN') +
+                        (appLan.receivingEnabled ? 'LAN active'
+                          : (appLan.started ? 'LAN receiver reconnecting'
+                            : 'Starting LAN')) +
                         (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
@@ -1568,14 +2118,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     icon: const Icon(Icons.qr_code_2_rounded,
                       color: FileTheme.violet)),
                   AppearanceButton(mode: widget.mode, onChange: widget.onMode),
-                  IconButton(tooltip: 'Refresh nearby LAN devices',
-                    onPressed: () {
-                      appLan.refresh();
-                      if (PersonalCloud.instance.connected) {
-                        unawaited(PersonalCloud.instance.refreshFiles());
-                      }
-                    },
-                    icon: const Icon(Icons.refresh_rounded, color: FileTheme.violet)),
+                  IconButton(tooltip:'Refresh nearby LAN devices',
+                    onPressed:_refreshing?null:_refreshNearby,
+                    icon:AnimatedRotation(
+                      turns:_refreshing?2:0,
+                      duration:const Duration(milliseconds:1100),
+                      curve:Curves.linear,
+                      child:const Icon(Icons.refresh_rounded,color:FileTheme.violet))),
                 ]),
               ),
             ),
@@ -1615,11 +2164,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 ])),
             Expanded(child: groups.isNotEmpty
               ? ListView.builder(
+                  // Newest message stays at the bottom, like a chat.
+                  reverse: true,
                   padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
                   itemCount: groups.length,
                   itemBuilder: (_, i) => groups[i].lan != null
                     ? LiveTransferCard(items: groups[i].lan!,
-                        onSave: _saveReceived, onDelete: _delete, onShare: _share)
+                        onSave: _saveReceived, onDelete: _delete,
+                        onShare: _share, onTools: _openFileTools)
                     : CloudInboxCard(items: groups[i].cloud!,
                         onSave: _saveCloud, onDelete: _deleteCloud,
                         onShare: _shareCloud))
@@ -1654,13 +2206,34 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.muted(context)))),
                   IconButton.filled(
                     tooltip: 'Send selected files',
-                    onPressed: _staged.isEmpty ? null : _send,
+                    onPressed: _staged.isEmpty ? null : () => unawaited(_send()),
                     icon: const Icon(Icons.send_rounded)),
                 ]),
               ),
             ),
-          ]),
-        ))),
+          ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
+    return RootBackGuard(child: Scaffold(
+      key: _scaffold,
+      drawer: _drawer(),
+      body: Container(
+        decoration: BoxDecoration(gradient: FileTheme.background(context)),
+        child: SafeArea(child: Row(children: [
+          if (desktop && _desktopSidebarVisible) _desktopSidebar(),
+          Expanded(child: desktop
+            ? Navigator(
+                key: _desktopNavigator,
+                onGenerateRoute: (_) => MaterialPageRoute<void>(
+                  builder: (pageContext) => ListenableBuilder(
+                    listenable: _sidebarVisibleNotifier,
+                    builder: (context, _) => _dashboardColumn(context))),
+              )
+            : _dashboardColumn(context)),
+        ])),
       ),
     ));
   }
@@ -1701,7 +2274,6 @@ class FeatureDesignPage extends StatelessWidget {
             const SizedBox(height: 15),
             if (title == 'Home') _home(context),
             if (title == 'Files') _files(context),
-            if (title == 'History') _history(context),
             if (title == 'Devices') _devices(context),
             if (title == 'My QR') _qr(context),
             if (title == 'Cloud Setup') _cloud(context),
@@ -1806,19 +2378,6 @@ class FeatureDesignPage extends StatelessWidget {
       ]),
     ),
   ]);
-
-  Widget _history(BuildContext c) => _section(c, 'Activity history',
-    'History is a view of the SAME shared file timeline, never a second QR inbox.',
-    Column(children: [
-      _line(c, Icons.arrow_upward_rounded, 'Sent',
-        'Right-aligned in the unified chat'),
-      _line(c, Icons.arrow_downward_rounded, 'Received',
-        'Left-aligned, LAN and guest QR together'),
-      _line(c, Icons.schedule_rounded, 'LAN auto-delete',
-        '24 hours after each sending batch'),
-      _line(c, Icons.nightlight_round, 'Guest cloud auto-delete',
-        'Daily at 12:00 AM IST'),
-    ]));
 
   Widget _devices(BuildContext c) => Column(children: [
     _section(c, 'Nearby devices', 'Real device discovery is not active in this UI phase.',
@@ -1925,6 +2484,57 @@ class FeatureDesignPage extends StatelessWidget {
   ]);
 
   Widget _settings(BuildContext c) => Column(children: [
+    if (Platform.isWindows) ...[
+      _section(c, 'Windows Background Receiver',
+        'Closing the window hides File Share in the tray. The LAN engine keeps receiving while Windows is awake.',
+        Column(children: [
+          ValueListenableBuilder<bool>(
+            valueListenable: WindowsBackground.instance.autoStartEnabled,
+            builder: (context, enabled, _) => SwitchListTile(
+              title: const Text('Start with Windows'),
+              subtitle: const Text('Launch File Share when you sign in to Windows'),
+              value: enabled,
+              onChanged: (value) async {
+                try { await WindowsBackground.instance.setAutoStart(value); }
+                catch (e) {
+                  if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(
+                    SnackBar(content: Text('Windows startup error: $e')));
+                }
+              },
+            ),
+          ),
+          const ListTile(
+            leading: Icon(Icons.notifications_active_outlined),
+            title: Text('System notifications'),
+            subtitle: Text('Windows will alert you when a LAN file is received'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => WindowsBackground.instance.exitCompletely(),
+            icon: const Icon(Icons.power_settings_new_outlined),
+            label: const Text('Exit File Share Completely')),
+        ]),
+      ),
+      const SizedBox(height: 14),
+    ],
+    if (Platform.isAndroid) ...[
+      _section(c, 'Android Background Receiver',
+        'A visible connected-device foreground notification keeps the LAN engine available after leaving the app.',
+        const Column(children: [
+          ListTile(
+            leading: Icon(Icons.wifi_rounded),
+            title: Text('Background LAN receiving'),
+            subtitle: Text('Active while the File Share foreground service is running'),
+          ),
+          ListTile(
+            leading: Icon(Icons.notifications_active_outlined),
+            title: Text('File received notifications'),
+            subtitle: Text('Allow notifications in Android app settings'),
+          ),
+          Text('Force Stop, OEM battery optimization, Wi-Fi disconnect and reboot can still interrupt receiving.'),
+        ]),
+      ),
+      const SizedBox(height: 14),
+    ],
     _section(c, 'Appearance', 'Light, dark and follow-system for Android and Windows.',
       Column(children: [
         _line(c, Icons.color_lens_outlined, 'Appearance mode',
@@ -1986,6 +2596,9 @@ class CloudConnectPage extends StatefulWidget {
 class _CloudConnectPageState extends State<CloudConnectPage> {
   final _url=TextEditingController();
   final _secret=TextEditingController();
+  final _accountId=TextEditingController();
+  final _apiToken=TextEditingController();
+  late final CloudflareProvisioner _provisioner;
   bool _busy=false, _show=false;
   String? _message;
 
@@ -1993,13 +2606,39 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
   void initState() {
     super.initState();
     _url.text=PersonalCloud.instance.endpoint ?? '';
+    _provisioner=CloudflareProvisioner()..addListener(_cloudProgress);
   }
+
+  void _cloudProgress(){if(mounted)setState((){});}
 
   @override
   void dispose() {
+    _provisioner.removeListener(_cloudProgress);
+    _provisioner.dispose();
+    _accountId.dispose();
+    _apiToken.dispose();
     _url.dispose();
     _secret.dispose();
     super.dispose();
+  }
+
+  Future<void> _autoConnect() async {
+    if(_busy)return;
+    setState((){_busy=true;_message=null;});
+    try{
+      final result=await _provisioner.provision(_accountId.text,_apiToken.text);
+      _apiToken.clear(); // Admin token is never persisted.
+      await PersonalCloud.instance.connectWorker(
+        result.workerUrl,result.ownerSecret);
+      _url.text=result.workerUrl;
+      if(mounted)setState(()=>_message='Worker, private D1 database, R2 bucket '
+        'and guest QR page connected. Create your account below.');
+    }catch(e){
+      if(mounted)setState(()=>_message='Setup could not finish: '+e.toString());
+    }finally{
+      _apiToken.clear();
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _connect() async {
@@ -2046,6 +2685,50 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
           ]),
           const SizedBox(height:18),
           DesignPanel(child:Column(
+            crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              Text('One-time Cloudflare Auto Setup',textAlign:TextAlign.center,
+                style:TextStyle(fontSize:20,fontWeight:FontWeight.w800,
+                  color:FileTheme.foreground(context))),
+              const SizedBox(height:9),
+              Text('Use your own Cloudflare account. No paid domain needed. '
+                'Enable your R2 bucket service and workers.dev address first.',
+                textAlign:TextAlign.center,style:TextStyle(
+                  fontSize:12,height:1.45,color:FileTheme.muted(context))),
+              const SizedBox(height:15),
+              TextField(controller:_accountId,enabled:!_busy,
+                decoration:const InputDecoration(
+                  labelText:'Cloudflare Account ID',
+                  prefixIcon:Icon(Icons.account_tree_outlined))),
+              const SizedBox(height:12),
+              TextField(controller:_apiToken,enabled:!_busy,
+                obscureText:!_show,autocorrect:false,
+                decoration:InputDecoration(
+                  labelText:'Restricted Cloudflare API Token',
+                  prefixIcon:const Icon(Icons.key_outlined),
+                  suffixIcon:IconButton(
+                    tooltip:'Show or hide secret',
+                    onPressed:()=>setState(()=>_show=!_show),
+                    icon:Icon(_show?Icons.visibility_off_outlined:
+                      Icons.visibility_outlined)))),
+              const SizedBox(height:10),
+              Text('API Token permissions: Workers Scripts Read/Write, '
+                'D1 Read/Write and Workers R2 Storage Write. The token is '
+                'used once and cleared; it is not stored by File Share.',
+                style:TextStyle(fontSize:12,height:1.4,
+                  color:FileTheme.muted(context))),
+              const SizedBox(height:15),
+              FilledButton.icon(onPressed:_busy?null:_autoConnect,
+                icon:const Icon(Icons.verified_user_outlined),
+                label:const Text('Verify & Auto Connect')),
+              if(_provisioner.busy)...[
+                const SizedBox(height:12),
+                const LinearProgressIndicator(),
+                Text(_provisioner.status,
+                  style:TextStyle(color:FileTheme.muted(context))),
+              ],
+            ])),
+          const SizedBox(height:12),
+          DesignPanel(child:Column(
             crossAxisAlignment:CrossAxisAlignment.stretch,
             children:[
               const Icon(Icons.cloud_sync_outlined,color:FileTheme.violet,size:48),
@@ -2055,7 +2738,7 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
                   fontWeight:FontWeight.w800,fontSize:19,
                   color:FileTheme.foreground(context))),
               const SizedBox(height:10),
-              Text('Advanced manual test connection. First deploy cloudflare/worker.js to YOUR account and configure D1, R2 and OWNER_TOKEN. This is not the final automatic API-token setup.',
+              Text('Advanced option: manually pair an existing personal Worker. It must already have D1, R2 and the OWNER_TOKEN setup secret.',
                 textAlign:TextAlign.center,style:TextStyle(
                   color:FileTheme.muted(context),fontSize:12,height:1.4)),
               const SizedBox(height:20),
@@ -2086,6 +2769,14 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
                   icon:const Icon(Icons.link_off_rounded),
                   label:const Text('Disconnect stored cloud account')),
               ],
+              if(PersonalCloud.instance.cloudSetupSaved)...[
+                const SizedBox(height:12),
+                OutlinedButton.icon(
+                  onPressed:()=>Navigator.push(context,fadePage(
+                    LoginPage(mode:widget.mode,onMode:widget.onMode))),
+                  icon:const Icon(Icons.person_add_alt_1_rounded),
+                  label:const Text('Create account or Login')),
+              ],
               if(_message!=null)...[
                 const SizedBox(height:14),
                 Text(_message!,style:TextStyle(
@@ -2099,11 +2790,11 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
               Text('One-time deployment checklist',style:TextStyle(
                 fontWeight:FontWeight.w800,color:FileTheme.foreground(context))),
               const SizedBox(height:12),
-              const Text('1. Create D1 and R2 in your own Cloudflare account.\n'
-                '2. Apply cloudflare/schema.sql to D1.\n'
-                '3. Deploy worker.js with the guest page assets.\n'
-                '4. Set a strong OWNER_TOKEN as a Worker secret.\n'
-                '5. Connect above, then open My QR and Generate.'),
+              const Text('1. Enter your Cloudflare Account ID and restricted API token above.\n'
+                '2. Tap Verify & Auto Connect — the app creates D1, R2 and your private Worker.\n'
+                '3. The app installs its D1 schema, binds your resources and saves the owner secret securely.\n'
+                '4. After setup succeeds, create your email/password account.\n'
+                '5. Verify your email to enable automatic login on another device; then open My QR and Generate.'),
             ])),
         ]),
       ))),
@@ -2126,7 +2817,7 @@ class _MyQrPageState extends State<MyQrPage> {
   @override
   void initState() {
     super.initState();
-    if(PersonalCloud.instance.connected){
+    if(PersonalCloud.instance.signedIn){
       WidgetsBinding.instance.addPostFrameCallback((_)=>_run(()
         =>PersonalCloud.instance.loadQr()));
     }
@@ -2178,7 +2869,7 @@ class _MyQrPageState extends State<MyQrPage> {
                 style:TextStyle(fontWeight:FontWeight.w800,fontSize:19,
                   color:FileTheme.foreground(context))),
               const SizedBox(height:10),
-              Text(cloud.connected
+              Text(cloud.signedIn
                   ? 'Your QR remains until you revoke or regenerate it.'
                   : 'Connect your own Cloudflare Worker first.',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:12),
@@ -2198,18 +2889,21 @@ class _MyQrPageState extends State<MyQrPage> {
                 SelectableText(link,textAlign:TextAlign.center,
                   style:TextStyle(color:FileTheme.foreground(context),fontSize:12)),
               const SizedBox(height:20),
-              if(!cloud.connected)
+              if(!cloud.signedIn)
                 FilledButton.icon(
                   onPressed:()=>Navigator.pushReplacement(context,fadePage(
-                    CloudConnectPage(mode:widget.mode,onMode:widget.onMode))),
+                    cloud.cloudSetupSaved
+                      ? LoginPage(mode:widget.mode,onMode:widget.onMode)
+                      : CloudConnectPage(mode:widget.mode,onMode:widget.onMode))),
                   icon:const Icon(Icons.cloud_outlined),
-                  label:const Text('Connect Personal Cloud')),
-              if(cloud.connected && link==null)
+                  label:Text(cloud.cloudSetupSaved
+                    ? 'Login to Personal Cloud' : 'Connect Personal Cloud')),
+              if(cloud.signedIn && link==null)
                 FilledButton.icon(
                   onPressed:_busy?null:()=>_run(()=>cloud.createQr()),
                   icon:const Icon(Icons.add_circle_outline_rounded),
                   label:const Text('Generate Permanent QR')),
-              if(cloud.connected && link!=null)...[
+              if(cloud.signedIn && link!=null)...[
                 Wrap(spacing:8,runSpacing:8,alignment:WrapAlignment.center,
                   children:[
                     OutlinedButton.icon(
@@ -2248,4 +2942,196 @@ class _MyQrPageState extends State<MyQrPage> {
       ),
     );
   }
+}
+
+
+/// Real nearby devices: the list is driven by the live UDP discovery engine,
+/// not the earlier placeholder names.
+class NearbyDevicesPage extends StatelessWidget {
+  const NearbyDevicesPage({super.key,required this.mode,required this.onMode});
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:SafeArea(child:Center(child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:750),
+        child:Column(children:[
+          Row(children:[
+            IconButton(tooltip:'Back',onPressed:()=>Navigator.pop(context),
+              icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('Nearby Devices',style:TextStyle(
+              fontSize:19,fontWeight:FontWeight.w800,
+              color:FileTheme.foreground(context)))),
+            IconButton(tooltip:'Refresh LAN devices',
+              onPressed:appLan.refresh,
+              icon:const Icon(Icons.refresh_rounded,color:FileTheme.violet)),
+            AppearanceButton(mode:mode,onChange:onMode),
+          ]),
+          Expanded(child:AnimatedBuilder(animation:appLan,builder:(context,_) {
+            final peers=appLan.peers.values.toList()
+              ..sort((a,b)=>a.name.compareTo(b.name));
+            return ListView(padding:const EdgeInsets.all(15),children:[
+              DesignPanel(child:Row(children:[
+                const Icon(Icons.wifi_rounded,color:FileTheme.violet,size:32),
+                const SizedBox(width:12),
+                Expanded(child:Text(
+                  peers.isEmpty?'No LAN devices connected'
+                    :peers.length.toString()+' LAN devices nearby',
+                  style:TextStyle(fontWeight:FontWeight.w800,
+                    color:FileTheme.foreground(context)))),
+              ])),
+              const SizedBox(height:10),
+              if(peers.isEmpty)
+                Padding(padding:const EdgeInsets.all(22),
+                  child:Text('Keep File Share open on another phone or Windows PC connected to the same Wi-Fi. Discovery does not need internet.',
+                    textAlign:TextAlign.center,
+                    style:TextStyle(color:FileTheme.muted(context)))),
+              for(final peer in peers)
+                Padding(padding:const EdgeInsets.only(bottom:10),
+                  child:DesignPanel(child:Row(children:[
+                    const Icon(Icons.devices_rounded,color:FileTheme.pink,size:30),
+                    const SizedBox(width:12),
+                    Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+                      children:[
+                        Text(peer.name,style:TextStyle(
+                          fontWeight:FontWeight.w800,
+                          color:FileTheme.foreground(context))),
+                        const SizedBox(height:4),
+                        Text(peer.address+' · Local Wi-Fi',
+                          style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+                      ])),
+                    const DesignTag('Nearby'),
+                  ]))),
+            ]);
+          })),
+        ]),
+      ))),
+    ),
+  );
+}
+
+class FileCategoriesPage extends StatelessWidget {
+  const FileCategoriesPage({super.key,required this.mode,required this.onMode});
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> onMode;
+  static bool _image(String name){
+    final ext=name.toLowerCase();
+    return ['.jpg','.jpeg','.png','.gif','.webp','.bmp','.heic']
+      .any(ext.endsWith);
+  }
+  Future<void> _save(LanFile item) async {
+    if(!item.incoming||item.state!=TransferState.delivered)return;
+    final dir=await getDownloadsDirectory();
+    if(dir==null)throw StateError('Downloads not available');
+    await dir.create(recursive:true);
+    final target=File(dir.path+Platform.pathSeparator+
+      LanEngine.newId()+'_'+LanEngine.safeFileName(item.name));
+    await File(item.path).openRead().pipe(target.openWrite());
+  }
+  Future<void> _share(LanFile item) async {
+    await SharePlus.instance.share(ShareParams(files:[XFile(item.path)]));
+  }
+  Future<void> _delete(LanFile item)=>appLan.remove(item.id);
+  Future<void> _openTools(BuildContext context, LanFile item) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => SelectedFileToolsPage(file: item)));
+  }
+
+  Widget _rows(BuildContext context,List<LanFile> entries){
+    if(entries.isEmpty){
+      return Center(child:Text('No files in this category',
+        style:TextStyle(color:FileTheme.muted(context))));
+    }
+    return ListView.builder(
+      padding:const EdgeInsets.all(12),itemCount:entries.length,
+      itemBuilder:(context,i){
+        final item=entries[i];
+        return Padding(padding:const EdgeInsets.only(bottom:9),
+          child:DesignPanel(padding:const EdgeInsets.all(8),
+            child:ListTile(
+              leading:SizedBox(width:58,height:60,child:_image(item.name)
+                ?ClipRRect(borderRadius:BorderRadius.circular(9),
+                    child:Image.file(File(item.path),fit:BoxFit.cover,
+                      cacheWidth:150,errorBuilder:(_,__,___)=>
+                        const Icon(Icons.image_not_supported_outlined)))
+                :const Icon(Icons.description_outlined,color:FileTheme.pink)),
+              title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
+              subtitle:Text(_formatBytes(item.size)+' · '+item.state.name),
+              trailing:const Icon(Icons.chevron_right_rounded),
+              onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
+                builder:(_)=>FullScreenFilePreview(
+                  file:item,onSave:_save,onDelete:_delete,onShare:_share,
+                  onTools:(item)=>_openTools(context,item)))),
+            )),
+        );
+      },
+    );
+  }
+
+  Widget _folders(BuildContext context,List<LanFile> entries){
+    final grouped=<String,List<LanFile>>{};
+    for(final item in entries){
+      grouped.putIfAbsent(item.batch,()=>[]).add(item);
+    }
+    if(grouped.isEmpty)return Center(child:Text('No transfer folders yet',
+      style:TextStyle(color:FileTheme.muted(context))));
+    return ListView(padding:const EdgeInsets.all(12),children:[
+      for(final group in grouped.values)
+        Padding(padding:const EdgeInsets.only(bottom:9),
+          child:DesignPanel(child:ExpansionTile(
+            leading:const Icon(Icons.folder_outlined,color:FileTheme.violet),
+            title:Text('Transfer group · '+group.length.toString()+' files'),
+            subtitle:Text(group.first.created.toLocal().toString().split('.').first),
+            children:[
+              for(final item in group)
+                ListTile(title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
+                  subtitle:Text(_formatBytes(item.size)),
+                  trailing:const Icon(Icons.chevron_right_rounded),
+                  onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
+                    builder:(_)=>FullScreenFilePreview(file:item,
+                      onSave:_save,onDelete:_delete,onShare:_share,
+                  onTools:(item)=>_openTools(context,item))))),
+            ],
+          ))),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) => DefaultTabController(
+    length:3,child:Scaffold(
+      body:Container(
+        decoration:BoxDecoration(gradient:FileTheme.background(context)),
+        child:SafeArea(child:Column(children:[
+          Row(children:[
+            IconButton(onPressed:()=>Navigator.pop(context),
+              tooltip:'Back',icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('Files',style:TextStyle(
+              fontSize:19,fontWeight:FontWeight.w800,
+              color:FileTheme.foreground(context)))),
+            AppearanceButton(mode:mode,onChange:onMode),
+          ]),
+          const TabBar(tabs:[
+            Tab(icon:Icon(Icons.image_outlined),text:'Images'),
+            Tab(icon:Icon(Icons.description_outlined),text:'Documents'),
+            Tab(icon:Icon(Icons.folder_outlined),text:'Folders'),
+          ]),
+          Expanded(child:AnimatedBuilder(
+            animation:appLan,builder:(context,_){
+              final all=appLan.files.where((item)=>
+                (item.state==TransferState.delivered||
+                item.state==TransferState.queued) &&
+                File(item.path).existsSync()).toList();
+              return TabBarView(children:[
+                _rows(context,all.where((e)=>_image(e.name)).toList()),
+                _rows(context,all.where((e)=>!_image(e.name)).toList()),
+                _folders(context,all),
+              ]);
+            },
+          )),
+        ])),
+      ),
+    ),
+  );
 }

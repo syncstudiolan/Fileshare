@@ -46,3 +46,17 @@ CREATE TABLE IF NOT EXISTS upload_parts (
   etag TEXT NOT NULL,
   PRIMARY KEY(file_id, part_number)
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  email TEXT UNIQUE NOT NULL,
+  salt TEXT NOT NULL,
+  hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  id TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL,
+  changed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS auth_attempts_expiry ON auth_attempts(changed_at);

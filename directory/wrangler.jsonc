@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fileshare-directory",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-16",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fileshare-directory-db",
+      "database_id": "b86988f1-3b66-41d9-ba24-17de5ce33f14"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  }
+}

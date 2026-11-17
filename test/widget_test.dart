@@ -1,9 +1,136 @@
+import 'dart:io';
+
 import 'package:file_share/main.dart';
 import 'package:file_share/lan_engine.dart';
+import 'package:file_share/account_directory.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Real TCP LAN transfer delivers bytes and receives exactly one event',
+      () async {
+    final root = await Directory.systemTemp.createTemp('file_share_tcp_test_');
+    final senderDir = Directory(root.path + Platform.pathSeparator + 'sender');
+    final receiverDir = Directory(root.path + Platform.pathSeparator + 'receiver');
+    await senderDir.create();
+    await receiverDir.create();
+    const port = 51248;
+    final receiver = LanEngine(
+      tcpPort: port, discoveryPort: 51249,
+      testSupportDirectory: receiverDir, testDeviceId: 'receiver-1');
+    final sender = LanEngine(
+      tcpPort: 51250, discoveryPort: 51251,
+      testSupportDirectory: senderDir, testDeviceId: 'sender-1');
+    var notices = 0;
+    receiver.onReceived = (file) async {
+      expect(file.incoming, isTrue);
+      expect(file.state, TransferState.delivered);
+      notices++;
+    };
+    try {
+      await receiver.start();
+      await sender.start();
+      final source = File(root.path + Platform.pathSeparator + 'hello.txt');
+      const message = 'actual socket transfer without UI';
+      await source.writeAsString(message);
+      // No visible peer -> Send still enters the durable Pending Queue.
+      await sender.enqueue([source], names: ['hello.txt']);
+      expect(sender.queuedBatches.length, 1);
+      expect(receiver.files, isEmpty);
+      // Discovery later: the engine auto-delivers the pending batch.
+      sender.peers['receiver-1'] =
+          LanPeer('receiver-1', 'Android receiver', '127.0.0.1', port, DateTime.now());
+      for (var i = 0; i < 40 && receiver.files.where((f) =>
+          f.state == TransferState.delivered).isEmpty; i++) {
+        sender.refresh();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      final incoming = receiver.files.where((f) =>
+          f.state == TransferState.delivered).toList();
+      expect(incoming, hasLength(1));
+      expect(await File(incoming.single.path).readAsString(), message);
+      expect(notices, 1);
+    } finally {
+      await sender.stop();
+      await receiver.stop();
+      await root.delete(recursive: true);
+    }
+  });
+
+  test('Busy LAN listener does not create a second socket and can retry',
+      () async {
+    final temporary=await Directory.systemTemp.createTemp('fileshare_socket_');
+    final occupied=await ServerSocket.bind(InternetAddress.anyIPv4,0);
+    final engine=LanEngine(
+      tcpPort:occupied.port,discoveryPort:51587,
+      testSupportDirectory:temporary,testDeviceId:'retry-test');
+    try {
+      await engine.start();
+      expect(engine.receivingEnabled,isFalse);
+      await occupied.close();
+      await engine.retryReceiver();
+      expect(engine.receivingEnabled,isTrue);
+      await engine.retryReceiver(); // Already bound: no duplicate listener.
+      expect(engine.receivingEnabled,isTrue);
+    }finally{
+      await engine.stop();
+      await temporary.delete(recursive:true);
+    }
+  });
+
+  Future<void> noop(LanFile _) async {}
+
+  testWidgets('Received card has one filename and exactly four actions',
+      (tester) async {
+    final file=LanFile(id:'in',batch:'test',name:'receipt.pdf',
+      path:'/missing/receipt.pdf',peer:'Office PC',incoming:true,size:1024,
+      created:DateTime.utc(2026,11,17),state:TransferState.delivered);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:ListView(children:[
+        LiveTransferCard(items:[file],onSave:noop,onDelete:noop,
+          onShare:noop,onTools:noop),
+      ]),
+    )));
+    expect(find.text('receipt.pdf'),findsOneWidget);
+    expect(find.byTooltip('Download'),findsOneWidget);
+    expect(find.byTooltip('Delete'),findsOneWidget);
+    expect(find.byTooltip('Share'),findsOneWidget);
+    expect(find.byTooltip('Open in Tools'),findsOneWidget);
+    expect(find.byTooltip('Open in another app'),findsNothing);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('Sent card has one filename and no Download action',
+      (tester) async {
+    final file=LanFile(id:'out',batch:'test',name:'photo.jpg',
+      path:'/missing/photo.jpg',peer:'Other Phone',incoming:false,size:170000,
+      created:DateTime.utc(2026,11,17),state:TransferState.queued);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:ListView(children:[
+        LiveTransferCard(items:[file],onSave:noop,onDelete:noop,
+          onShare:noop,onTools:noop),
+      ]),
+    )));
+    expect(find.text('photo.jpg'),findsOneWidget);
+    expect(find.byTooltip('Download'),findsNothing);
+    expect(find.byTooltip('Delete'),findsOneWidget);
+    expect(find.byTooltip('Share'),findsOneWidget);
+    expect(find.byTooltip('Open in Tools'),findsOneWidget);
+    expect(find.byTooltip('Open in another app'),findsNothing);
+    expect(tester.takeException(),isNull);
+  });
+
+  test('Official directory is configured for both Flutter targets', () {
+    // Both Android and Windows import the same AccountDirectory singleton.
+    expect(AccountDirectory.instance.enabled, isTrue);
+    expect(AccountDirectory.validateDirectoryUrl(
+      'https://fileshare-directory.modeltech0.workers.dev'),
+      'https://fileshare-directory.modeltech0.workers.dev');
+    expect(
+      () => AccountDirectory.validateDirectoryUrl('http://127.0.0.1:8787'),
+      throwsFormatException);
+  });
+
   test('LAN file names cannot contain path separators', () {
     expect(LanEngine.safeFileName('../unsafe\\name.png'),
         '.._unsafe_name.png');
@@ -19,6 +146,70 @@ void main() {
     expect(decoded!.progress, 0.5);
     expect(decoded.incoming, isTrue);
     expect(decoded.batch, 'batch');
+  });
+
+  test('Queued batch persists the intended files and acknowledged peers', () {
+    final batch = QueuedLanBatch('batch-1', DateTime.utc(2026, 11, 16), [
+      QueuedLanItem('file-1','picture.jpg','/private/picture.jpg',4096)
+    ], {'android-A:file-1'});
+    final restored = QueuedLanBatch.fromJson(batch.toJson());
+    expect(restored, isNotNull);
+    expect(restored!.items.single.name, 'picture.jpg');
+    expect(restored.deliveredKeys.contains('android-A:file-1'), isTrue);
+    expect(restored.deliveredKeys.contains('android-B:file-1'), isFalse);
+  });
+
+  testWidgets('Drawer has the new offline menu and no History or Tools',
+      (tester) async {
+    await tester.pumpWidget(const FileShareApp(
+      initialMode: ThemeMode.light,
+      offlineDefault: true,
+      enableBackends: false,
+    ));
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+    expect(find.text('Files'), findsOneWidget);
+    expect(find.text('Devices'), findsOneWidget);
+    expect(find.text('Login'), findsOneWidget);
+    expect(find.text('History'), findsNothing);
+    expect(find.text('Tools'), findsNothing);
+  });
+
+  testWidgets('Account creation and personal Cloudflare setup are reachable',
+      (tester) async {
+    await tester.pumpWidget(const FileShareApp(initialMode: ThemeMode.light));
+    await tester.tap(find.text('Login / Create Account'));
+    await tester.pumpAndSettle();
+    expect(find.text('File Share Account'), findsOneWidget);
+    await tester.tap(find.text('New here? Create account'));
+    await tester.pumpAndSettle();
+    expect(find.text('Create your account'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
+    await tester.tap(find.text('Set up or connect personal Cloudflare'));
+    await tester.pumpAndSettle();
+    expect(find.text('One-time Cloudflare Auto Setup'), findsOneWidget);
+    expect(find.text('Verify & Auto Connect'), findsOneWidget);
+    // No credentials, network calls, setup operations or deployments from tests.
+  });
+
+  testWidgets('Windows wide view has a persistent collapsible sidebar',
+      (tester) async {
+    if (!Platform.isWindows) return;
+    await tester.binding.setSurfaceSize(const Size(1440, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const FileShareApp(
+      initialMode: ThemeMode.light, offlineDefault: true,
+      enableBackends: false,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Hide sidebar'), findsWidgets);
+    expect(find.text('Devices'), findsWidgets);
+    await tester.tap(find.byTooltip('Hide sidebar').last);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Show sidebar'), findsOneWidget);
+    await tester.tap(find.byTooltip('Show sidebar'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Hide sidebar'), findsWidgets);
   });
 
   testWidgets('First use offers login and no-login offline LAN', (tester) async {

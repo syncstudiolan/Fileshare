@@ -1,0 +1,174 @@
+name: Validate File Share background LAN and compact releases
+
+on:
+  # Android test build on the explicitly requested merge into main.
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Generate missing Android runner
+        run: flutter create --project-name file_share --platforms=android .
+      - name: Install packages
+        run: flutter pub get
+      - name: Flutter analyzer
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Widget and LAN model tests
+        run: flutter test
+      - name: Build compact ARM64 release APK
+        run: flutter build apk --release --target-platform android-arm64
+      - name: Record release APK size
+        run: |
+          stat -c 'ARM64 release APK: %s bytes' build/app/outputs/flutter-apk/app-release.apk
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-arm64-release-test-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+      - name: Build special full-backend emulator-only debug APK
+        run: flutter build apk --debug --dart-define=FILE_SHARE_BACKGROUND_VALIDATION=true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-background-emulator-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+  windows:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter config --enable-windows-desktop
+      - name: Generate missing Windows runner
+        run: flutter create --project-name file_share --platforms=windows .
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test
+      - name: Build optimized Windows release bundle
+        run: flutter build windows --release
+      - name: Record Windows release bundle size
+        shell: pwsh
+        run: |
+          $bundle = "build/windows/x64/runner/Release"
+          $bytes = (Get-ChildItem $bundle -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host "Windows release bundle size: $bytes bytes"
+          Get-ChildItem $bundle -File | Select-Object Name,Length
+      - name: Run real Windows EXE hidden and transfer a file by TCP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = (Resolve-Path "build/windows/x64/runner/Release").Path
+          $exe = Join-Path $folder "file_share.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--lan-smoke", "--background" -WorkingDirectory $folder -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+              if ($proc.HasExited) { throw "Windows EXE exited with code $($proc.ExitCode)" }
+              $port = Get-NetTCPConnection -LocalPort 49311 -State Listen -ErrorAction SilentlyContinue
+              if ($port) { $ready = $true; break }
+            }
+            if (-not $ready) { throw "Windows LAN TCP listener did not start" }
+            $payload = "Windows background LAN transfer proof"
+            $header = '{"protocol":"fileshare-file-v1","name":"windows_smoke.txt","size":' +
+              [Text.Encoding]::UTF8.GetByteCount($payload) +
+              ',"batch":"win-smoke","sender":"Windows GitHub CI","senderId":"windows-ci"}'
+            $bytes = [Text.Encoding]::UTF8.GetBytes($header + [char]10 + $payload)
+            $client = [System.Net.Sockets.TcpClient]::new("127.0.0.1", 49311)
+            try {
+              $client.ReceiveTimeout = 20000
+              $stream = $client.GetStream()
+              $stream.Write($bytes,0,$bytes.Length)
+              $stream.Flush()
+              $buffer = New-Object byte[] 64
+              $read = $stream.Read($buffer,0,$buffer.Length)
+              $ack = [Text.Encoding]::UTF8.GetString($buffer,0,$read)
+              Write-Host "Real Windows LAN receiver ACK: $ack"
+              if (-not $ack.StartsWith("OK")) { throw "Windows receiver did not persist the file" }
+              $proc.Refresh()
+              if ($proc.HasExited) { throw "Windows receiver exited instead of running in background" }
+              Write-Host "PASS: Windows release EXE live in background and LAN TCP ACK received."
+            } finally { $client.Dispose() }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-windows-release
+          path: build/windows/x64/runner/Release/**
+          if-no-files-found: error
+
+  android_background_emulator:
+    name: Verify Android background TCP receive and notification
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: file-share-background-emulator-apk
+          path: emulator-apk
+      - name: Enable hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Launch real Android emulator and receive after Home
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_4
+          disable-animations: true
+          script: |
+            mkdir -p screenshots
+            adb install -r emulator-apk/app-debug.apk
+            adb shell pm grant com.example.file_share android.permission.POST_NOTIFICATIONS || true
+            adb shell am start -n com.example.file_share/.MainActivity
+            sleep 10
+            adb shell input keyevent KEYCODE_HOME
+            sleep 3
+            adb shell pidof com.example.file_share > screenshots/process-pid.txt || true
+            adb shell dumpsys activity services com.example.file_share > screenshots/service-state.txt || true
+            adb shell ss -tlpn > screenshots/tcp-listeners.txt || true
+            adb logcat -c || true
+            adb forward tcp:49311 tcp:49311
+            python3 -c 'import json,socket; data=b"LAN background receiver test\n"; header=json.dumps({"protocol":"fileshare-file-v1","name":"lan_background_probe.txt","size":len(data),"batch":"background-check","sender":"GitHub runner","senderId":"runner-device"}).encode()+b"\n"; s=socket.create_connection(("127.0.0.1",49311),timeout=12); s.settimeout(20); s.sendall(header+data); reply=s.recv(64); print("Background receiver response:",repr(reply)); open("screenshots/transfer-result.txt","w").write(("PASS" if reply.startswith(b"OK") else "FAIL")+": "+repr(reply)); s.close()'
+            sleep 4
+            adb logcat -d -v time > screenshots/android-logcat.txt || true
+            adb shell dumpsys notification --noredact > screenshots/notification-diagnostics.txt
+            adb exec-out screencap -p > screenshots/01-android-after-background-receive.png
+            adb shell cmd statusbar expand-notifications
+            sleep 2
+            adb exec-out screencap -p > screenshots/02-file-received-notification.png
+            grep -F 'lan_background_probe.txt' screenshots/notification-diagnostics.txt || true
+            grep -q '^PASS' screenshots/transfer-result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: file-share-background-receive-proof
+          path: screenshots/*
+          if-no-files-found: warn
