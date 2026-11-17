@@ -1481,7 +1481,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _showSamples = true;
   bool _refreshing = false;
   bool _desktopSidebarVisible = true;
+  final _sidebarVisibleNotifier = ValueNotifier<bool>(true);
   final _desktopNavigator = GlobalKey<NavigatorState>();
+
+  void _toggleSidebar(){
+    setState(()=>_desktopSidebarVisible=!_desktopSidebarVisible);
+    _sidebarVisibleNotifier.value=_desktopSidebarVisible;
+  }
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
 
@@ -1534,6 +1540,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
+    _sidebarVisibleNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
@@ -1596,7 +1603,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             color: FileTheme.foreground(context)))),
           if (pinned) IconButton(
             tooltip: 'Hide sidebar',
-            onPressed: () => setState(() => _desktopSidebarVisible = false),
+            onPressed: _toggleSidebar,
             icon: const Icon(Icons.menu_open_rounded, color: FileTheme.violet)),
         ])),
       const Divider(height: 12),
@@ -1899,8 +1906,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       ? (_desktopSidebarVisible ? 'Hide sidebar' : 'Show sidebar')
                       : 'Open navigation',
                     onPressed: desktop
-                      ? () => setState(() =>
-                          _desktopSidebarVisible = !_desktopSidebarVisible)
+                      ? _toggleSidebar
                       : () => _scaffold.currentState?.openDrawer(),
                     icon: Icon(desktop && _desktopSidebarVisible
                       ? Icons.menu_open_rounded : Icons.menu_rounded,
@@ -2029,7 +2035,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             ? Navigator(
                 key: _desktopNavigator,
                 onGenerateRoute: (_) => MaterialPageRoute<void>(
-                  builder: (pageContext) => _dashboardColumn(pageContext)),
+                  builder: (pageContext) => ListenableBuilder(
+                    listenable: _sidebarVisibleNotifier,
+                    builder: (context, _) => _dashboardColumn(context))),
               )
             : _dashboardColumn(context)),
         ])),
