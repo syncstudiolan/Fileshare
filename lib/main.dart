@@ -13,6 +13,7 @@ import 'package:local_notifier/local_notifier.dart';
 import 'lan_engine.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
+import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:flutter/material.dart';
@@ -680,7 +681,10 @@ class _LoginPageState extends State<LoginPage> {
   final _email=TextEditingController();
   final _password=TextEditingController();
   final _workerUrl=TextEditingController();
+  final _emailCode=TextEditingController();
   bool _register=false,_hidden=true,_busy=false;
+  bool _awaitingEmailVerification=false;
+  bool _personalAccountRegistered=false;
   String? _error;
 
   @override void initState(){
@@ -692,26 +696,81 @@ class _LoginPageState extends State<LoginPage> {
   }
   @override void dispose(){
     _email.dispose();_password.dispose();_workerUrl.dispose();
+    _emailCode.dispose();
     super.dispose();
   }
+  Future<void> _enterDashboard()async{
+    await SharedPreferencesAsync().setBool('offline_start',true);
+    if(!mounted)return;
+    Navigator.of(context).pushAndRemoveUntil(fadePage(
+      DashboardPage(mode:widget.mode,onMode:widget.onMode)),(_)=>false);
+  }
+
+  Future<void> _requestEmailVerification() async {
+    final cloud=PersonalCloud.instance;
+    if(!AccountDirectory.instance.enabled){
+      throw StateError('Email-only login requires the File Share directory '
+        'to be configured by the app publisher');
+    }
+    await cloud.requestEmailLink();
+    if(mounted)setState(()=>_awaitingEmailVerification=true);
+  }
+
+  Future<void> _confirmEmail() async {
+    if(_busy)return;
+    if(!RegExp(r'^[0-9]{8}$').hasMatch(_emailCode.text.trim())){
+      setState(()=>_error='Enter the 8-digit code sent to your email');
+      return;
+    }
+    setState((){_busy=true;_error=null;});
+    try {
+      await PersonalCloud.instance.verifyEmailLink(_emailCode.text);
+      await _enterDashboard();
+    }catch(e){
+      if(mounted)setState(()=>_error=e.toString());
+    }finally{
+      if(mounted)setState(()=>_busy=false);
+    }
+  }
+
   Future<void> _submit()async{
     if(_busy||!(_key.currentState?.validate()??false))return;
     final cloud=PersonalCloud.instance;
+    final directory=AccountDirectory.instance;
     setState((){_busy=true;_error=null;});
     try{
       if(_register){
-        await cloud.registerAccount(_email.text,_password.text);
+        if(!_personalAccountRegistered && !cloud.signedIn){
+          await cloud.registerAccount(_email.text,_password.text);
+          _personalAccountRegistered=true;
+        }
+        if(directory.enabled){
+          await _requestEmailVerification();
+          return;
+        }
+      }else if(directory.enabled){
+        // New devices use ONLY email/password. Directory discovers the
+        // correct personal Cloudflare Worker and verifies it.
+        await cloud.loginByEmail(_email.text,_password.text);
       }else{
+        // Explicit backwards-compatible fallback for private installations
+        // without the official global discovery service.
         await cloud.loginAccount(_workerUrl.text,_email.text,_password.text);
       }
-      await SharedPreferencesAsync().setBool('offline_start',true);
-      if(!mounted)return;
-      Navigator.of(context).pushAndRemoveUntil(fadePage(
-        DashboardPage(mode:widget.mode,onMode:widget.onMode)),(_)=>false);
+      await _enterDashboard();
     }catch(e){
       if(mounted)setState(()=>_error=e.toString().replaceFirst('Bad state: ',''));
     }finally{if(mounted)setState(()=>_busy=false);}
   }
+
+  Future<void> _linkExistingAccount()async{
+    if(_busy)return;
+    setState((){_busy=true;_error=null;});
+    try{await _requestEmailVerification();}
+    catch(e){if(mounted)setState(()=>_error=e.toString());}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
   void _openCloudSetup(){
     Navigator.push(context,fadePage(
       CloudConnectPage(mode:widget.mode,onMode:widget.onMode)
@@ -742,29 +801,54 @@ class _LoginPageState extends State<LoginPage> {
             padding:const EdgeInsets.all(24),children:[
               const Center(child:AppLogo(size:68)),
               const SizedBox(height:22),
-              Text(_register?'Create your account':'Welcome back',
+              Text(_awaitingEmailVerification?'Verify your email':
+                (_register?'Create your account':'Welcome back'),
                 textAlign:TextAlign.center,style:TextStyle(
                   fontSize:28,fontWeight:FontWeight.w800,
                   color:FileTheme.foreground(context))),
               const SizedBox(height:9),
-              Text('Your account lives on your own private Cloudflare Worker. '
-                'Offline LAN works without signing in.',
+              Text(_awaitingEmailVerification
+                ? 'We sent an 8-digit one-time code to your email. '
+                  'Confirm it to enable automatic cloud recovery on every device.'
+                : 'Sign in with email and password on any device. '
+                  'File Share finds your personal Cloudflare Worker automatically.',
                 textAlign:TextAlign.center,
                 style:TextStyle(color:FileTheme.muted(context),height:1.4)),
               const SizedBox(height:24),
-              Form(key:_key,child:Column(children:[
-                TextFormField(
-                  controller:_workerUrl,enabled:!_register&&!_busy,
-                  keyboardType:TextInputType.url,
+              if(_awaitingEmailVerification)...[
+                Text('Email: ',style:TextStyle(
+                  color:FileTheme.foreground(context))),
+                Text(PersonalCloud.instance.accountEmail??_email.text,
+                  textAlign:TextAlign.center),
+                const SizedBox(height:16),
+                TextField(controller:_emailCode,keyboardType:TextInputType.number,
+                  maxLength:8,enabled:!_busy,
                   decoration:const InputDecoration(
-                    labelText:'Personal Worker URL',
-                    hintText:'https://name.account.workers.dev',
-                    prefixIcon:Icon(Icons.cloud_outlined)),
-                  validator:(value)=>_register?null:
-                    ((value??'').contains('.workers.dev')?null:
-                      'Enter your own Worker URL or connect Cloudflare first'),
-                ),
-                const SizedBox(height:12),
+                    labelText:'8-digit email verification code',
+                    prefixIcon:Icon(Icons.mark_email_read_outlined))),
+                if(_error!=null)Text(_error!,
+                  style:const TextStyle(color:Colors.deepOrange)),
+                const SizedBox(height:9),
+                FilledButton(
+                  onPressed:_busy?null:_confirmEmail,
+                  child:Text(_busy?'Checking…':'Verify and finish setup')),
+                TextButton(onPressed:_busy?null:_linkExistingAccount,
+                  child:const Text('Resend verification email')),
+              ]else Form(key:_key,child:Column(children:[
+                if(!AccountDirectory.instance.enabled && !_register)...[
+                  TextFormField(
+                    controller:_workerUrl,enabled:!_register&&!_busy,
+                    keyboardType:TextInputType.url,
+                    decoration:const InputDecoration(
+                      labelText:'Personal Worker URL',
+                      hintText:'https://name.account.workers.dev',
+                      prefixIcon:Icon(Icons.cloud_outlined)),
+                    validator:(value)=>_register?null:
+                      ((value??'').contains('.workers.dev')?null:
+                        'Enter your own Worker URL or connect Cloudflare first'),
+                  ),
+                  const SizedBox(height:12),
+                ],
                 TextFormField(
                   controller:_email,enabled:!_busy,
                   keyboardType:TextInputType.emailAddress,
@@ -814,10 +898,19 @@ class _LoginPageState extends State<LoginPage> {
                   onPressed:_busy?null:_openCloudSetup,
                   icon:const Icon(Icons.cloud_sync_outlined),
                   label:const Text('Set up or connect personal Cloudflare')),
+                if(AccountDirectory.instance.enabled &&
+                   PersonalCloud.instance.signedIn && !_register)
+                  TextButton.icon(
+                    onPressed:_busy?null:_linkExistingAccount,
+                    icon:const Icon(Icons.mark_email_read_outlined),
+                    label:const Text('Enable email-only login for this account')),
               ])),
               const SizedBox(height:15),
-              Text('On another device, sign in with your same email/password '
-                'and Worker URL. Your Cloudflare API token is not needed again.',
+              Text(AccountDirectory.instance.enabled
+                ? 'On a new Android or Windows device, enter only this email '
+                  'and password. The directory finds your personal Worker.'
+                : 'Email-only sign-in needs the official File Share directory '
+                  'deployment. Until configured, use your Worker URL too.',
                 textAlign:TextAlign.center,
                 style:TextStyle(fontSize:12,color:FileTheme.muted(context))),
             ])))),
