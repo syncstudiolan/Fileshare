@@ -116,7 +116,10 @@ class LanEngine extends ChangeNotifier {
   final Map<String, DateTime> _attempts = {};
   ServerSocket? _server;
   RawDatagramSocket? _discovery;
-  Timer? _heartbeat, _cleanup;
+  Timer? _heartbeat, _cleanup, _listenerRetry;
+  bool _bindingReceiver = false;
+  int _listenerGeneration = 0;
+  bool get receivingEnabled => _server != null;
   Directory? _inbox, _outbox;
   File? _db, _queueDb;
   String? deviceId, error;
@@ -161,10 +164,11 @@ class LanEngine extends ChangeNotifier {
     await _restore();
     await _loadQueue();
     await cleanExpired();
-    try {
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, tcpPort);
-      _server!.listen((connection) { unawaited(_accept(connection)); });
-    } catch (e) { error = 'Unable to listen for LAN files: ' + e.toString(); }
+    await _bindReceiver();
+    // Recover automatically if an older app process temporarily owns the port.
+    _listenerRetry = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (_server == null) unawaited(_bindReceiver());
+    });
     try {
       _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
         discoveryPort, reuseAddress: true);
@@ -188,6 +192,47 @@ class LanEngine extends ChangeNotifier {
     started = true;
     _notify();
   }
+
+  /// One TCP receiver per LAN engine. No shared ServerSocket binding: shared
+  /// ports can randomly deliver a file to the wrong process on Windows.
+  /// Failed binds are retried without resetting the saved transfer queue.
+  Future<void> _bindReceiver() async {
+    if (_bindingReceiver || _server != null || _disposed) return;
+    _bindingReceiver = true;
+    final generation = _listenerGeneration;
+    ServerSocket? socket;
+    try {
+      socket = await ServerSocket.bind(InternetAddress.anyIPv4, tcpPort);
+      if (generation != _listenerGeneration) {
+        await socket.close();
+        return;
+      }
+      _server = socket;
+      socket.listen((connection) => unawaited(_accept(connection)),
+        onError: (Object e) {
+          error = 'LAN receive connection error: $e';
+          _notify();
+        });
+      if (error?.startsWith('LAN receiver port') == true ||
+          error?.startsWith('Unable to listen for LAN files') == true) {
+        error = null;
+      }
+    } on SocketException catch (e) {
+      // OS error 10048: another process already listens at this TCP port.
+      // Windows single-instance guard handles future launches, while this
+      // retry also handles older versions already in the system tray.
+      error = 'LAN receiver port $tcpPort is already in use. '
+        'Close the other File Share process. Automatically retrying.';
+      debugPrint('LAN port bind conflict: $e');
+    } catch (e) {
+      error = 'LAN receiver unavailable; retrying: $e';
+    } finally {
+      _bindingReceiver = false;
+      _notify();
+    }
+  }
+
+  Future<void> retryReceiver() => _bindReceiver();
 
   void refresh() {
     if (_discovery == null) return;
@@ -597,6 +642,9 @@ class LanEngine extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _listenerGeneration++;
+    _listenerRetry?.cancel();
+    _listenerRetry = null;
     _heartbeat?.cancel();
     _cleanup?.cancel();
     _discovery?.close();
