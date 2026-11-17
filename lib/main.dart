@@ -819,7 +819,7 @@ class _LoginPageState extends State<LoginPage> {
                 'and Worker URL. Your Cloudflare API token is not needed again.',
                 textAlign:TextAlign.center,
                 style:TextStyle(fontSize:12,color:FileTheme.muted(context))),
-            ]))),
+            ])))),
       ])),
     ),
   );
