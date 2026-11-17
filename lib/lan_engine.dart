@@ -117,6 +117,8 @@ class LanEngine extends ChangeNotifier {
   File? _db, _queueDb;
   String? deviceId, error;
   bool started = false, _disposed = false;
+  Future<void>? _starting;
+  Future<void> Function(LanFile)? onReceived;
   Future<void> _writes = Future<void>.value();
 
   static String newId() => base64Url.encode(
@@ -130,8 +132,14 @@ class LanEngine extends ChangeNotifier {
 
   void _notify() { if (!_disposed) notifyListeners(); }
 
-  Future<void> start() async {
-    if (started) return;
+  // The UI and the cached background FlutterEngine can request start together.
+  // Use one server/UDP listener rather than racing for the same ports.
+  Future<void> start() {
+    if (started) return Future<void>.value();
+    return _starting ??= _startOnce().whenComplete(() => _starting = null);
+  }
+
+  Future<void> _startOnce() async {
     final dir = await getApplicationSupportDirectory();
     _inbox = Directory(dir.path + Platform.pathSeparator + 'fileshare_inbox');
     await _inbox!.create(recursive: true);
@@ -490,6 +498,14 @@ class LanEngine extends ChangeNotifier {
       record.state = TransferState.delivered;
       socket.write('OK\n');
       await socket.flush();
+      // Notify only after the file is persisted, never for partial downloads.
+      final onFile = onReceived;
+      if (onFile != null) {
+        unawaited(Future.sync(() => onFile(record!)).catchError((Object e) {
+          error = 'System notification unavailable: $e';
+          _notify();
+        }));
+      }
     } catch (e) {
       if (record != null) {
         record.state = TransferState.failed;
