@@ -5,6 +5,12 @@
   "compatibility_date": "2026-11-16",
   "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
+  "vars": {
+    "LOCAL_PERSONAL_URL": "https://fileshare-personal-7ee7299b34.modeltech0.workers.dev"
+  },
+  "services": [
+    {"binding": "LOCAL_PERSONAL_WORKER", "service": "fileshare-personal-7ee7299b34"}
+  ],
   "d1_databases": [
     {
       "binding": "DB",
