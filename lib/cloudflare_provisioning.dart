@@ -134,7 +134,8 @@ class CloudflareProvisioner extends ChangeNotifier {
         await _call(token,'POST','/accounts/$id/r2/buckets',{'name':bucket});
       }
       _progress('Configuring D1 schema and account tables');
-      final sql=await rootBundle.loadString('cloudflare/schema.sql');
+      final sql=(await rootBundle.loadString('cloudflare/schema.sql'))
+        .replaceFirst('PRAGMA foreign_keys = ON;', '');
       await _call(token,'POST','/accounts/$id/d1/database/$dbId/query',
         {'sql':sql});
 
