@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:image/image.dart' as img;
 
-import 'main.dart' show FileTheme;
+import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
 import 'image_editing_storage.dart';
 import 'image_editing_windows_ai.dart';
@@ -538,8 +538,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Widget _menu()=>PopupMenuButton<String>(tooltip:'Image Editing menu',
     icon:const Icon(Icons.more_vert),
     onSelected:(value){
-      if(value=='history')Navigator.of(context).push(MaterialPageRoute<void>(
-        builder:(_)=>const ImageEditingHistoryPage()));
+      if(value=='history')Navigator.of(context).push(fadePage<void>(
+        const ImageEditingHistoryPage()));
       if(value=='share')unawaited(_export('share'));
     },itemBuilder:(_)=>const [
       PopupMenuItem(value:'history',child:Text('Image History')),
@@ -557,7 +557,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
       Text('$_tool',style:Theme.of(context).textTheme.titleLarge),
       const SizedBox(height:12),
-      _toolControls(),
+      AnimatedSwitcher(
+        duration:const Duration(milliseconds:250),
+        switchInCurve:Curves.easeOutCubic,
+        switchOutCurve:Curves.easeInCubic,
+        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls()),
+      ),
     ]));
 
   Widget _actions()=>SafeArea(top:false,child:Padding(
