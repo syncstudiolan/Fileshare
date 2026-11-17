@@ -66,8 +66,8 @@ class AccountDirectory {
   }
 
   /// The signed session proves the user already logged in on their own Worker.
-  /// Server additionally sends an email code to prove mailbox ownership.
-  Future<void> beginLink({
+  /// This binds the first account to its personal Worker. It does not verify mailbox ownership.
+  Future<void> linkAccount({
     required String email,
     required String workerUrl,
     required String personalSession,
@@ -76,12 +76,6 @@ class AccountDirectory {
       'email':email.trim().toLowerCase(),
       'workerUrl':workerUrl,
       'personalSession':personalSession,
-    });
-  }
-
-  Future<void> confirmLink(String email,String code)async{
-    await _post('/v1/directory/verify',{
-      'email':email.trim().toLowerCase(),'code':code.trim(),
     });
   }
 
