@@ -11,6 +11,7 @@ class FakeD1 {
     return {
       bind(...values) { args = values; return this; },
       async first() {
+        if (sql === 'SELECT 1') return {'1':1};
         if (sql.includes('FROM limits')) return db.limits.get(args[0]) ?? null;
         if (sql.includes('SELECT email FROM accounts')) {
           return db.accounts.has(args[0]) ? {email:args[0]} : null;
