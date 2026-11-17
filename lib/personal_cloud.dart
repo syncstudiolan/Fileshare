@@ -97,7 +97,16 @@ class PersonalCloud extends ChangeNotifier {
       }
       if (response.statusCode < 200 || response.statusCode > 299 ||
           data['ok'] != true) {
-        throw StateError(data['error'] ?? 'Cloud request failed');
+        // Older personal Workers return one generic credential message.
+        // Directory already resolved this email, so a login 401 means
+        // a wrong password, not an unreachable cloud connection.
+        if(path=='/v1/auth/login' && response.statusCode==401){
+          throw StateError('Incorrect password');
+        }
+        if(path=='/v1/auth/login' && response.statusCode==404){
+          throw StateError('Email address is not registered');
+        }
+        throw StateError(data['error']?.toString() ?? 'Cloud request failed');
       }
       return data;
     } finally { client.close(force: true); }
