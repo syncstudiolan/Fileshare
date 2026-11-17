@@ -1,8 +1,7 @@
 name: Validate File Share background LAN and compact releases
 
 on:
-  push:
-    branches: [offline-lan-fixes]
+  # Manual-only by project owner's request: edits must never launch builds.
   workflow_dispatch:
 
 permissions:
