@@ -687,7 +687,7 @@ class _LoginPageState extends State<LoginPage> {
     super.initState();
     final cloud=PersonalCloud.instance;
     _workerUrl.text=cloud.workerOrigin??'';
-    _register=cloud.canRegisterAccount && !cloud.signedIn;
+    _register=cloud.canRegisterAccount && cloud.accountEmail==null && !cloud.signedIn;
     _email.text=cloud.accountEmail??'';
   }
   @override void dispose(){
@@ -718,7 +718,8 @@ class _LoginPageState extends State<LoginPage> {
     )).then((_){
       if(mounted)setState((){
         _workerUrl.text=PersonalCloud.instance.workerOrigin??'';
-        _register=PersonalCloud.instance.canRegisterAccount;
+        _register=PersonalCloud.instance.canRegisterAccount &&
+          PersonalCloud.instance.accountEmail==null;
       });
     });
   }
