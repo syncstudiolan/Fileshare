@@ -30,9 +30,9 @@ class FakeD1 {
           return {meta:{changes:1}};
         }
         if (sql.startsWith('INSERT OR IGNORE INTO accounts')) {
-          const [email,worker_url,verified_at]=args;
+          const [email,worker_url,linked_at]=args;
           if(db.accounts.has(email))return {meta:{changes:0}};
-          db.accounts.set(email,{email,worker_url,verified_at});
+          db.accounts.set(email,{email,worker_url,linked_at});
           return {meta:{changes:1}};
         }
         if (sql.startsWith('DELETE FROM limits')) {
