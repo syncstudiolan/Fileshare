@@ -422,7 +422,8 @@ class LanEngine extends ChangeNotifier {
         }
       }
       await socket.flush();
-      await socket.close(); // close write side while keeping the receipt listener active
+      // The receiver acknowledges at the declared byte count. Keep the
+      // channel writable/readable until we have the ACK; close() can swallow it.
       final ok = await accepted.future.timeout(const Duration(seconds: 45));
       if (!ok) throw const SocketException('Receiver did not acknowledge file');
       record.state = TransferState.delivered;
@@ -441,6 +442,9 @@ class LanEngine extends ChangeNotifier {
     IOSink? out;
     File? part;
     LanFile? record;
+    // A socket's end-of-stream is NOT required to finish a file. Android
+    // clients may keep TCP open for an ACK, so read exactly the framed size.
+    final reader = StreamIterator<List<int>>(socket);
     try {
       final header = <int>[];
       var ready = false, got = 0, expected = -1;
@@ -458,42 +462,50 @@ class LanEngine extends ChangeNotifier {
         }
       }
 
-      await for (final chunk in socket) {
+      // Prevent abandoned connections from tying up the receiver indefinitely.
+      while (await reader.moveNext().timeout(const Duration(seconds: 60))) {
+        final chunk = reader.current;
         if (ready) {
           await store(chunk);
-          continue;
+        } else {
+          final newline = chunk.indexOf(10);
+          if (newline == -1) {
+            header.addAll(chunk);
+            if (header.length > 8192) {
+              throw const FormatException('Header too long');
+            }
+            continue;
+          }
+          header.addAll(chunk.sublist(0, newline));
+          if (header.length > 8192) {
+            throw const FormatException('Header too long');
+          }
+          final meta = jsonDecode(utf8.decode(header));
+          if (meta is! Map || meta['protocol'] != 'fileshare-file-v1' ||
+              meta['size'] is! int || (meta['size'] as int) < 0 ||
+              meta['name'] is! String) {
+            throw const FormatException('Invalid transfer');
+          }
+          expected = meta['size'] as int;
+          final id = newId();
+          final name = safeFileName(meta['name'] as String);
+          final destination = _inbox!.path + Platform.pathSeparator + id + '_' + name;
+          part = File(destination + '.part');
+          out = part.openWrite();
+          record = LanFile(
+            id: id, batch: safeFileName((meta['batch'] as String?) ?? id),
+            name: name, path: destination,
+            peer: safeFileName((meta['sender'] as String?) ?? socket.remoteAddress.address),
+            peerId: (meta['senderId'] as String?) ?? '',
+            incoming: true, size: expected, created: DateTime.now(),
+            state: TransferState.receiving);
+          files.insert(0, record);
+          _update(save: true);
+          ready = true;
+          await store(chunk.sublist(newline + 1));
         }
-        final newline = chunk.indexOf(10);
-        if (newline == -1) {
-          header.addAll(chunk);
-          if (header.length > 8192) throw const FormatException('Long header');
-          continue;
-        }
-        header.addAll(chunk.sublist(0, newline));
-        if (header.length > 8192) throw const FormatException('Long header');
-        final meta = jsonDecode(utf8.decode(header));
-        if (meta is! Map || meta['protocol'] != 'fileshare-file-v1' ||
-            meta['size'] is! int || (meta['size'] as int) < 0 ||
-            meta['name'] is! String) {
-          throw const FormatException('Invalid transfer');
-        }
-        expected = meta['size'] as int;
-        final id = newId();
-        final name = safeFileName(meta['name'] as String);
-        final destination = _inbox!.path + Platform.pathSeparator + id + '_' + name;
-        part = File(destination + '.part');
-        out = part.openWrite();
-        record = LanFile(
-          id: id, batch: safeFileName((meta['batch'] as String?) ?? id),
-          name: name, path: destination,
-          peer: safeFileName((meta['sender'] as String?) ?? socket.remoteAddress.address),
-          peerId: (meta['senderId'] as String?) ?? '',
-          incoming: true, size: expected, created: DateTime.now(),
-          state: TransferState.receiving);
-        files.insert(0, record!);
-        _update(save: true);
-        ready = true;
-        await store(chunk.sublist(newline + 1));
+        // The protocol explicitly declares file length. Don't wait for FIN.
+        if (ready && got == expected) break;
       }
 
       if (!ready || got != expected) {
@@ -504,12 +516,13 @@ class LanEngine extends ChangeNotifier {
       out = null;
       await part!.rename(record!.path);
       record.state = TransferState.delivered;
-      socket.write('OK\n');
+      record.done = expected;
+      // The peer receives OK only AFTER persistence of the complete file.
+      socket.add(utf8.encode('OK\n'));
       await socket.flush();
-      // Notify only after the file is persisted, never for partial downloads.
-      final onFile = onReceived;
-      if (onFile != null) {
-        unawaited(Future.sync(() => onFile(record!)).catchError((Object e) {
+      final callback = onReceived;
+      if (callback != null) {
+        unawaited(Future.sync(() => callback(record!)).catchError((Object e) {
           error = 'System notification unavailable: $e';
           _notify();
         }));
@@ -519,14 +532,19 @@ class LanEngine extends ChangeNotifier {
         record.state = TransferState.failed;
         record.error = e.toString();
       }
-      error = 'Receive failed: ' + e.toString();
-      try { socket.write('ERR\n'); await socket.flush(); } catch (_) {}
+      error = 'Receive failed: $e';
+      try {
+        socket.add(utf8.encode('ERR\n'));
+        await socket.flush();
+      } catch (_) {}
     } finally {
       try { await out?.close(); } catch (_) {}
       if (record?.state != TransferState.delivered) {
-        try { if (part != null && await part.exists()) await part.delete(); }
-        catch (_) {}
+        try {
+          if (part != null && await part.exists()) await part.delete();
+        } catch (_) {}
       }
+      await reader.cancel();
       socket.destroy();
       _update(save: true);
     }
