@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
+import 'account_directory.dart';
 
 /// An owner-facing client for a user's OWN workers.dev endpoint.
 /// It does not receive a Cloudflare admin API token; that token is only for
@@ -148,6 +149,42 @@ class PersonalCloud extends ChangeNotifier {
     await _acceptLogin(data,host);
     // Authenticate with the session, not a Cloudflare administrative API key.
     await refreshFiles();
+  }
+
+  /// Verified central-directory login: the second device needs only
+  /// email and password, not a manually supplied Worker URL.
+  Future<void> loginByEmail(String email,String password) async {
+    final login=await AccountDirectory.instance.signIn(email,password);
+    if(login.email!=email.trim().toLowerCase()){
+      throw StateError('Account directory returned a different email');
+    }
+    final host=_validWorker(login.workerUrl);
+    // Never trust a directory response alone: verify the personal Worker's
+    // signed session against the user's own Worker before saving it.
+    final proof=await _request(host,login.session,'GET','/v1/auth/me');
+    if(proof['email']!=login.email){
+      throw StateError('Personal cloud did not verify this account');
+    }
+    await _acceptLogin({
+      'session':login.session,'email':login.email,
+      'expiresAt':login.expiresAt,
+    },host);
+    await refreshFiles();
+  }
+
+  Future<void> requestEmailLink() async {
+    if(!signedIn || _accountEmail==null || _host==null || _sessionToken==null){
+      throw StateError('Login to your personal cloud before linking email');
+    }
+    await AccountDirectory.instance.beginLink(
+      email:_accountEmail!, workerUrl:_host!.origin,
+      personalSession:_sessionToken!,
+    );
+  }
+
+  Future<void> verifyEmailLink(String code) async {
+    if(!signedIn||_accountEmail==null)throw StateError('Login first');
+    await AccountDirectory.instance.confirmLink(_accountEmail!,code);
   }
 
   Future<void> validateAccountSession() async {
