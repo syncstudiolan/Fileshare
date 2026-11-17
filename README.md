@@ -2,57 +2,43 @@
 
 Independent Flutter/Dart project at https://github.com/syncstudiolan/Fileshare. Android APK and Windows EXE are the first targets; iOS and macOS are future targets. Do not modify earlier Bank Setu or Sync Studio repositories.
 
-## Draft update — Email-only cloud discovery on any device
+## Current authentication and auto-provisioning (17 Nov 2026)
 
-**Code is saved, NOT deployed or built.** The official app needs one
-publisher-operated central directory Worker and D1 for account discovery.
-This is separate from each customer's personal Cloudflare Worker/R2/D1.
-The user does NOT configure the directory, buy a domain or provide a
-Cloudflare API token on a second device.
+The single operator-run Central Directory Worker is deployed at
+`https://fileshare-directory.modeltech0.workers.dev` with its own D1.
+It is separate from each customer's own Cloudflare resources.
 
-1. First install: user provisions their personal Cloudflare Worker and
-   creates an owner account with an email and password.
-2. The app sends the email, personal Worker URL and signed Worker account
-   session to the central directory. The directory checks the session
-   with the user's personal Worker. It sends an **8-digit email OTP** and
-   saves the Worker mapping ONLY after the email owner confirms the code.
-3. The directory stores only verified **email -> Worker URL**. Passwords
-   are NEVER saved in plaintext, hashed form, or any other form in the
-   central database. The personal Worker retains its salted password
-   verifier; the central server briefly forwards the password via
-   encrypted HTTPS to the personal Worker during login, then returns
-   the personal Worker's short-lived session on success.
-4. Second Android/Windows device: enter only email and password. The
-   directory resolves the Worker URL, asks the personal Worker to
-   authenticate, and returns a signed session. The app verifies the
-   personal Worker session again before storing it in OS secure storage.
-5. Existing installations can select **Existing Worker? Link it once**,
-   log into their existing Worker, and verify their email, then future
-   devices get automatic discovery.
+- On first setup, the user supplies their own Cloudflare Account ID and
+  restricted API token in the app and taps **Verify & Auto Connect**.
+- The app creates/reuses that account's own D1, R2 bucket and personal Worker,
+  installs the Worker/D1 schema and QR upload page, configures a secret and
+  cleanup schedule, and checks D1/R2 connectivity.
+- The user creates their email/password account in their personal Worker.
+  The app links that email to this Worker in the Central Directory using a
+  signed login session verified directly by the personal Worker.
+- The Directory does **not** send or verify email OTP. It has no email sender
+  or external mail-provider credentials. **Mailbox ownership is not proved**.
+- The first successful email-to-Worker binding is immutable. A different
+  Cloudflare Worker cannot take over an already-linked email. The same
+  Worker can safely retry. Personal Workers register one owner account.
+- On a second device, only email and password are required. The Directory
+  asks that same personal Worker to authenticate, then returns its signed
+  session. The app independently verifies the session and stores it using
+  OS secure storage.
+- The Directory rate-limits requests and does not store user passwords,
+  Cloudflare API tokens, owner secrets, or uploaded files.
+- Existing users may still choose **Existing Worker? Link it once**.
 
-The application build variable FILE_SHARE_DIRECTORY_URL points to the
-operator's official central Worker HTTPS address. Until the operator
-deploys this directory and configures a future app build, email-only
-cloud discovery is unavailable and manual Worker URL login remains.
-The central directory's email sender is configured with Resend API
-credentials stored as Cloudflare secrets. End users never see those
-credentials. Resend has a limited free tier and requires verified email
-sender credentials; no paid service will be enabled without approval.
+**Security trade-off:** Without actual email or external identity
+verification, someone could preemptively register another person's email
+before the legitimate mailbox owner does. One-cloud locking prevents
+subsequent takeover, not first-time email impersonation. Account migration
+or recovery is not automatic.
 
-Directory source, D1 schema, deployment config, and mocked software
-tests are in /directory/. The directory claim/OTP/login flows passed a
-mocked software-level integration check with fake D1/email/HTTPS,
-including invalid Worker rejection, invalid session rejection, OTP
-checking, bad-password rejection and successful cloud discovery. This
-is NOT a live Cloudflare integration, real email delivery, or a
-successful device-to-device login test. No APK/EXE or workflow was run.
-
-Privacy and security: strict personal Worker URL validation prevents
-server-side requests to arbitrary hosts; no public email lookup;
-session proof + mailbox OTP prevent unauthorized directory linking;
-short OTP TTL and login request throttling; no password persistence
-in central D1. Later work includes password recovery, unlink/migration,
-account lifecycle handling, and live security/CPU testing.
+Central Directory infrastructure and code are deployed. App-level personal
+Worker provisioning, QR guest upload and cross-device login still need
+real Android and Windows build/device tests. No APK/EXE, Build or Release
+workflow is triggered by these changes. See `directory/README.md`.
 
 ## Draft update — Windows sidebar and personal Cloudflare accounts (17 Nov 2026)
 
