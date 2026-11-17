@@ -311,14 +311,20 @@ async function authApi(request,env,url){
   if((attempts?.failures??0)>=8)return fail('Too many attempts; retry later',429);
   const account=await env.DB.prepare('SELECT salt,hash FROM accounts WHERE email=?')
     .bind(email).first();
-  const computed=await derivePassword(password,
-    account?from64(account.salt):new Uint8Array(16),env);
-  if(!account||account.hash!==computed){
+  if(!account){
     await env.DB.prepare(
-      'INSERT INTO auth_attempts(id,failures,changed_at) VALUES(?,1,?) '+
+      'INSERT INTO auth_attempts(id,failures,changed_at) VALUES(?,1,?) ' +
       'ON CONFLICT(id) DO UPDATE SET failures=failures+1,changed_at=excluded.changed_at'
     ).bind(key,now).run();
-    return fail('Incorrect email or password',401);
+    return fail('Email address is not registered',404);
+  }
+  const computed=await derivePassword(password,from64(account.salt),env);
+  if(account.hash!==computed){
+    await env.DB.prepare(
+      'INSERT INTO auth_attempts(id,failures,changed_at) VALUES(?,1,?) ' +
+      'ON CONFLICT(id) DO UPDATE SET failures=failures+1,changed_at=excluded.changed_at'
+    ).bind(key,now).run();
+    return fail('Incorrect password',401);
   }
   await env.DB.prepare('DELETE FROM auth_attempts WHERE id=?').bind(key).run();
   const session=await makeSession(email,env);
