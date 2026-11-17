@@ -60,7 +60,7 @@ void main(){
     final file=File('image_editing_test_cart.png');
     cart.add(file,'edited.png');
     final items=cart.takeAll();
-    expect(items,singleElement);
+    expect(items,hasLength(1));
     expect(items.first.name,'edited.png');
     expect(cart.takeAll(),isEmpty);
   });

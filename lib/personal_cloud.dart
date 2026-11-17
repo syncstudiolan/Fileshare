@@ -475,8 +475,11 @@ class PersonalCloud extends ChangeNotifier {
     if(pending!=null)return pending;
     final task=_downloadFile(item);
     _downloadsInFlight[item.id]=task;
-    task.then((_) => _downloadsInFlight.remove(item.id),
-      onError:(Object _) => _downloadsInFlight.remove(item.id));
+    task.then<void>((_) {
+      _downloadsInFlight.remove(item.id);
+    }, onError:(Object _, StackTrace __) {
+      _downloadsInFlight.remove(item.id);
+    });
     return task;
   }
 
