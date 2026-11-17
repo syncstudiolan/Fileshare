@@ -1350,7 +1350,8 @@ class FullScreenFilePreview extends StatelessWidget {
             icon:const Icon(Icons.delete_outline_rounded,color:Colors.white)),
           IconButton(
             tooltip:'Share to another app',
-            onPressed:file.state==TransferState.delivered
+            onPressed:File(file.path).existsSync() &&
+              (!file.incoming || file.state==TransferState.delivered)
               ?()=>onShare(file):null,
             icon:const Icon(Icons.ios_share_rounded,color:Colors.white)),
           IconButton(
@@ -1476,8 +1477,8 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   void _preview(BuildContext context,LanFile file){
-    if(file.state!=TransferState.delivered &&
-       file.state!=TransferState.queued)return;
+    if(!File(file.path).existsSync() ||
+       (file.incoming && file.state!=TransferState.delivered))return;
     Navigator.push(context,MaterialPageRoute<void>(builder:(_)=>
       FullScreenFilePreview(file:file,onSave:onSave,
         onDelete:onDelete,onShare:onShare,onTools:onTools)));
@@ -1989,7 +1990,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   Future<void> _share(LanFile file) async {
     try {
-      if (file.state != TransferState.delivered) return;
+      if (!File(file.path).existsSync() ||
+          (file.incoming && file.state != TransferState.delivered)) return;
       await SharePlus.instance.share(ShareParams(
         files: [XFile(file.path)], text: file.name));
     } catch (e) { _snack('Sharing failed: ' + e.toString()); }
