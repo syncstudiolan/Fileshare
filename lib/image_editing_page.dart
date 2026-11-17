@@ -83,7 +83,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       await ImageEditingHistory.instance.load();
       final path=widget.draft?.filePath??widget.sourcePath;
       if(path==null)return; // Empty canvas: Camera and Browse stay visible.
-      if(path==null)throw StateError('No image selected');
       final bytes=await File(path).readAsBytes();
       final dimensions=await ImageEditingEngine.dimensions(bytes);
       _draftId=widget.draft?.id??
@@ -128,6 +127,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           path=target.path;
         }
       }
+      if(path==null)throw StateError('No file selected');
       final bytes=await File(path).readAsBytes();
       final dimensions=await ImageEditingEngine.dimensions(bytes);
       if(!mounted)return;
