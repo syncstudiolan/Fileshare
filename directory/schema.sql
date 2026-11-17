@@ -1,20 +1,13 @@
 -- Central File Share directory operated by the File Share publisher.
--- This database contains email -> personal Worker address ONLY.
--- No user passwords, no Cloudflare API tokens, no files, no Worker owner keys.
+-- This database contains email -> first-linked personal Worker address ONLY.
+-- No passwords, Cloudflare API tokens, files, Worker owner keys, or OTPs.
+-- Initial claim requires an authenticated personal Worker session but DOES NOT
+-- verify control of the mailbox; linked email -> Worker is immutable.
 CREATE TABLE IF NOT EXISTS accounts (
   email TEXT PRIMARY KEY,
   worker_url TEXT NOT NULL,
   verified_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS claims (
-  email TEXT PRIMARY KEY,
-  worker_url TEXT NOT NULL,
-  nonce TEXT NOT NULL,
-  otp_hash TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS claims_expiry ON claims(expires_at);
 CREATE TABLE IF NOT EXISTS limits (
   id TEXT PRIMARY KEY,
   count INTEGER NOT NULL,
