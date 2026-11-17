@@ -102,7 +102,11 @@ class QueuedLanBatch {
 
 class LanEngine extends ChangeNotifier {
   LanEngine({this.discoveryPort = 49310, this.tcpPort = 49311,
-    this.expiry = const Duration(hours: 24)});
+    this.expiry = const Duration(hours: 24),
+    this.testSupportDirectory, this.testDeviceId});
+  // Injected only for isolated socket tests; production uses app private paths.
+  final Directory? testSupportDirectory;
+  final String? testDeviceId;
   final int discoveryPort, tcpPort;
   final Duration expiry;
   final List<LanFile> files = [];
@@ -140,16 +144,20 @@ class LanEngine extends ChangeNotifier {
   }
 
   Future<void> _startOnce() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = testSupportDirectory ?? await getApplicationSupportDirectory();
     _inbox = Directory(dir.path + Platform.pathSeparator + 'fileshare_inbox');
     await _inbox!.create(recursive: true);
     _db = File(_inbox!.path + Platform.pathSeparator + 'history.json');
     _outbox = Directory(_inbox!.path + Platform.pathSeparator + 'outbox');
     await _outbox!.create(recursive: true);
     _queueDb = File(_inbox!.path + Platform.pathSeparator + 'pending_batches.json');
-    final preferences = SharedPreferencesAsync();
-    deviceId = await preferences.getString('lan_device_id') ?? newId();
-    await preferences.setString('lan_device_id', deviceId!);
+    if (testDeviceId != null) {
+      deviceId = testDeviceId;
+    } else {
+      final preferences = SharedPreferencesAsync();
+      deviceId = await preferences.getString('lan_device_id') ?? newId();
+      await preferences.setString('lan_device_id', deviceId!);
+    }
     await _restore();
     await _loadQueue();
     await cleanExpired();
