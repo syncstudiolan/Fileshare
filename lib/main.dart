@@ -2030,6 +2030,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     finally{if(mounted)setState(()=>_choosing=false);}
   }
 
+  /// Remove only temporary editor-to-cart snapshots after LAN has
+  /// durably copied them, never the user's original or image history.
+  Future<void> _cleanupEditedCartSnapshots(Iterable<File> sources) async {
+    final root=await getApplicationSupportDirectory();
+    final prefix=root.path+Platform.pathSeparator+'image_editing_cart'+
+      Platform.pathSeparator;
+    for(final file in sources){
+      if(!file.absolute.path.startsWith(prefix))continue;
+      try{if(await file.exists())await file.delete();}catch(_){}
+    }
+  }
   Future<void> _send() async {
     if(_staged.isEmpty || !appLan.started)return;
     final batches=List<PendingBatch>.from(_staged);
@@ -2038,6 +2049,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         // This persists a private copy and queues even with ZERO peers.
         await appLan.enqueue(batch.sources,names:batch.labels);
         if(mounted)setState(()=>_staged.remove(batch));
+        unawaited(_cleanupEditedCartSnapshots(batch.sources));
       }catch(e){_snack('Could not queue selected files: '+e.toString());}
     }
     if(appLan.peers.isEmpty){
@@ -2211,12 +2223,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               trailing:IconButton(
                 tooltip:'Remove selected file',icon:const Icon(Icons.close_rounded),
                 onPressed:(){
+                  final removed=batch.sources[i];
                   setState((){
                     batch.sources.removeAt(i);
                     batch.labels.removeAt(i);
                     batch.sizes.removeAt(i);
                     if(batch.sources.isEmpty)_staged.remove(batch);
                   });
+                  unawaited(_cleanupEditedCartSnapshots([removed]));
                 }),
             ),
       ],
