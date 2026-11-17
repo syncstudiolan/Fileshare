@@ -77,9 +77,17 @@ class CloudflareProvisioner extends ChangeNotifier {
     request.headers['authorization']='Bearer $token';
     final metadata=jsonEncode({
       'main_module':'main.js','compatibility_date':'2026-11-16',
+      // One hibernatable room for the owner's inbox, not a paid queue or
+      // periodic timer. SQLite Durable Objects work on Workers Free.
+      'migrations':{
+        'new_tag':'file-share-inbox-events-v1',
+        'new_sqlite_classes':['InboxEvents'],
+      },
       'bindings':[
         {'type':'d1','name':'DB','id':database},
         {'type':'r2_bucket','name':'FILES','bucket_name':bucket},
+        {'type':'durable_object_namespace','name':'INBOX_EVENTS',
+         'class_name':'InboxEvents'},
         {'type':'secret_text','name':'OWNER_TOKEN','text':secret},
       ]
     });
