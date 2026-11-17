@@ -128,6 +128,21 @@ async function claim(request, env) {
   return json({ok:true,linked:true});
 }
 
+// Discovery only: the Directory never handles passwords for new clients.
+// The mobile/desktop app authenticates directly against this immutable URL.
+async function resolveAccount(request,env) {
+  const body=await readJson(request);
+  const email=normalizedEmail(body?.email);
+  if(!isEmail(email))return fail('Enter a valid email address',400);
+  if(!await throttle(env,'resolve',request,email,8,15*60*1000))
+    return fail('Too many attempts; retry later',429);
+  const account=await env.DB.prepare(
+    'SELECT worker_url FROM accounts WHERE email=?').bind(email).first();
+  const worker=personalWorker(account?.worker_url);
+  if(!worker)return fail('Email address is not registered',404);
+  return json({ok:true,email,workerUrl:worker});
+}
+
 async function signIn(request,env) {
   const body=await readJson(request);
   const email=normalizedEmail(body?.email), password=body?.password;
@@ -140,7 +155,7 @@ async function signIn(request,env) {
     'SELECT worker_url FROM accounts WHERE email=?'
   ).bind(email).first();
   const worker=personalWorker(account?.worker_url);
-  if(!worker)return fail('Incorrect email or password',401);
+  if(!worker)return fail('Email address is not registered',404);
   // Password is forwarded ONLY to this verified personal Worker over TLS,
   // NEVER placed in the directory database or written to a log.
   let response;
@@ -181,6 +196,7 @@ export default {
         return fail('JSON required',415);
       if(url.pathname==='/v1/directory/claim')return claim(request,env);
       // OTP endpoint intentionally removed; an app cannot prove mailbox ownership itself.
+      if(url.pathname==='/v1/directory/resolve')return resolveAccount(request,env);
       if(url.pathname==='/v1/directory/login')return signIn(request,env);
       return fail('Not found',404);
     }catch(_){return fail('Request could not be completed',500);}
