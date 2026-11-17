@@ -75,7 +75,7 @@ class CloudflareProvisioner extends ChangeNotifier {
     final request=http.MultipartRequest('PUT',
       _api('/accounts/$account/workers/scripts/$worker'));
     request.headers['authorization']='Bearer $token';
-    request.fields['metadata']=jsonEncode({
+    final metadata=jsonEncode({
       'main_module':'main.js','compatibility_date':'2026-11-16',
       'bindings':[
         {'type':'d1','name':'DB','id':database},
@@ -83,6 +83,9 @@ class CloudflareProvisioner extends ChangeNotifier {
         {'type':'secret_text','name':'OWNER_TOKEN','text':secret},
       ]
     });
+    // Cloudflare expects metadata as an application/json multipart part.
+    request.files.add(http.MultipartFile.fromString('metadata',metadata,
+      contentType:MediaType.parse('application/json')));
     request.files.add(http.MultipartFile.fromString('main.js',code,
       filename:'main.js',
       contentType:MediaType.parse('application/javascript+module')));
