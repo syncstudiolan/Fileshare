@@ -29,6 +29,7 @@ class ImageEditingPage extends StatefulWidget {
 class _ImageEditingPageState extends State<ImageEditingPage> {
   Uint8List? _bytes;
   Uint8List? _originalBytes;
+  Uint8List? _cutoutBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
@@ -92,6 +93,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(mounted)setState((){
         _bytes=Uint8List.fromList(bytes);
         _originalBytes=Uint8List.fromList(bytes);
+        _cutoutBytes=null;
       });
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
@@ -260,6 +262,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         'mask':mask,'maskWidth':width,'maskHeight':height,
       });
       await _commit(data,edited,'Background removal — $engine');
+      _cutoutBytes=edited; // Preserve transparency for switching colors.
       if(mounted)setState(()=>_format='PNG');
       _message('Background removed with $engine');
     }catch(_){
@@ -288,16 +291,31 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   Future<void> _replaceBackground({Uint8List? picture,Color? color})async {
+    if(_busy||_bytes==null)return;
     final selected=color??_background;
-    if(color!=null)setState(()=>_background=color);
-    if(selected==Colors.transparent && picture==null){
-      _message('Transparent background retained');
-      return;
+    // A preset or Gallery background must work even if the user has not
+    // explicitly pressed Remove Background beforehand.
+    if(_cutoutBytes==null){
+      await _removeBackground();
+      if(_cutoutBytes==null)return;
     }
-    await _apply('flatten',{
-      'color':selected.toARGB32(),
-      if(picture!=null)'backgroundBytes':picture,
-    },description:'Replace background');
+    final previous=_bytes!;
+    setState(()=>_busy=true);
+    try{
+      final next=selected==Colors.transparent && picture==null
+        ?_cutoutBytes!
+        :await ImageEditingEngine.edit(_cutoutBytes!,'flatten',{
+          'color':selected.toARGB32(),
+          if(picture!=null)'backgroundBytes':picture,
+        });
+      await _commit(previous,next,'Background replacement');
+      if(mounted)setState((){
+        _background=selected;
+        _format='PNG';
+      });
+    }catch(_){
+      _message('Could not replace this background. Try a different image.');
+    }finally{if(mounted)setState(()=>_busy=false);}
   }
   Future<void> _pickBackground()async{
     try{
