@@ -468,33 +468,65 @@ async function ownerApi(request, env, url) {
   return fail('Not found', 404);
 }
 
+// QR-only, midnight-IST cleanup. No persistent delete queue is created.
+// A scheduled invocation deletes R2 objects in batches, removes their D1
+// uploads and multipart-part records, then broadcasts ONE invalidation event
+// for the whole run. Retry crons reuse the same expired D1 rows only if an
+// earlier delete failed, never recording additional queue entries.
 async function cleanup(env) {
-  const now = Date.now();
-  // A single short DB query is needed by the scheduled trigger. No R2 delete
-  // request is issued if the table has no expired files.
-  // Process multiple batches in the same midnight job (for example 2,000
-  // one-MB files). Cap work per run; the +2h/+4h schedules retry leftovers.
-  for (let batch = 0; batch < 20; batch++) {
-    const rows = await env.DB.prepare(
-      'SELECT id,object_key,upload_id FROM uploads ' +
-      'WHERE expires_at<=? LIMIT 500'
-    ).bind(now).all();
-    if (!rows.results.length) break; // no R2 delete call on empty inbox
-    for (const item of rows.results) {
-      if (item.upload_id) {
-        await env.FILES.resumeMultipartUpload(item.object_key, item.upload_id)
-          .abort().catch(() => {});
+  const now=Date.now();
+  let recordsDeleted=0;
+  try {
+    // 20 * 500 = 10,000 records max per invocation. The +2h/+4h crons
+    // retry an incomplete batch with no extra R2 calls when there is no work.
+    for(let batch=0;batch<20;batch++){
+      const rows=await env.DB.prepare(
+        'SELECT id,object_key,upload_id FROM uploads '+
+        'WHERE expires_at<=? LIMIT 500'
+      ).bind(now).all();
+      const items=rows.results||[];
+      if(!items.length)break;
+      // Abort unfinished multipart uploads before deleting their objects.
+      // R2 delete is idempotent; on failure D1 rows stay for the retry cron.
+      for(const item of items){
+        if(item.upload_id){
+          await env.FILES.resumeMultipartUpload(item.object_key,item.upload_id)
+            .abort().catch(()=>{});
+        }
       }
+      await env.FILES.delete(items.map(item=>item.object_key));
+      // Do not leave upload_parts if the D1 connection lacks FK cascading.
+      // Both deletes are intentionally batched rather than N SQL requests.
+      const placeholders=items.map(()=>'?').join(',');
+      const ids=items.map(item=>item.id);
+      await env.DB.batch([
+        env.DB.prepare(
+          'DELETE FROM upload_parts WHERE file_id IN ('+placeholders+')'
+        ).bind(...ids),
+        env.DB.prepare(
+          'DELETE FROM uploads WHERE id IN ('+placeholders+')'
+        ).bind(...ids),
+      ]);
+      recordsDeleted+=items.length;
     }
-    await env.FILES.delete(rows.results.map((item) => item.object_key));
-    const statements = rows.results.map((item) =>
-      env.DB.prepare('DELETE FROM uploads WHERE id=?').bind(item.id));
-    await env.DB.batch(statements);
+    // Remove expired or now-unreferenced guest session metadata as part of
+    // the same midnight job. Retain qr_codes and the personal owner account.
+    // Midnight resets QR guest quotas; no rolling-24h session history stays.
+    await env.DB.prepare(
+      'DELETE FROM guest_sessions WHERE '+
+      'NOT EXISTS (SELECT 1 FROM uploads WHERE uploads.session_id=guest_sessions.id)'
+    ).run();
+    // The old auth-attempt records should not accumulate indefinitely.
+    await env.DB.prepare(
+      'DELETE FROM auth_attempts WHERE changed_at<?'
+    ).bind(now-DAY).run();
+  }finally{
+    // Maximum one broadcast for all deleted files per cron invocation.
+    // Do not signal an unchanged inbox and never persist notification jobs.
+    if(recordsDeleted>0){
+      await notifyOwnerInbox(env);
+    }
   }
-  // Keep guest usage data for rolling 24h even after midnight file cleanup.
-  await env.DB.prepare('DELETE FROM guest_sessions WHERE created_at<? ' +
-    'AND NOT EXISTS (SELECT 1 FROM uploads WHERE uploads.session_id=guest_sessions.id)')
-    .bind(now - DAY).run();
 }
 
 export default {
