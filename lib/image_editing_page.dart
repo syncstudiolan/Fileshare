@@ -685,70 +685,335 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       PopupMenuItem(value:'share',child:Text('Share / Export')),
     ]);
 
-  Widget _toolbar()=>Wrap(spacing:7,runSpacing:6,children:[
-    for(final t in _tools)
-      ChoiceChip(label:Text(t),selected:_tool==t,
-        onSelected:(_)=>setState(()=>_tool=t)),
-  ]);
+  String _toolTitle(String tool)=>switch(tool){
+    'Background'=>'Background Removal',
+    'Compress'=>'Compression',
+    'Crop'=>'Freeform Crop',
+    'Erase'=>'Manual Erase',
+    'Adjust'=>'Adjustments',
+    _=>tool,
+  };
+  IconData _toolIcon(String tool)=>switch(tool){
+    'Background'=>Icons.person_remove_alt_1_outlined,
+    'Compress'=>Icons.compress_rounded,
+    'Crop'=>Icons.crop_rotate_rounded,
+    'Filters'=>Icons.filter_vintage_outlined,
+    'Erase'=>Icons.auto_fix_off_outlined,
+    _=>Icons.tune_rounded,
+  };
+  void _selectTool(String tool){
+    if(_busy)return;
+    setState(()=>_tool=tool);
+  }
+
+  Widget _toolTab(String tool,{bool vertical=false}){
+    final selected=_tool==tool;
+    final title=_toolTitle(tool);
+    return Material(color:selected?FileTheme.violet:
+      Theme.of(context).colorScheme.surface.withValues(alpha:.8),
+      borderRadius:BorderRadius.circular(14),
+      child:InkWell(borderRadius:BorderRadius.circular(14),
+        onTap:()=>_selectTool(tool),
+        child:Container(
+          padding:EdgeInsets.symmetric(horizontal:vertical?14:12,
+            vertical:vertical?13:10),
+          decoration:BoxDecoration(borderRadius:BorderRadius.circular(14),
+            border:Border.all(color:selected?FileTheme.violet:
+              FileTheme.violet.withValues(alpha:.22))),
+          child:Row(mainAxisSize:MainAxisSize.min,children:[
+            Icon(_toolIcon(tool),size:19,
+              color:selected?Colors.white:FileTheme.violet),
+            const SizedBox(width:9),
+            Flexible(child:Text(title,maxLines:1,
+              overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontWeight:FontWeight.w650,fontSize:13,
+                color:selected?Colors.white:FileTheme.foreground(context)))),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _toolStrip()=>SizedBox(height:54,
+    child:ListView(scrollDirection:Axis.horizontal,
+      padding:const EdgeInsets.symmetric(horizontal:12,vertical:4),
+      children:[
+        for(final tool in _tools)
+          Padding(padding:const EdgeInsets.only(right:7),
+            child:_toolTab(tool)),
+      ]));
 
   Widget _controls()=>SingleChildScrollView(
-    padding:const EdgeInsets.all(14),
+    key:ValueKey('panel-'+_tool),
+    padding:const EdgeInsets.fromLTRB(16,12,16,14),
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text('$_tool',style:Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height:12),
-      AnimatedSwitcher(
-        duration:const Duration(milliseconds:250),
+      Text(_toolTitle(_tool),style:Theme.of(context).textTheme.titleMedium
+        ?.copyWith(fontWeight:FontWeight.w800)),
+      const SizedBox(height:8),
+      AnimatedSwitcher(duration:const Duration(milliseconds:220),
         switchInCurve:Curves.easeOutCubic,
-        switchOutCurve:Curves.easeInCubic,
-        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls()),
-      ),
+        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls())),
     ]));
 
-  Widget _actions()=>SafeArea(top:false,child:Padding(
-    padding:const EdgeInsets.all(8),
-    child:Wrap(alignment:WrapAlignment.center,spacing:10,runSpacing:8,children:[
-      OutlinedButton.icon(onPressed:_undo.isEmpty?null:()=>_historyStep(true),
-        icon:const Icon(Icons.undo),label:const Text('Undo')),
-      OutlinedButton.icon(onPressed:_redo.isEmpty?null:()=>_historyStep(false),
-        icon:const Icon(Icons.redo),label:const Text('Redo')),
-      OutlinedButton.icon(onPressed:_busy?null:()=>_export('save'),
-        icon:const Icon(Icons.download),label:const Text('Save')),
-      OutlinedButton.icon(onPressed:_busy?null:()=>_export('share'),
-        icon:const Icon(Icons.share),label:const Text('Share')),
-      FilledButton.icon(onPressed:_busy?null:()=>_export('cart'),
-        icon:const Icon(Icons.send),label:const Text('Send to Cart')),
-    ]),
-  ));
+  Widget _emptyCanvas({required bool wide}){
+    return Center(child:ConstrainedBox(
+      constraints:const BoxConstraints(maxWidth:460),
+      child:Padding(padding:const EdgeInsets.all(24),
+        child:Column(mainAxisSize:MainAxisSize.min,children:[
+          Container(padding:const EdgeInsets.all(28),
+            decoration:BoxDecoration(
+              color:FileTheme.violet.withValues(alpha:.13),
+              shape:BoxShape.circle),
+            child:const Icon(Icons.add_photo_alternate_outlined,
+              color:FileTheme.violet,size:55)),
+          const SizedBox(height:18),
+          Text('Choose an image',style:Theme.of(context).textTheme.titleLarge
+            ?.copyWith(fontWeight:FontWeight.w800)),
+          const SizedBox(height:7),
+          Text('Your live editing preview will appear here.',
+            style:TextStyle(color:FileTheme.muted(context)),
+            textAlign:TextAlign.center),
+          if(_error!=null)...[
+            const SizedBox(height:8),
+            Text('This file could not be opened. Choose another image.',
+              textAlign:TextAlign.center,
+              style:TextStyle(color:Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height:20),
+          Wrap(alignment:WrapAlignment.center,
+            spacing:12,runSpacing:12,children:[
+              OutlinedButton.icon(
+                onPressed:_imagePickerBusy?null:()=>_chooseSource(camera:true),
+                icon:const Icon(Icons.photo_camera_outlined),
+                label:const Text('Camera')),
+              FilledButton.icon(
+                onPressed:_imagePickerBusy?null:()=>_chooseSource(camera:false),
+                icon:const Icon(Icons.folder_open_outlined),
+                label:const Text('Browse images')),
+            ]),
+          if(_imagePickerBusy)...[
+            const SizedBox(height:14),
+            const LinearProgressIndicator(),
+          ],
+        ]),
+      ),
+    ));
+  }
+
+  Widget _previewArea({required bool wide}){
+    final isDark=Theme.of(context).brightness==Brightness.dark;
+    return Container(
+      margin:EdgeInsets.all(wide?14:10),
+      clipBehavior:Clip.antiAlias,
+      decoration:BoxDecoration(
+        color:isDark?const Color(0xFF141223):const Color(0xFFF7F4FF),
+        borderRadius:BorderRadius.circular(wide?22:18),
+        border:Border.all(color:FileTheme.violet.withValues(alpha:.15))),
+      child:Column(children:[
+        if(_busy)const LinearProgressIndicator(minHeight:3),
+        Expanded(child:_bytes==null?_emptyCanvas(wide:wide):
+          Padding(padding:EdgeInsets.all(wide?14:8),
+            child:RepaintBoundary(child:_preview()))),
+        Container(height:52,
+          padding:const EdgeInsets.symmetric(horizontal:9),
+          decoration:BoxDecoration(
+            color:Theme.of(context).colorScheme.surface.withValues(alpha:.75),
+            border:Border(top:BorderSide(
+              color:FileTheme.violet.withValues(alpha:.12)))),
+          child:Row(children:[
+            IconButton(tooltip:'Fit image',onPressed:_resetZoom,
+              icon:const Icon(Icons.fit_screen_outlined)),
+            IconButton(tooltip:'Zoom out',
+              onPressed:_bytes==null?null:()=>_changeZoom(.8),
+              icon:const Icon(Icons.zoom_out_outlined)),
+            Text('${(_zoom*100).round()}%',
+              style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700)),
+            IconButton(tooltip:'Zoom in',
+              onPressed:_bytes==null?null:()=>_changeZoom(1.25),
+              icon:const Icon(Icons.zoom_in_outlined)),
+            const Spacer(),
+            IconButton(tooltip:'Browse another image',
+              onPressed:()=>_chooseSource(camera:false),
+              icon:const Icon(Icons.add_photo_alternate_outlined)),
+            IconButton(tooltip:'Image History',
+              onPressed:()=>Navigator.of(context).push(
+                fadePage<void>(const ImageEditingHistoryPage())),
+              icon:const Icon(Icons.history)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _applyCurrent() async {
+    if(_busy || _bytes==null)return;
+    if(_tool=='Crop'){
+      _commitCrop();
+    }else if(_tool=='Adjust'){
+      _commitAdjust();
+    }else if(_tool=='Compress'){
+      await _compress();
+    }else{
+      await _saveDraft();
+      _message('Current image saved in Image History');
+    }
+  }
+
+  Widget _actions({bool wide=false}){
+    final available=_bytes!=null && !_busy;
+    return SafeArea(top:false,child:Container(
+      padding:EdgeInsets.fromLTRB(wide?15:8,7,wide?15:8,9),
+      decoration:BoxDecoration(
+        color:Theme.of(context).colorScheme.surface.withValues(alpha:.8),
+        border:Border(top:BorderSide(
+          color:FileTheme.violet.withValues(alpha:.15)))),
+      child:Column(mainAxisSize:MainAxisSize.min,children:[
+        Row(children:[
+          IconButton(tooltip:'Close editor',
+            onPressed:()=>Navigator.of(context).maybePop(),
+            icon:const Icon(Icons.close_rounded)),
+          IconButton(tooltip:'Undo',onPressed:_undo.isEmpty||_busy?null:
+            ()=>_historyStep(true),icon:const Icon(Icons.undo_rounded)),
+          IconButton(tooltip:'Redo',onPressed:_redo.isEmpty||_busy?null:
+            ()=>_historyStep(false),icon:const Icon(Icons.redo_rounded)),
+          const Spacer(),
+          IconButton(tooltip:'Save image',onPressed:available?
+            ()=>_export('save'):null,
+            icon:const Icon(Icons.file_download_outlined)),
+          IconButton(tooltip:'Share image',onPressed:available?
+            ()=>_export('share'):null,icon:const Icon(Icons.share_outlined)),
+          FilledButton.icon(onPressed:available?_applyCurrent:null,
+            icon:const Icon(Icons.check_rounded),label:const Text('Apply')),
+        ]),
+        const SizedBox(height:5),
+        SizedBox(width:double.infinity,child:FilledButton.icon(
+          onPressed:available?()=>_export('cart'):null,
+          icon:const Icon(Icons.send_outlined),
+          label:const Text('Send to File Share Cart')),
+        ),
+      ]),
+    ));
+  }
+
+  Widget _desktopHistory(){
+    return ListenableBuilder(listenable:ImageEditingHistory.instance,
+      builder:(context,_){
+        final drafts=ImageEditingHistory.instance.drafts.take(5).toList();
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Row(children:[
+            const Icon(Icons.history,color:FileTheme.violet),
+            const SizedBox(width:9),
+            const Expanded(child:Text('Image History',style:
+              TextStyle(fontWeight:FontWeight.w800,fontSize:17))),
+            TextButton(onPressed:()=>Navigator.of(context).push(
+              fadePage<void>(const ImageEditingHistoryPage())),
+              child:const Text('View all')),
+          ]),
+          const SizedBox(height:9),
+          if(drafts.isEmpty)Padding(
+            padding:const EdgeInsets.symmetric(vertical:15),
+            child:Text('Edited images appear here automatically.',
+              style:TextStyle(color:FileTheme.muted(context)))),
+          for(final entry in drafts)
+            Padding(padding:const EdgeInsets.only(bottom:9),
+              child:Material(
+                color:Theme.of(context).colorScheme.surface,
+                borderRadius:BorderRadius.circular(14),
+                child:InkWell(
+                  onTap:()=>Navigator.of(context).push(fadePage<void>(
+                    ImageEditingPage(draft:entry))),
+                  borderRadius:BorderRadius.circular(14),
+                  child:Padding(padding:const EdgeInsets.all(8),
+                    child:Row(children:[
+                      ClipRRect(borderRadius:BorderRadius.circular(9),
+                        child:Image.file(File(entry.filePath),width:55,height:55,
+                          fit:BoxFit.cover,cacheWidth:110)),
+                      const SizedBox(width:9),
+                      Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+                        children:[
+                          Text(entry.name,maxLines:1,overflow:TextOverflow.ellipsis,
+                            style:const TextStyle(fontWeight:FontWeight.w700)),
+                          Text('${entry.steps.length} edit steps',
+                            style:TextStyle(fontSize:11,
+                              color:FileTheme.muted(context))),
+                        ])),
+                      const Icon(Icons.chevron_right_rounded,color:FileTheme.violet),
+                    ])),
+                ),
+              )),
+        ]);
+      });
+  }
+
+  Widget _desktopWorkspace(){
+    return Row(children:[
+      Expanded(flex:8,child:Column(children:[
+        Expanded(child:_previewArea(wide:true)),
+        _actions(wide:true),
+      ])),
+      Container(width:365,
+        decoration:BoxDecoration(border:Border(left:BorderSide(
+          color:FileTheme.violet.withValues(alpha:.2)))),
+        child:Column(children:[
+          Expanded(child:ListView(padding:const EdgeInsets.all(14),children:[
+            Row(children:[
+              IconButton(tooltip:'Undo',onPressed:_undo.isEmpty?null:
+                ()=>_historyStep(true),icon:const Icon(Icons.undo)),
+              IconButton(tooltip:'Redo',onPressed:_redo.isEmpty?null:
+                ()=>_historyStep(false),icon:const Icon(Icons.redo)),
+              const Spacer(),_menu(),
+            ]),
+            for(final tool in _tools)
+              Padding(padding:const EdgeInsets.only(bottom:7),
+                child:_toolTab(tool,vertical:true)),
+            const Divider(height:24),
+            _controls(),
+            const Divider(height:24),
+            _desktopHistory(),
+          ])),
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _mobileWorkspace(){
+    return Column(children:[
+      Expanded(flex:7,child:_previewArea(wide:false)),
+      _toolStrip(),
+      SizedBox(height:210,child:_controls()),
+      _actions(),
+    ]);
+  }
+
+  Widget _menu()=>PopupMenuButton<String>(
+    tooltip:'More Image Editing options',
+    icon:const Icon(Icons.more_vert_rounded),
+    onSelected:(value){
+      if(value=='history')Navigator.of(context).push(
+        fadePage<void>(const ImageEditingHistoryPage()));
+      if(value=='share' && _bytes!=null)unawaited(_export('share'));
+    },
+    itemBuilder:(_)=>const [
+      PopupMenuItem(value:'history',child:Row(children:[
+        Icon(Icons.history),SizedBox(width:12),Text('Image History')])),
+      PopupMenuItem(value:'share',child:Row(children:[
+        Icon(Icons.ios_share_outlined),SizedBox(width:12),
+        Text('Share / Export')])),
+    ]);
 
   @override
   Widget build(BuildContext context)=>Scaffold(
     appBar:AppBar(title:const Text('Image Editing'),actions:[
-      IconButton(tooltip:'Before / After',
-        onPressed:()=>setState(()=>_showOriginal=!_showOriginal),
-        icon:Icon(_showOriginal?Icons.visibility_off:Icons.compare)),
+      IconButton(tooltip:'Before / After',onPressed:_bytes==null?null:
+        ()=>setState(()=>_showOriginal=!_showOriginal),
+        icon:Icon(_showOriginal?Icons.visibility_off_outlined:
+          Icons.compare_outlined)),
       _menu(),
     ]),
     body:Container(
       decoration:BoxDecoration(gradient:FileTheme.background(context)),
-      child:_bytes==null
-        ?Center(child:_error!=null?Text(_error!):
-          const CircularProgressIndicator())
-        :LayoutBuilder(builder:(context,constraints){
-          final wide=constraints.maxWidth>=850;
-          final canvas=Column(children:[
-            Padding(padding:const EdgeInsets.all(10),child:_toolbar()),
-            if(_busy)const LinearProgressIndicator(minHeight:3),
-            Expanded(child:Padding(padding:const EdgeInsets.all(12),
-              child:RepaintBoundary(child:_preview()))),
-            if(!wide)SizedBox(height:230,child:_controls()),
-            _actions(),
-          ]);
-          return wide?Row(children:[
-            Expanded(flex:3,child:canvas),
-            VerticalDivider(width:1,color:FileTheme.violet.withValues(alpha:.2)),
-            SizedBox(width:315,child:_controls()),
-          ]):canvas;
-        }),
+      child:LayoutBuilder(builder:(context,constraints)=>
+        constraints.maxWidth>=900?_desktopWorkspace():_mobileWorkspace()),
     ),
   );
 }
