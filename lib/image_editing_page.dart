@@ -1065,32 +1065,43 @@ class _CheckerPainter extends CustomPainter {
   @override bool shouldRepaint(covariant CustomPainter old)=>false;
 }
 class _CropPainter extends CustomPainter {
-  _CropPainter(this.region);
-  final Rect region;
+  _CropPainter(this.corners);
+  final List<Offset> corners;
+  Offset _point(Offset p,Size size)=>
+    Offset(p.dx*size.width,p.dy*size.height);
   @override void paint(Canvas canvas,Size size){
-    final r=Rect.fromLTRB(region.left*size.width,region.top*size.height,
-      region.right*size.width,region.bottom*size.height);
-    final shadow=Paint()..color=Colors.black54;
-    canvas.drawRect(Rect.fromLTWH(0,0,size.width,r.top),shadow);
-    canvas.drawRect(Rect.fromLTRB(0,r.bottom,size.width,size.height),shadow);
-    canvas.drawRect(Rect.fromLTRB(0,r.top,r.left,r.bottom),shadow);
-    canvas.drawRect(Rect.fromLTRB(r.right,r.top,size.width,r.bottom),shadow);
-    final pen=Paint()..color=Colors.white..style=PaintingStyle.stroke
-      ..strokeWidth=2;
-    canvas.drawRect(r,pen);
+    if(corners.length!=4)return;
+    final points=[for(final p in corners)_point(p,size)];
+    final outside=Path()..addRect(Offset.zero & size);
+    final polygon=Path()..moveTo(points[0].dx,points[0].dy);
+    for(var i=1;i<4;i++)polygon.lineTo(points[i].dx,points[i].dy);
+    polygon.close();
+    canvas.drawPath(Path.combine(PathOperation.difference,outside,polygon),
+      Paint()..color=Colors.black54);
+    final border=Paint()..color=Colors.white
+      ..style=PaintingStyle.stroke..strokeWidth=2;
+    canvas.drawPath(polygon,border);
     for(var i=1;i<3;i++){
-      canvas.drawLine(Offset(r.left+r.width*i/3,r.top),
-        Offset(r.left+r.width*i/3,r.bottom),pen);
-      canvas.drawLine(Offset(r.left,r.top+r.height*i/3),
-        Offset(r.right,r.top+r.height*i/3),pen);
+      final f=i/3.0;
+      Offset interpolate(Offset a,Offset b)=>Offset.lerp(a,b,f)!;
+      canvas.drawLine(interpolate(points[0],points[3]),
+        interpolate(points[1],points[2]),border);
+      canvas.drawLine(interpolate(points[0],points[1]),
+        interpolate(points[3],points[2]),border);
     }
     final handle=Paint()..color=FileTheme.violet;
-    for(final point in [r.topLeft,r.topRight,r.bottomLeft,r.bottomRight]){
-      canvas.drawCircle(point,7,handle);
-      canvas.drawCircle(point,4,Paint()..color=Colors.white);
+    for(final p in points){
+      canvas.drawCircle(p,9,Paint()..color=Colors.white);
+      canvas.drawCircle(p,6,handle);
     }
   }
-  @override bool shouldRepaint(covariant _CropPainter old)=>old.region!=region;
+  @override bool shouldRepaint(covariant _CropPainter old){
+    if(old.corners.length!=corners.length)return true;
+    for(var i=0;i<corners.length;i++){
+      if(old.corners[i]!=corners[i])return true;
+    }
+    return false;
+  }
 }
 
 class ImageEditingHistoryPage extends StatefulWidget {
