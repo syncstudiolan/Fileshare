@@ -50,7 +50,7 @@ async function sha256(text) {
 }
 async function throttle(env, kind, request, email, max, windowMs) {
   const ip = request.headers.get('cf-connecting-ip') || 'unavailable';
-  const key = await sha256(env.DIRECTORY_OTP_SECRET + ':' + kind + ':' +
+  const key = await sha256(env.DIRECTORY_RATE_SECRET + ':' + kind + ':' +
     ip + ':' + email);
   const now = Date.now();
   const current = await env.DB.prepare(
@@ -154,7 +154,7 @@ async function signIn(request,env) {
 export default {
   async fetch(request,env){
     try {
-      if(!env.DB || !env.DIRECTORY_OTP_SECRET || env.DIRECTORY_OTP_SECRET.length<32)
+      if(!env.DB || !env.DIRECTORY_RATE_SECRET || env.DIRECTORY_RATE_SECRET.length<32)
         return fail('Directory not configured',503);
       const url=new URL(request.url);
       const origin=request.headers.get('origin');
@@ -172,8 +172,6 @@ export default {
     }catch(_){return fail('Request could not be completed',500);}
   },
   async scheduled(_,env){
-    await env.DB.prepare('DELETE FROM claims WHERE expires_at<?')
-      .bind(Date.now()).run();
     await env.DB.prepare('DELETE FROM limits WHERE starts_at<?')
       .bind(Date.now()-24*60*60*1000).run();
   },
