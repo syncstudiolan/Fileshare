@@ -39,6 +39,10 @@ Future<void> main([List<String> args = const []]) async {
           ? WindowsBackground.instance.notifyReceived(file)
           : Future<void>.value();
   if (Platform.isWindows) {
+    // Exit a second Windows process before it can bind the same LAN port.
+    if (!await WindowsBackground.instance.acquireSingleInstance()) {
+      exit(0);
+    }
     try { await WindowsBackground.instance.initialize(); }
     catch (e) { debugPrint('Windows tray unavailable: $e'); }
   }
@@ -69,6 +73,49 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   static final instance = WindowsBackground._();
   final ValueNotifier<bool> autoStartEnabled = ValueNotifier(false);
   bool _trayReady = false, _exiting = false, _notificationsReady = false;
+  RandomAccessFile? _instanceLock;
+  ServerSocket? _controlChannel;
+
+  /// A private OS file lock prevents two copies of the Windows EXE from
+  /// owning the fixed LAN TCP listener. If a copy is already active, ask it
+  /// to open its tray window rather than showing a second broken dashboard.
+  Future<bool> acquireSingleInstance() async {
+    if (!Platform.isWindows) return true;
+    final folder = await getApplicationSupportDirectory();
+    final lockFile = File(folder.path + Platform.pathSeparator +
+      'file_share_process.lock');
+    RandomAccessFile? handle;
+    try {
+      handle = await lockFile.open(mode: FileMode.append);
+      // Nonblocking exclusive lock; OS releases it after a process crash.
+      await handle.lock(FileLock.exclusive, 0, 1);
+      _instanceLock = handle;
+    } on FileSystemException {
+      await handle?.close();
+      try {
+        final existing = await Socket.connect(
+          InternetAddress.loopbackIPv4, 49312,
+          timeout: const Duration(milliseconds: 600));
+        existing.write('SHOW\n');
+        await existing.flush();
+        existing.destroy();
+      } catch (e) {
+        debugPrint('Existing File Share window could not be focused: $e');
+      }
+      return false;
+    }
+    try {
+      _controlChannel = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4, 49312);
+      _controlChannel!.listen((socket) {
+        socket.destroy();
+        unawaited(showWindow());
+      });
+    } catch (e) {
+      debugPrint('Optional local show-window channel unavailable: $e');
+    }
+    return true;
+  }
 
   Future<void> initialize() async {
     if (!Platform.isWindows) return;
@@ -151,6 +198,11 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     if (_exiting) return;
     _exiting = true;
     try { await appLan.stop(); } catch (_) { }
+    try { await _controlChannel?.close(); } catch (_) { }
+    _controlChannel = null;
+    try { await _instanceLock?.unlock(); } catch (_) { }
+    try { await _instanceLock?.close(); } catch (_) { }
+    _instanceLock = null;
     try { await desktop_tray.trayManager.destroy(); } catch (_) { }
     try { await windowManager.setPreventClose(false); } catch (_) { }
     await windowManager.destroy();
@@ -2092,7 +2144,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
                       Text(appLan.peers.length.toString() + ' nearby LAN devices · ' +
-                        (appLan.started ? 'LAN active' : 'Starting LAN') +
+                        (appLan.receivingEnabled ? 'LAN active'
+                          : (appLan.started ? 'LAN receiver reconnecting'
+                            : 'Starting LAN')) +
                         (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
