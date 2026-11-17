@@ -9,7 +9,6 @@ import 'package:open_filex/open_filex.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
-import 'package:launch_at_startup/launch_at_startup.dart';
 
 import 'lan_engine.dart';
 import 'personal_cloud.dart';
@@ -78,9 +77,11 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     await windowManager.setPreventClose(true);
     _trayReady = true;
     try {
-      launchAtStartup.setup(appName: 'File Share',
-        appPath: Platform.resolvedExecutable);
-      autoStartEnabled.value = await launchAtStartup.isEnabled();
+      final result = await Process.run('reg', [
+        'query', _windowsRunKey, '/v', 'FileShare',
+      ]);
+      autoStartEnabled.value = result.exitCode == 0 &&
+        result.stdout.toString().contains(Platform.resolvedExecutable);
     } catch (e) { debugPrint('Startup preference error: $e'); }
     try {
       await localNotifier.setup(appName: 'File Share',
@@ -89,11 +90,20 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     } catch (e) { debugPrint('Windows toast setup error: $e'); }
   }
 
+  static const _windowsRunKey =
+    r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
+
   Future<void> setAutoStart(bool value) async {
     if (!Platform.isWindows) return;
-    if (value) { await launchAtStartup.enable(); }
-    else { await launchAtStartup.disable(); }
-    autoStartEnabled.value = await launchAtStartup.isEnabled();
+    final args = value
+      ? ['add', _windowsRunKey, '/v', 'FileShare', '/t', 'REG_SZ',
+          '/d', '"' + Platform.resolvedExecutable + '"', '/f']
+      : ['delete', _windowsRunKey, '/v', 'FileShare', '/f'];
+    final result = await Process.run('reg', args);
+    if (result.exitCode != 0) {
+      throw ProcessException('reg', args, result.stderr.toString(), result.exitCode);
+    }
+    autoStartEnabled.value = value;
   }
 
   Future<void> notifyReceived(LanFile file) async {
