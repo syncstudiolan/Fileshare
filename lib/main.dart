@@ -969,8 +969,8 @@ class _LoginPageState extends State<LoginPage> {
               ])),
               const SizedBox(height:15),
               Text(AccountDirectory.instance.enabled
-                ? 'On a new Android or Windows device, enter only this email '
-                  'and password. The directory finds your personal Worker.'
+                ? 'After email verification is activated and your account is linked, '
+                  'Android and Windows can sign in using email and password.'
                 : 'Email-only sign-in needs the official File Share directory '
                   'deployment. Until configured, use your Worker URL too.',
                 textAlign:TextAlign.center,
