@@ -57,7 +57,7 @@ class PersonalCloud extends ChangeNotifier {
         _sessionToken=null;
         await _secrets.delete(key:'personal_auth_session');
       }
-      if (host != null && secret != null) {
+      if(host != null) {
         _host = _validWorker(host);
         _ownerToken = secret;
         notifyListeners();
@@ -82,7 +82,7 @@ class PersonalCloud extends ChangeNotifier {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
     try {
       final request = await client.openUrl(method, host.resolve(path));
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + token);
+      if(token.isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + token);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       if(payload != null){
         request.headers.contentType=ContentType.json;
