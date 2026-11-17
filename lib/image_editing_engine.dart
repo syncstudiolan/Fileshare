@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -7,6 +6,12 @@ import 'package:image/image.dart' as img;
 /// CPU-intensive raster operations run in an isolate, never inside a frame.
 /// Flutter/Impeller renders the zoomable canvas, animated controls and gestures.
 class ImageEditingEngine {
+  static Future<List<int>> dimensions(Uint8List bytes)=>compute(_readSize,bytes);
+  static List<int> _readSize(Uint8List bytes){
+    final source=img.decodeImage(bytes);
+    if(source==null)throw const FormatException('Unsupported or damaged image');
+    return [source.width,source.height];
+  }
   static Future<Uint8List> edit(Uint8List bytes, String action,
       Map<String, Object?> options) => compute(_runOperation, <String, Object?>{
         'bytes': bytes, 'action': action, 'options': options,
