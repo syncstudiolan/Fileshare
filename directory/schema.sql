@@ -6,7 +6,7 @@
 CREATE TABLE IF NOT EXISTS accounts (
   email TEXT PRIMARY KEY,
   worker_url TEXT NOT NULL,
-  verified_at INTEGER NOT NULL
+  linked_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS limits (
   id TEXT PRIMARY KEY,
