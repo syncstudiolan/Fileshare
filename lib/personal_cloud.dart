@@ -172,19 +172,16 @@ class PersonalCloud extends ChangeNotifier {
     await refreshFiles();
   }
 
-  Future<void> requestEmailLink() async {
-    if(!signedIn || _accountEmail==null || _host==null || _sessionToken==null){
-      throw StateError('Login to your personal cloud before linking email');
+  /// Bind this account to exactly one personal cloud for email/password
+  /// sign-in across devices. No email delivery or OTP is involved.
+  Future<void> linkAccountDirectory() async {
+    if(!signedIn || _accountEmail==null || _host==null || _sessionToken==null) {
+      throw StateError('Log in to your personal cloud before linking');
     }
-    await AccountDirectory.instance.beginLink(
+    await AccountDirectory.instance.linkAccount(
       email:_accountEmail!, workerUrl:_host!.origin,
       personalSession:_sessionToken!,
     );
-  }
-
-  Future<void> verifyEmailLink(String code) async {
-    if(!signedIn||_accountEmail==null)throw StateError('Login first');
-    await AccountDirectory.instance.confirmLink(_accountEmail!,code);
   }
 
   Future<void> validateAccountSession() async {
