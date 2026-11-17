@@ -2209,6 +2209,57 @@ class FeatureDesignPage extends StatelessWidget {
   ]);
 
   Widget _settings(BuildContext c) => Column(children: [
+    if (Platform.isWindows) ...[
+      _section(c, 'Windows Background Receiver',
+        'Closing the window hides File Share in the tray. The LAN engine keeps receiving while Windows is awake.',
+        Column(children: [
+          ValueListenableBuilder<bool>(
+            valueListenable: WindowsBackground.instance.autoStartEnabled,
+            builder: (context, enabled, _) => SwitchListTile(
+              title: const Text('Start with Windows'),
+              subtitle: const Text('Launch File Share when you sign in to Windows'),
+              value: enabled,
+              onChanged: (value) async {
+                try { await WindowsBackground.instance.setAutoStart(value); }
+                catch (e) {
+                  if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(
+                    SnackBar(content: Text('Windows startup error: $e')));
+                }
+              },
+            ),
+          ),
+          const ListTile(
+            leading: Icon(Icons.notifications_active_outlined),
+            title: Text('System notifications'),
+            subtitle: Text('Windows will alert you when a LAN file is received'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => WindowsBackground.instance.exitCompletely(),
+            icon: const Icon(Icons.power_settings_new_outlined),
+            label: const Text('Exit File Share Completely')),
+        ]),
+      ),
+      const SizedBox(height: 14),
+    ],
+    if (Platform.isAndroid) ...[
+      _section(c, 'Android Background Receiver',
+        'A visible connected-device foreground notification keeps the LAN engine available after leaving the app.',
+        const Column(children: [
+          ListTile(
+            leading: Icon(Icons.wifi_rounded),
+            title: Text('Background LAN receiving'),
+            subtitle: Text('Active while the File Share foreground service is running'),
+          ),
+          ListTile(
+            leading: Icon(Icons.notifications_active_outlined),
+            title: Text('File received notifications'),
+            subtitle: Text('Allow notifications in Android app settings'),
+          ),
+          Text('Force Stop, OEM battery optimization, Wi-Fi disconnect and reboot can still interrupt receiving.'),
+        ]),
+      ),
+      const SizedBox(height: 14),
+    ],
     _section(c, 'Appearance', 'Light, dark and follow-system for Android and Windows.',
       Column(children: [
         _line(c, Icons.color_lens_outlined, 'Appearance mode',
