@@ -33,6 +33,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
   String? _selectedFilter;
+  Uint8List? _filterBase;
   final TransformationController _transformController=TransformationController();
   double _zoom=1.0;
   String _tool='Background';
@@ -469,11 +470,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
               for(final type in const ['Normal','Vivid','Warm','Cool','B&W','Vintage','Soft'])
                 Padding(padding:const EdgeInsets.only(right:10),
                   child:InkWell(
-                    onTap:_busy?null:(){
-                      setState(()=>_selectedFilter=type);
-                      unawaited(_apply('filter',{'name':type},
-                        description:'Filter: $type'));
-                    },
+                    onTap:_busy?null:()=>_applyFilter(type),
                     borderRadius:BorderRadius.circular(14),
                     child:Column(children:[
                       Container(width:76,height:76,clipBehavior:Clip.antiAlias,
@@ -518,6 +515,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       default:return const SizedBox.shrink();
     }
   }
+  Future<void> _applyFilter(String type)async{
+    if(_busy||_bytes==null)return;
+    final current=_bytes!;
+    _filterBase??=current;
+    setState(()=>_busy=true);
+    try{
+      final next=type=='Normal'?_filterBase!:
+        await ImageEditingEngine.edit(_filterBase!,'filter',{'name':type});
+      await _commit(current,next,'Filter: $type');
+      if(mounted)setState(()=>_selectedFilter=type);
+    }catch(_){_message('This filter could not be applied.');}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
   Widget _filterThumbnail(String type){
     final bytes=_bytes;
     if(bytes==null)return const Icon(Icons.image_outlined);
@@ -736,6 +747,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   };
   void _selectTool(String tool){
     if(_busy)return;
+    if(_tool=='Filters'&&tool!='Filters'){
+      _filterBase=null;
+      _selectedFilter=null;
+    }
     setState(()=>_tool=tool);
   }
 
