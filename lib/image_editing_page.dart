@@ -437,31 +437,54 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     }));
   }
 
+  /// Slider feedback uses the GPU color-matrix while dragging; final
+  /// full-quality pixels are processed off the UI isolate on release.
+  Widget _liveAdjustment(Widget child){
+    if(_tool!='Adjust')return child;
+    final saturation=_saturation;
+    const lr=.2126,lg=.7152,lb=.0722;
+    final scale=_brightness*_contrast*math.pow(2,_exposure).toDouble();
+    final shift=128*(1-_contrast)*_brightness;
+    final sr=(1-saturation)*lr,sg=(1-saturation)*lg,sb=(1-saturation)*lb;
+    return ColorFiltered(colorFilter:ColorFilter.matrix([
+      (sr+saturation)*scale,sg*scale,sb*scale,0,shift,
+      sr*scale,(sg+saturation)*scale,sb*scale,0,shift,
+      sr*scale,sg*scale,(sb+saturation)*scale,0,shift,
+      0,0,0,1,0,
+    ]),child:child);
+  }
+
   Widget _preview(){
     return LayoutBuilder(builder:(context,constraints){
       final width=math.min(constraints.maxWidth,
         constraints.maxHeight*_ratio).clamp(1.0,double.infinity).toDouble();
       final height=width/_ratio;
       final size=Size(width,height);
-      return Center(child:SizedBox(width:width,height:height,
-        child:GestureDetector(
+      Widget canvas=Stack(fit:StackFit.expand,children:[
+        DecoratedBox(decoration:BoxDecoration(
+          border:Border.all(color:FileTheme.violet.withValues(alpha:.18))),
+          child:CustomPaint(painter:_CheckerPainter())),
+        _liveAdjustment(Image.memory(_bytes!,fit:BoxFit.fill,
+          gaplessPlayback:true,filterQuality:FilterQuality.medium)),
+        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_crop)),
+        if(_showOriginal)
+          Image.file(File(widget.sourcePath??widget.draft!.filePath),
+            fit:BoxFit.fill),
+      ]);
+      if(_tool=='Crop'||_tool=='Erase'){
+        canvas=GestureDetector(
           onPanStart:(d)=>_startGesture(d,size),
           onPanUpdate:(d)=>_changeGesture(d,size),
           onPanEnd:(_)=>_finishGesture(),
-          child:Stack(fit:StackFit.expand,children:[
-            DecoratedBox(decoration:BoxDecoration(
-              color:Colors.white,
-              border:Border.all(color:FileTheme.violet.withValues(alpha:.18))),
-              child:CustomPaint(painter:_CheckerPainter())),
-            Image.memory(_bytes!,fit:BoxFit.fill,
-              gaplessPlayback:true,filterQuality:FilterQuality.medium),
-            if(_tool=='Crop')CustomPaint(painter:_CropPainter(_crop)),
-            if(_showOriginal)
-              Image.file(File(widget.sourcePath??widget.draft!.filePath),
-                fit:BoxFit.fill),
-          ]),
-        ),
-      )));
+          child:canvas,
+        );
+      }else{
+        canvas=InteractiveViewer(
+          minScale:1,maxScale:6,panEnabled:true,
+          scaleEnabled:true,child:canvas,
+        );
+      }
+      return Center(child:SizedBox(width:width,height:height,child:canvas));
     });
   }
 
