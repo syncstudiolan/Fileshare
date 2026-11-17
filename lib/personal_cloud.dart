@@ -30,6 +30,7 @@ class PersonalCloud extends ChangeNotifier {
   int _sessionExpiry = 0;
   String? _qrLink;
   final List<CloudFile> files = [];
+  final Map<String, Future<File>> _downloadsInFlight = {};
   String? error;
   bool loading = false;
   bool _loggedOut = false;
@@ -284,7 +285,7 @@ class PersonalCloud extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// No idle polling. Called explicitly by user refresh or a future push.
+  /// Lightweight metadata sync; dashboard schedules this only while visible.
   Future<void> refreshFiles() async {
     if (!connected || loading) return;
     loading = true;
@@ -357,29 +358,46 @@ class PersonalCloud extends ChangeNotifier {
     unawaited(cleanupLocalCache());
   }
 
-  Future<File> download(CloudFile item) async {
-    if (!connected) throw StateError('Cloud not connected');
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
-    final cache = await _cacheDir();
-    final safe = item.name.replaceAll(RegExp(r'[/\\\x00-\x1f]'), '_');
-    final target = File(cache.path + Platform.pathSeparator + 'cloud_' +
-      nextMidnightIst().toString() + '_' + item.id + '_' + safe);
-    try {
-      final request = await client.getUrl(
-        _host!.resolve('/v1/owner/file/' + item.id));
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' +
-        (signedIn ? _sessionToken! : _ownerToken!));
-      final response = await request.close();
-      if (response.statusCode != 200) {
-        throw StateError('Cloud download returned HTTP ' +
-          response.statusCode.toString());
-      }
-      await response.pipe(target.openWrite());
-      return target;
-    } catch (_) {
-      if (await target.exists()) await target.delete();
+  /// Reuse downloads across thumbnail, preview, Share, Tools and Save.
+  /// File data stays in private storage and expires with the QR files.
+  Future<File> download(CloudFile item) {
+    final pending=_downloadsInFlight[item.id];
+    if(pending!=null)return pending;
+    final task=_downloadFile(item);
+    _downloadsInFlight[item.id]=task;
+    task.then((_) => _downloadsInFlight.remove(item.id),
+      onError:(Object _) => _downloadsInFlight.remove(item.id));
+    return task;
+  }
+
+  Future<File> _downloadFile(CloudFile item) async {
+    if(!connected)throw StateError('Cloud not connected');
+    final cache=await _cacheDir();
+    final safe=item.name.replaceAll(RegExp(r'[/\\\\\\x00-\\x1f]'),'_');
+    final target=File(cache.path+Platform.pathSeparator+'cloud_'+
+      nextMidnightIst().toString()+'_'+item.id+'_'+safe);
+    if(await target.exists()){
+      if(await target.length()==item.size)return target;
+      await target.delete();
+    }
+    final temporary=File(target.path+'.part');
+    final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
+    try{
+      final request=await client.getUrl(
+        _host!.resolve('/v1/owner/file/'+item.id));
+      request.headers.set(HttpHeaders.authorizationHeader,'Bearer '+
+        (signedIn?_sessionToken!:_ownerToken!));
+      final response=await request.close().timeout(const Duration(seconds:30));
+      if(response.statusCode!=200)throw StateError(
+        'Cloud download returned HTTP '+response.statusCode.toString());
+      await response.pipe(temporary.openWrite());
+      if(await temporary.length()!=item.size)throw const FormatException(
+        'Cloud file download was incomplete');
+      return temporary.rename(target.path);
+    }catch(_){
+      if(await temporary.exists())await temporary.delete();
       rethrow;
-    } finally { client.close(force: true); }
+    }finally{client.close(force:true);}
   }
 
   Future<void> deleteRemote(CloudFile item) async {
