@@ -25,7 +25,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
-  final offline = await prefs.getBool('offline_start') ?? false;
+  final previousOffline = await prefs.getBool('offline_start') ?? false;
+  // CI emulator only: run the real LAN backend without first-use tapping.
+  const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
+  final offline = ciLanTest || previousOffline;
   appLan.onReceived = (file) => Platform.isAndroid
       ? const MethodChannel('file_share.native').invokeMethod<void>(
           'notifyReceived', {'name': file.name, 'sender': file.peer})
