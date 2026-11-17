@@ -30,6 +30,24 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Widget and LAN model tests
         run: flutter test
+      - name: Central Directory contract tests
+        run: node --test directory/worker.test.mjs
+      - name: Live Cloudflare auth route smoke checks (no real credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory='https://fileshare-directory.modeltech0.workers.dev'
+          personal='https://fileshare-personal-7ee7299b34.modeltech0.workers.dev'
+          for endpoint in "$directory" "$personal"; do
+            curl --fail --show-error --silent --retry 3 --retry-delay 2 \
+              "$endpoint/health" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d"
+          done
+          code=$(curl -sS -o /tmp/directory-unknown-email.json -w '%{http_code}' \
+            -X POST "$directory/v1/directory/resolve" \
+            -H 'content-type: application/json' \
+            --data '{"email":"nonexistent-smoke-test-835293@example.invalid"}')
+          test "$code" = 404 || { echo "Directory resolve returned unexpected HTTP $code"; exit 1; }
+          python3 -c "import json; d=json.load(open('/tmp/directory-unknown-email.json')); assert d.get('error') == 'Email address is not registered', d"
       - name: Build compact ARM64 release APK
         run: flutter build apk --release --target-platform android-arm64
       - name: Record release APK size
