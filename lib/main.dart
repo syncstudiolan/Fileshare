@@ -20,7 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // Phase 1: native-feeling UI shell only. Authentication and transfer engines are
 // intentionally NOT simulated. No network polling or cloud API calls occur.
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
@@ -42,6 +42,11 @@ Future<void> main() async {
     unawaited(appLan.start().catchError((Object e) {
       debugPrint('Background LAN start failed: $e');
     }));
+  }
+  if (Platform.isWindows && args.contains('--background')) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(windowManager.hide());
+    });
   }
   runApp(FileShareApp(
     initialMode: switch (mode) {
@@ -97,7 +102,7 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     if (!Platform.isWindows) return;
     final args = value
       ? ['add', _windowsRunKey, '/v', 'FileShare', '/t', 'REG_SZ',
-          '/d', '"' + Platform.resolvedExecutable + '"', '/f']
+          '/d', '"' + Platform.resolvedExecutable + '" --background', '/f']
       : ['delete', _windowsRunKey, '/v', 'FileShare', '/f'];
     final result = await Process.run('reg', args);
     if (result.exitCode != 0) {
