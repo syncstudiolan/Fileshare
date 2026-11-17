@@ -495,27 +495,31 @@ async function cleanup(env) {
         }
       }
       await env.FILES.delete(items.map(item=>item.object_key));
-      // Do not leave upload_parts if the D1 connection lacks FK cascading.
-      // Both deletes are intentionally batched rather than N SQL requests.
-      const placeholders=items.map(()=>'?').join(',');
+      // Cloudflare D1 supports at most 100 bind parameters per statement.
+      // Delete multipart rows and upload rows in groups of <=100 IDs,
+      // rather than N requests or one invalid 500-ID statement.
       const ids=items.map(item=>item.id);
-      await env.DB.batch([
-        env.DB.prepare(
-          'DELETE FROM upload_parts WHERE file_id IN ('+placeholders+')'
-        ).bind(...ids),
-        env.DB.prepare(
-          'DELETE FROM uploads WHERE id IN ('+placeholders+')'
-        ).bind(...ids),
-      ]);
-      recordsDeleted+=items.length;
+      for(let offset=0;offset<ids.length;offset+=100){
+        const chunk=ids.slice(offset,offset+100);
+        const placeholders=chunk.map(()=>'?').join(',');
+        await env.DB.batch([
+          env.DB.prepare(
+            'DELETE FROM upload_parts WHERE file_id IN ('+placeholders+')'
+          ).bind(...chunk),
+          env.DB.prepare(
+            'DELETE FROM uploads WHERE id IN ('+placeholders+')'
+          ).bind(...chunk),
+        ]);
+        recordsDeleted+=chunk.length;
+      }
     }
     // Remove expired or now-unreferenced guest session metadata as part of
     // the same midnight job. Retain qr_codes and the personal owner account.
     // Midnight resets QR guest quotas; no rolling-24h session history stays.
     await env.DB.prepare(
-      'DELETE FROM guest_sessions WHERE '+
+      'DELETE FROM guest_sessions WHERE expires_at<=? AND '+
       'NOT EXISTS (SELECT 1 FROM uploads WHERE uploads.session_id=guest_sessions.id)'
-    ).run();
+    ).bind(now).run();
     // The old auth-attempt records should not accumulate indefinitely.
     await env.DB.prepare(
       'DELETE FROM auth_attempts WHERE changed_at<?'
