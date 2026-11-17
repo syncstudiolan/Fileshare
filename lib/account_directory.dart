@@ -84,8 +84,11 @@ class AccountDirectory {
     final normalized=email.trim().toLowerCase();
     final data=await _post('/v1/directory/resolve',{'email':normalized});
     final worker=data['workerUrl'], linkedEmail=data['email'];
-    if(worker is! String || linkedEmail!=normalized ||
-       !RegExp(r'^https://[a-z0-9-]+\\.[a-z0-9-]+\\.workers\\.dev\$').hasMatch(worker)) {
+    final uri=worker is String ? Uri.tryParse(worker) : null;
+    if(linkedEmail!=normalized || uri==null || uri.scheme!='https' ||
+       uri.userInfo.isNotEmpty || uri.hasPort || uri.path.isNotEmpty ||
+       uri.query.isNotEmpty || uri.fragment.isNotEmpty ||
+       !RegExp(r'^[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev$').hasMatch(uri.host)) {
       throw const FormatException('Directory returned an invalid personal cloud');
     }
     return worker;
