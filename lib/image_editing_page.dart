@@ -177,6 +177,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_undo.length>15)_undo.removeAt(0);
     _redo.clear();
     _steps.add(step);
+    if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
+      _cutoutBytes=null; // A crop or other transform changed image geometry.
+    }
     final dimensions=await ImageEditingEngine.dimensions(next);
     if(!mounted)return;
     setState((){
@@ -285,6 +288,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         'mask':mask,'maskWidth':dimensions[0],'maskHeight':dimensions[1],
       });
       await _commit(data,result,'Remove plain-color background');
+      _cutoutBytes=result;
       _format='PNG';
     }catch(e){_message('Plain background removal failed: $e');}
     finally{if(mounted)setState(()=>_busy=false);}
