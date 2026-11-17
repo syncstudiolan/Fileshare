@@ -218,12 +218,14 @@ class LanEngine extends ChangeNotifier {
         error = null;
       }
     } on SocketException catch (e) {
-      // OS error 10048: another process already listens at this TCP port.
-      // Windows single-instance guard handles future launches, while this
-      // retry also handles older versions already in the system tray.
-      error = 'LAN receiver port $tcpPort is already in use. '
-        'Close the other File Share process. Automatically retrying.';
-      debugPrint('LAN port bind conflict: $e');
+      // Windows 10048, Linux 98 and macOS 48 indicate an occupied port.
+      final code = e.osError?.errorCode;
+      final isBusy = code == 10048 || code == 98 || code == 48;
+      error = isBusy
+        ? 'LAN receiver port $tcpPort is already in use. '
+          'Close the other File Share process. Automatically retrying.'
+        : 'LAN receiver could not start; retrying: $e';
+      debugPrint('LAN listener bind failed: $e');
     } catch (e) {
       error = 'LAN receiver unavailable; retrying: $e';
     } finally {
