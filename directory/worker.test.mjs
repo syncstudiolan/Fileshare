@@ -68,7 +68,7 @@ const personalOrigin='https://fileshare-own.customer.workers.dev';
 const email='user@example.com';
 const session='private-session-abcdefghijklmnopqrstuvwxyz';
 const env=()=>({
-  DB:new FakeD1(), DIRECTORY_OTP_SECRET:'directory-secret-abcdefghijklmnopqrstuvwxyz',
+  DB:new FakeD1(), DIRECTORY_RATE_SECRET:'directory-secret-abcdefghijklmnopqrstuvwxyz',
   RESEND_API_KEY:'fake-not-real-token',EMAIL_FROM:'File Share <verify@example.com>',
 });
 const make=(path,values)=>new Request('https://directory.example.net'+path,{
