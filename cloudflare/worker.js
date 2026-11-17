@@ -230,11 +230,56 @@ async function finish(request, env, session) {
     'SELECT COUNT(*) AS pending FROM uploads WHERE session_id=? AND completed=0'
   ).bind(session).first();
   if (row.pending) return fail('Some uploads have not finished', 409);
-  await env.DB.prepare('UPDATE guest_sessions SET completed=1 WHERE id=?')
-    .bind(session).run();
+  const updated=await env.DB.prepare(
+    'UPDATE guest_sessions SET completed=1 WHERE id=? AND completed=0'
+  ).bind(session).run();
+  if(updated.meta?.changes)await notifyOwnerInbox(env);
   return json({ok: true});
 }
 
+
+// Per-owner hibernating WebSocket room. Only invalidation events are sent;
+// actual files stay in private R2 and metadata in D1.
+export class InboxEvents {
+  constructor(state,env) { this.state=state;this.env=env; }
+  async fetch(request) {
+    const url=new URL(request.url);
+    if(url.pathname==='/internal/inbox-notify' && request.method==='POST') {
+      for(const socket of this.state.getWebSockets()) {
+        try{socket.send('files-changed');}
+        catch(_){try{socket.close(1011,'Reconnect');}catch(_){}}
+      }
+      return new Response(null,{status:204});
+    }
+    if(url.pathname!=='/internal/inbox-socket' ||
+       request.headers.get('Upgrade')?.toLowerCase()!=='websocket') {
+      return new Response('WebSocket upgrade required',{status:426});
+    }
+    const [client,server]=Object.values(new WebSocketPair());
+    this.state.acceptWebSocket(server);
+    return new Response(null,{status:101,webSocket:client});
+  }
+  webSocketMessage(socket,message) {
+    if(message==='ping')socket.send('pong');
+  }
+  webSocketClose(socket,code,reason) {
+    try{socket.close(code,reason);}catch(_){}
+  }
+  webSocketError(socket) {
+    try{socket.close(1011,'Socket error');}catch(_){}
+  }
+}
+// A WebSocket failure is not an upload failure. The app reconciles D1 on
+// reconnect, so missed signals never permanently lose a file.
+async function notifyOwnerInbox(env) {
+  if(!env.INBOX_EVENTS)return;
+  try {
+    const room=env.INBOX_EVENTS.getByName('owner');
+    await room.fetch('https://inbox.internal/internal/inbox-notify',{
+      method:'POST',
+    });
+  }catch(_){}
+}
 
 const AUTH_PERIOD = 24 * 60 * 60 * 1000;
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -417,6 +462,7 @@ async function ownerApi(request, env, url) {
     if (!item) return json({ok: true});
     await env.FILES.delete(item.object_key);
     await env.DB.prepare('DELETE FROM uploads WHERE id=?').bind(fileMatch[1]).run();
+    await notifyOwnerInbox(env);
     return json({ok: true});
   }
   return fail('Not found', 404);
@@ -462,6 +508,20 @@ export default {
         return fail('Cross-origin request refused', 403);
       }
       if (url.pathname.startsWith('/v1/auth/')) return authApi(request, env, url);
+      // Never expose the WebSocket room directly: authenticate the owner
+      // before upgrading, then use the internal Durable Object binding.
+      if(url.pathname==='/v1/owner/events' && request.method==='GET') {
+        if(!await owner(request,env))
+          return fail('Owner authentication required',401);
+        if(!env.INBOX_EVENTS)
+          return fail('Live inbox not provisioned; update cloud setup',503);
+        if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')
+          return fail('WebSocket upgrade required',426);
+        const room=env.INBOX_EVENTS.getByName('owner');
+        return room.fetch(new Request('https://inbox.internal/internal/inbox-socket',{
+          headers:{Upgrade:'websocket'},
+        }));
+      }
       if (url.pathname.startsWith('/v1/owner/')) {
         return ownerApi(request, env, url);
       }
