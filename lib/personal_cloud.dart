@@ -341,10 +341,18 @@ class PersonalCloud extends ChangeNotifier {
       },onDone:(){
         _lostLiveInbox(socket);
       },cancelOnError:true);
-    }catch(_){
-      // Old Workers without INBOX_EVENTS cannot push; the manual Refresh
-      // button remains usable until the user upgrades their own Worker.
-      _scheduleInboxReconnect();
+    }catch(error){
+      // Legacy Workers respond 404 to the new endpoint. Do NOT probe them
+      // every minute: owner must explicitly upgrade Worker once via Auto
+      // Connect. Genuine network drops still use bounded reconnect backoff.
+      final message=error.toString();
+      if(message.contains('HTTP status code: 404') ||
+         message.contains('HTTP status code: 426') ||
+         message.contains('HTTP status code: 503')){
+        _inboxLiveEnabled=false;
+      }else{
+        _scheduleInboxReconnect();
+      }
     }finally{
       _inboxConnecting=false;
     }
