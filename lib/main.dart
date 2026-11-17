@@ -1562,11 +1562,69 @@ String _formatBytes(int bytes) {
 }
 
 
+bool _isCloudImage(String name) {
+  final lower=name.toLowerCase();
+  return lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+    lower.endsWith('.png') || lower.endsWith('.webp') ||
+    lower.endsWith('.gif');
+}
+
+/// Preview images stream from the authenticated Worker to private app cache.
+class CloudImageThumbnail extends StatefulWidget {
+  const CloudImageThumbnail({super.key,required this.file,required this.onOpen});
+  final CloudFile file;
+  final VoidCallback onOpen;
+  @override
+  State<CloudImageThumbnail> createState()=>_CloudImageThumbnailState();
+}
+class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
+  Future<File>? _image;
+  @override
+  void initState(){super.initState();_load();}
+  @override
+  void didUpdateWidget(covariant CloudImageThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if(oldWidget.file.id!=widget.file.id)_load();
+  }
+  void _load(){
+    _image=_isCloudImage(widget.file.name) && widget.file.size<=10*1024*1024
+      ?PersonalCloud.instance.download(widget.file):null;
+  }
+  @override
+  Widget build(BuildContext context)=>InkWell(
+    onTap:widget.onOpen,
+    borderRadius:BorderRadius.circular(10),
+    child:ClipRRect(borderRadius:BorderRadius.circular(10),
+      child:SizedBox(width:60,height:60,
+        child:_image==null
+          ?const Icon(Icons.insert_drive_file_outlined,
+              color:FileTheme.pink,size:30)
+          :FutureBuilder<File>(
+              future:_image,
+              builder:(context,snapshot){
+                if(snapshot.hasData){
+                  return Image.file(snapshot.data!,fit:BoxFit.cover,
+                    cacheWidth:160,
+                    errorBuilder:(_,__,___)=>const Icon(
+                      Icons.broken_image_outlined,color:FileTheme.pink));
+                }
+                if(snapshot.hasError)return const Icon(
+                  Icons.broken_image_outlined,color:FileTheme.pink);
+                return const Center(child:SizedBox(width:24,height:24,
+                  child:CircularProgressIndicator(strokeWidth:2)));
+              }),
+      ),
+    ),
+  );
+}
+
 class CloudInboxCard extends StatelessWidget {
   const CloudInboxCard({super.key, required this.items,
-    required this.onSave, required this.onDelete, required this.onShare});
+    required this.onSave, required this.onDelete, required this.onShare,
+    required this.onPreview, required this.onTools});
   final List<CloudFile> items;
-  final Future<void> Function(CloudFile) onSave, onDelete, onShare;
+  final Future<void> Function(CloudFile) onSave, onDelete, onShare,
+    onPreview, onTools;
 
   @override
   Widget build(BuildContext context) {
@@ -1588,7 +1646,7 @@ class CloudInboxCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
           Row(children: [
             Expanded(child: Text(items.length>1
-              ? items.length.toString()+' Files (QR Group)' : first.name,
+              ? items.length.toString()+' Files (QR Group)' : 'Guest QR upload',
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(color: FileTheme.foreground(context),
                 fontWeight: FontWeight.w800))),
