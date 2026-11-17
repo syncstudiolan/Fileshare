@@ -33,6 +33,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
   String? _selectedFilter;
+  final TransformationController _transformController=TransformationController();
+  double _zoom=1.0;
   String _tool='Background';
   String _format='PNG';
   String? _draftId;
@@ -57,6 +59,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     super.initState();
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
     unawaited(_load());
+  }
+  @override void dispose(){
+    _transformController.dispose();
+    super.dispose();
+  }
+  void _changeZoom(double factor){
+    _zoom=(_zoom*factor).clamp(1.0,6.0).toDouble();
+    _transformController.value=Matrix4.diagonal3Values(_zoom,_zoom,1);
+    if(mounted)setState((){});
+  }
+  void _resetZoom(){
+    _zoom=1.0;
+    _transformController.value=Matrix4.identity();
+    if(mounted)setState((){});
   }
   Future<void> _load() async {
     try {
@@ -649,6 +665,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         );
       }else{
         canvas=InteractiveViewer(
+          transformationController:_transformController,
           minScale:1,maxScale:6,panEnabled:true,
           scaleEnabled:true,child:canvas,
         );
