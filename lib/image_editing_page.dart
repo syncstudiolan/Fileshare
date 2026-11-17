@@ -740,17 +740,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     });
   }
 
-  Widget _menu()=>PopupMenuButton<String>(tooltip:'Image Editing menu',
-    icon:const Icon(Icons.more_vert),
-    onSelected:(value){
-      if(value=='history')Navigator.of(context).push(fadePage<void>(
-        const ImageEditingHistoryPage()));
-      if(value=='share')unawaited(_export('share'));
-    },itemBuilder:(_)=>const [
-      PopupMenuItem(value:'history',child:Text('Image History')),
-      PopupMenuItem(value:'share',child:Text('Share / Export')),
-    ]);
-
   String _toolTitle(String tool)=>switch(tool){
     'Background'=>'Background Removal',
     'Compress'=>'Compression',
