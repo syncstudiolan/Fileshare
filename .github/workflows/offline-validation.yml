@@ -4,13 +4,38 @@ on:
   # Android test build on the explicitly requested merge into main.
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  preview_validation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Generate Android runner for plugin analyzer
+        run: flutter create --project-name file_share --platforms=android .
+      - name: Verify ML Kit release rules
+        run: python3 tool/ensure_mlkit_proguard.py
+      - run: flutter pub get
+      - name: Analyze all Dart sources
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Run Toolbox UI and image processing regression tests
+        run: flutter test
   android:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
