@@ -2566,7 +2566,7 @@ class FeatureDesignPage extends StatelessWidget {
         const DesignTag('Upload button disabled until complete'),
         const SizedBox(height: 16),
         _line(c, Icons.shield_outlined, 'Per-guest quota',
-          '200 MB and up to 4 upload sessions per rolling 24 hours'),
+          '200 MB and up to 4 upload sessions per IST day'),
       ]),
     ),
   ]);
@@ -3058,7 +3058,7 @@ class _MyQrPageState extends State<MyQrPage> {
             ])),
             const SizedBox(height:14),
             DesignPanel(child:Text(
-              'Guest limit: 200 MB total and 4 upload sessions per rolling 24 hours. '
+              'Guest limit: 200 MB total and 4 upload sessions per IST day. '
               'Every guest has a separate browser-based quota. All temporary QR '
               'files expire at 12:00 AM IST.',
               style:TextStyle(fontSize:12,height:1.5,
