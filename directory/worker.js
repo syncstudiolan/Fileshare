@@ -160,8 +160,10 @@ export default {
       const origin=request.headers.get('origin');
       if(origin && origin!==url.origin &&
          origin!==env.ALLOWED_ORIGIN) return fail('Origin blocked',403);
-      if(url.pathname==='/health' && request.method==='GET')
-        return json({ok:true,service:'fileshare-directory'});
+      if(url.pathname==='/health' && request.method==='GET') {
+        await env.DB.prepare('SELECT 1').first();
+        return json({ok:true,service:'fileshare-directory',database:true});
+      }
       if(request.method!=='POST')return fail('Not found',404);
       if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')
         return fail('JSON required',415);
