@@ -179,47 +179,68 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     await _saveDraft();
   }
 
+  /// Prefer ML Kit for portraits. If the installed Android ML Kit/R8 stack
+  /// throws (as on the reported release device), run a verified portable
+  /// ONNX model instead of surfacing a raw Java stack trace.
   Future<void> _removeBackground() async {
     final data=_bytes;
     if(data==null||_busy)return;
     setState(()=>_busy=true);
     try{
-      Uint8List mask;
-      int width,height;
+      late Uint8List mask;
+      late int width,height;
+      var engine='U²-NetP AI';
       if(Platform.isAndroid){
-        final dir=await getTemporaryDirectory();
-        final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
-        await temporary.writeAsBytes(data);
-        final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
-        try {
-          final result=await segmenter.processImage(InputImage.fromFilePath(temporary.path));
-          if(result==null)throw StateError('ML Kit did not detect a foreground subject');
-          width=result.width;height=result.height;
-          mask=Uint8List.fromList(result.confidences.map(
-            (v)=>(v.clamp(0.0,1.0)*255).round()).toList());
-        }finally{
-          await segmenter.close();
-          if(await temporary.exists())await temporary.delete();
+        try{
+          final dir=await getTemporaryDirectory();
+          final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
+          await temporary.writeAsBytes(data,flush:true);
+          final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
+          try{
+            final result=await segmenter.processImage(
+              InputImage.fromFilePath(temporary.path));
+            if(result==null || result.width<=0 || result.height<=0 ||
+               result.confidences.length!=result.width*result.height){
+              throw const FormatException('ML Kit subject mask is invalid');
+            }
+            width=result.width;height=result.height;
+            mask=Uint8List.fromList(result.confidences.map(
+              (confidence)=>(confidence.clamp(0.0,1.0)*255).round()).toList());
+            engine='Google ML Kit';
+          }finally{
+            await segmenter.close();
+            if(await temporary.exists())await temporary.delete();
+          }
+        }catch(_){
+          // A failed Android platform call is not a user-facing crash.
+          // The model is downloaded once, hash-verified, then used offline.
+          width=WindowsBackgroundAi.modelSize;
+          height=WindowsBackgroundAi.modelSize;
+          mask=await WindowsBackgroundAi.segmentationMask(data);
         }
       }else if(Platform.isWindows){
-        // Portable U²-NetP runs locally on Windows after one verified model
-        // download. No Cloudflare requests or hosted photo processing.
         width=WindowsBackgroundAi.modelSize;
         height=WindowsBackgroundAi.modelSize;
         mask=await WindowsBackgroundAi.segmentationMask(data);
       }else{
         final dimensions=await ImageEditingEngine.dimensions(data);
         width=dimensions[0];height=dimensions[1];
-        mask=await ImageEditingEngine.simpleBackgroundMask(data,tolerance:_tolerance);
+        mask=await ImageEditingEngine.simpleBackgroundMask(
+          data,tolerance:_tolerance);
+        engine='Plain background remover';
       }
-      final result=await ImageEditingEngine.edit(data,'background',{
+      final edited=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':width,'maskHeight':height,
       });
-      await _commit(data,result,Platform.isAndroid
-        ?'Google ML Kit background removal':'U2NetP background removal');
-      _format='PNG';
-    }catch(e){_message('Background removal failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+      await _commit(data,edited,'Background removal — $engine');
+      if(mounted)setState(()=>_format='PNG');
+      _message('Background removed with $engine');
+    }catch(_){
+      _message('AI background removal could not finish. Check internet for '
+        'the first AI model download, or try Remove Plain Background.');
+    }finally{
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _removePlainBackground()async{
