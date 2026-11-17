@@ -33,7 +33,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   String _tool='Background';
   String _format='PNG';
   String? _draftId;
-  late String _name=widget.sourceName??widget.draft?.name??'edited-image.png';
+  late String _name;
   final List<Uint8List> _undo=[], _redo=[];
   final List<String> _steps=[];
   double _ratio=1, _brightness=1, _contrast=1,_saturation=1,_exposure=0;
@@ -50,7 +50,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     Color(0xFF1E88E5),Color(0xFF43A047),Color(0xFFFFEB3B)];
 
   @override
-  void initState(){super.initState();unawaited(_load());}
+  void initState(){
+    super.initState();
+    _name=widget.sourceName??widget.draft?.name??'edited-image.png';
+    unawaited(_load());
+  }
   Future<void> _load() async {
     try {
       await ImageEditingHistory.instance.load();
