@@ -151,24 +151,27 @@ class PersonalCloud extends ChangeNotifier {
     await refreshFiles();
   }
 
-  /// Verified central-directory login: the second device needs only
-  /// email and password, not a manually supplied Worker URL.
+  /// Direct personal Worker login: Directory resolves ONLY the Worker URL.
+  /// The password never passes through Central Directory or its D1.
   Future<void> loginByEmail(String email,String password) async {
-    final login=await AccountDirectory.instance.signIn(email,password);
-    if(login.email!=email.trim().toLowerCase()){
-      throw StateError('Account directory returned a different email');
+    final normalized=email.trim().toLowerCase();
+    final workerUrl=await AccountDirectory.instance.resolveWorker(normalized);
+    final host=_validWorker(workerUrl);
+    final data=await _request(host,'','POST','/v1/auth/login',{
+      'email':normalized,'password':password,
+    });
+    if(data['email']!=normalized) {
+      throw StateError('Personal cloud returned a different account email');
     }
-    final host=_validWorker(login.workerUrl);
-    // Never trust a directory response alone: verify the personal Worker's
-    // signed session against the user's own Worker before saving it.
-    final proof=await _request(host,login.session,'GET','/v1/auth/me');
-    if(proof['email']!=login.email){
+    final token=data['session'];
+    if(token is! String || token.isEmpty) {
+      throw const FormatException('Missing personal cloud login session');
+    }
+    final proof=await _request(host,token,'GET','/v1/auth/me');
+    if(proof['email']!=normalized) {
       throw StateError('Personal cloud did not verify this account');
     }
-    await _acceptLogin({
-      'session':login.session,'email':login.email,
-      'expiresAt':login.expiresAt,
-    },host);
+    await _acceptLogin(data,host);
     await refreshFiles();
   }
 
