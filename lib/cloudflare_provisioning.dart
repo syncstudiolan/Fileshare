@@ -39,13 +39,17 @@ class CloudflareProvisioner extends ChangeNotifier {
       case 'GET':
         response=await _client.get(uri,headers:headers)
           .timeout(const Duration(seconds:25));
+        break;
       case 'POST':
         response=await _client.post(uri,headers:headers,body:jsonEncode(body))
           .timeout(const Duration(seconds:45));
+        break;
       case 'PUT':
         response=await _client.put(uri,headers:headers,body:jsonEncode(body))
           .timeout(const Duration(seconds:45));
-      default:throw ArgumentError('Unsupported Cloudflare operation');
+        break;
+      default:
+        throw ArgumentError('Unsupported Cloudflare operation');
     }
     dynamic data;
     try{data=jsonDecode(response.body);}catch(_){data=null;}
@@ -136,8 +140,12 @@ class CloudflareProvisioner extends ChangeNotifier {
       _progress('Configuring D1 schema and account tables');
       final sql=(await rootBundle.loadString('cloudflare/schema.sql'))
         .replaceFirst('PRAGMA foreign_keys = ON;', '');
-      await _call(token,'POST','/accounts/$id/d1/database/$dbId/query',
-        {'sql':sql});
+      final schemaResult=await _call(token,'POST',
+        '/accounts/$id/d1/database/$dbId/query',{'sql':sql});
+      if(schemaResult is List && schemaResult.any(
+        (entry)=>entry is Map && entry['success']==false)){
+        throw StateError('D1 rejected one or more schema statements');
+      }
 
       final domainData=await _call(token,'GET','/accounts/$id/workers/subdomain');
       final domain=domainData is Map?domainData['subdomain']:null;
