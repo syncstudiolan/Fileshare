@@ -1,9 +1,61 @@
+import 'dart:io';
+
 import 'package:file_share/main.dart';
 import 'package:file_share/lan_engine.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Real TCP LAN transfer delivers bytes and receives exactly one event',
+      () async {
+    final root = await Directory.systemTemp.createTemp('file_share_tcp_test_');
+    final senderDir = Directory(root.path + Platform.pathSeparator + 'sender');
+    final receiverDir = Directory(root.path + Platform.pathSeparator + 'receiver');
+    await senderDir.create();
+    await receiverDir.create();
+    const port = 51248;
+    final receiver = LanEngine(
+      tcpPort: port, discoveryPort: 51249,
+      testSupportDirectory: receiverDir, testDeviceId: 'receiver-1');
+    final sender = LanEngine(
+      tcpPort: 51250, discoveryPort: 51251,
+      testSupportDirectory: senderDir, testDeviceId: 'sender-1');
+    var notices = 0;
+    receiver.onReceived = (file) async {
+      expect(file.incoming, isTrue);
+      expect(file.state, TransferState.delivered);
+      notices++;
+    };
+    try {
+      await receiver.start();
+      await sender.start();
+      final source = File(root.path + Platform.pathSeparator + 'hello.txt');
+      const message = 'actual socket transfer without UI';
+      await source.writeAsString(message);
+      // No visible peer -> Send still enters the durable Pending Queue.
+      await sender.enqueue([source], names: ['hello.txt']);
+      expect(sender.queuedBatches.length, 1);
+      expect(receiver.files, isEmpty);
+      // Discovery later: the engine auto-delivers the pending batch.
+      sender.peers['receiver-1'] =
+          LanPeer('receiver-1', 'Android receiver', '127.0.0.1', port, DateTime.now());
+      for (var i = 0; i < 40 && receiver.files.where((f) =>
+          f.state == TransferState.delivered).isEmpty; i++) {
+        sender.refresh();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      final incoming = receiver.files.where((f) =>
+          f.state == TransferState.delivered).toList();
+      expect(incoming, hasLength(1));
+      expect(await File(incoming.single.path).readAsString(), message);
+      expect(notices, 1);
+    } finally {
+      await sender.stop();
+      await receiver.stop();
+      await root.delete(recursive: true);
+    }
+  });
+
   test('LAN file names cannot contain path separators', () {
     expect(LanEngine.safeFileName('../unsafe\\name.png'),
         '.._unsafe_name.png');
