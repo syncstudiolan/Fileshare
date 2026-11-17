@@ -2206,6 +2206,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 ])),
             Expanded(child: groups.isNotEmpty
               ? ListView.builder(
+                  // Newest message stays at the bottom, like a chat.
+                  reverse: true,
                   padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
                   itemCount: groups.length,
                   itemBuilder: (_, i) => groups[i].lan != null
