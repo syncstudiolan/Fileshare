@@ -486,6 +486,8 @@ class LanEngine extends ChangeNotifier {
       if (!ok) throw const SocketException('Receiver did not acknowledge file');
       record.state = TransferState.delivered;
       record.done = record.size;
+      record.error = null;
+      if (error?.startsWith('Send failed:') == true) error = null;
     } catch (e) {
       record.state = TransferState.failed;
       record.error = e.toString();
