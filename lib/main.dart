@@ -733,9 +733,7 @@ class _LoginPageState extends State<LoginPage> {
   final _email=TextEditingController();
   final _password=TextEditingController();
   final _workerUrl=TextEditingController();
-  final _emailCode=TextEditingController();
   bool _register=false,_hidden=true,_busy=false;
-  bool _awaitingEmailVerification=false;
   bool _personalAccountRegistered=false;
   bool _manualWorkerLogin=false;
   String? _error;
@@ -749,7 +747,6 @@ class _LoginPageState extends State<LoginPage> {
   }
   @override void dispose(){
     _email.dispose();_password.dispose();_workerUrl.dispose();
-    _emailCode.dispose();
     super.dispose();
   }
   Future<void> _enterDashboard()async{
@@ -757,33 +754,6 @@ class _LoginPageState extends State<LoginPage> {
     if(!mounted)return;
     Navigator.of(context).pushAndRemoveUntil(fadePage(
       DashboardPage(mode:widget.mode,onMode:widget.onMode)),(_)=>false);
-  }
-
-  Future<void> _requestEmailVerification() async {
-    final cloud=PersonalCloud.instance;
-    if(!AccountDirectory.instance.enabled){
-      throw StateError('Email-only login requires the File Share directory '
-        'to be configured by the app publisher');
-    }
-    await cloud.requestEmailLink();
-    if(mounted)setState(()=>_awaitingEmailVerification=true);
-  }
-
-  Future<void> _confirmEmail() async {
-    if(_busy)return;
-    if(!RegExp(r'^[0-9]{8}$').hasMatch(_emailCode.text.trim())){
-      setState(()=>_error='Enter the 8-digit code sent to your email');
-      return;
-    }
-    setState((){_busy=true;_error=null;});
-    try {
-      await PersonalCloud.instance.verifyEmailLink(_emailCode.text);
-      await _enterDashboard();
-    }catch(e){
-      if(mounted)setState(()=>_error=e.toString());
-    }finally{
-      if(mounted)setState(()=>_busy=false);
-    }
   }
 
   Future<void> _submit()async{
@@ -797,9 +767,8 @@ class _LoginPageState extends State<LoginPage> {
           await cloud.registerAccount(_email.text,_password.text);
           _personalAccountRegistered=true;
         }
-        if(directory.enabled){
-          await _requestEmailVerification();
-          return;
+        if(directory.enabled) {
+          await cloud.linkAccountDirectory();
         }
       }else if(directory.enabled && !_manualWorkerLogin){
         // Second device: only email/password. Locate Worker automatically.
@@ -807,9 +776,8 @@ class _LoginPageState extends State<LoginPage> {
       }else{
         // Existing installations can migrate their personal Worker once.
         await cloud.loginAccount(_workerUrl.text,_email.text,_password.text);
-        if(directory.enabled && _manualWorkerLogin){
-          await _requestEmailVerification();
-          return;
+        if(directory.enabled && _manualWorkerLogin) {
+          await cloud.linkAccountDirectory();
         }
       }
       await _enterDashboard();
@@ -821,7 +789,10 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _linkExistingAccount()async{
     if(_busy)return;
     setState((){_busy=true;_error=null;});
-    try{await _requestEmailVerification();}
+    try{await PersonalCloud.instance.linkAccountDirectory();
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content:Text('Account linked to your personal Cloudflare Worker')));
+    }
     catch(e){if(mounted)setState(()=>_error=e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
   }
@@ -856,40 +827,18 @@ class _LoginPageState extends State<LoginPage> {
             padding:const EdgeInsets.all(24),children:[
               const Center(child:AppLogo(size:68)),
               const SizedBox(height:22),
-              Text(_awaitingEmailVerification?'Verify your email':
-                (_register?'Create your account':'Welcome back'),
+              Text(_register?'Create your account':'Welcome back',
                 textAlign:TextAlign.center,style:TextStyle(
                   fontSize:28,fontWeight:FontWeight.w800,
                   color:FileTheme.foreground(context))),
               const SizedBox(height:9),
-              Text(_awaitingEmailVerification
-                ? 'We sent an 8-digit one-time code to your email. '
-                  'Confirm it to enable automatic cloud recovery on every device.'
-                : 'Sign in with email and password on any device. '
-                  'File Share finds your personal Cloudflare Worker automatically.',
+              Text('Use email and password on your linked devices. '
+                'Your first personal cloud is bound to this account; '
+                'email ownership is not verified.',
                 textAlign:TextAlign.center,
                 style:TextStyle(color:FileTheme.muted(context),height:1.4)),
               const SizedBox(height:24),
-              if(_awaitingEmailVerification)...[
-                Text('Email: ',style:TextStyle(
-                  color:FileTheme.foreground(context))),
-                Text(PersonalCloud.instance.accountEmail??_email.text,
-                  textAlign:TextAlign.center),
-                const SizedBox(height:16),
-                TextField(controller:_emailCode,keyboardType:TextInputType.number,
-                  maxLength:8,enabled:!_busy,
-                  decoration:const InputDecoration(
-                    labelText:'8-digit email verification code',
-                    prefixIcon:Icon(Icons.mark_email_read_outlined))),
-                if(_error!=null)Text(_error!,
-                  style:const TextStyle(color:Colors.deepOrange)),
-                const SizedBox(height:9),
-                FilledButton(
-                  onPressed:_busy?null:_confirmEmail,
-                  child:Text(_busy?'Checking…':'Verify and finish setup')),
-                TextButton(onPressed:_busy?null:_linkExistingAccount,
-                  child:const Text('Resend verification email')),
-              ]else Form(key:_key,child:Column(children:[
+              Form(key:_key,child:Column(children:[
                 if((!AccountDirectory.instance.enabled || _manualWorkerLogin) && !_register)...[
                   TextFormField(
                     controller:_workerUrl,enabled:!_register&&!_busy,
@@ -943,7 +892,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height:8),
                   OutlinedButton(
                     onPressed:_busy?null:_enterDashboard,
-                    child:const Text('Continue on this device (email-only login pending)')),
+                    child:const Text('Continue on this device (directory linking pending)')),
                   const SizedBox(height:8),
                 ],
                 SizedBox(height:52,width:double.infinity,
@@ -972,13 +921,14 @@ class _LoginPageState extends State<LoginPage> {
                    PersonalCloud.instance.signedIn && !_register)
                   TextButton.icon(
                     onPressed:_busy?null:_linkExistingAccount,
-                    icon:const Icon(Icons.mark_email_read_outlined),
-                    label:const Text('Enable email-only login for this account')),
+                    icon:const Icon(Icons.link_rounded),
+                    label:const Text('Link this account to its personal cloud')),
               ])),
               const SizedBox(height:15),
               Text(AccountDirectory.instance.enabled
-                ? 'After email verification is activated and your account is linked, '
-                  'Android and Windows can sign in using email and password.'
+                ? 'Once this account is linked to its first personal cloud, '
+                  'Android and Windows can sign in with email and password. '
+                  'The email address itself is not verified.'
                 : 'Email-only sign-in needs the official File Share directory '
                   'deployment. Until configured, use your Worker URL too.',
                 textAlign:TextAlign.center,
