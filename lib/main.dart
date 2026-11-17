@@ -11,6 +11,8 @@ import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
+import 'image_editing_page.dart';
+import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
 import 'account_directory.dart';
@@ -1322,51 +1324,48 @@ class FullScreenFilePreview extends StatelessWidget {
   );
 }
 
-/// The selected file is handed to Toolbox. Editing engines are a later phase.
+/// Route image files from Received/Sent/QR directly to the real editor.
 class SelectedFileToolsPage extends StatelessWidget {
-  const SelectedFileToolsPage({super.key, required this.file});
+  const SelectedFileToolsPage({super.key,required this.file});
   final LanFile file;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Open in Tools')),
-    body: Container(
-      decoration: BoxDecoration(gradient: FileTheme.background(context)),
-      child: Center(child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 580),
-        child: ListView(shrinkWrap: true, padding: const EdgeInsets.all(22),
-          children: [
-            DesignPanel(child: Row(children: [
-              const Icon(Icons.auto_fix_high_rounded,
-                color: FileTheme.pink, size: 38),
-              const SizedBox(width: 14),
-              Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontWeight: FontWeight.w800,
-                      color: FileTheme.foreground(context))),
-                  Text(_formatBytes(file.size),
-                    style: TextStyle(color: FileTheme.muted(context))),
-                ],
-              )),
+  bool get isImage {
+    final name=file.name.toLowerCase();
+    return ['.jpg','.jpeg','.png','.webp','.gif','.bmp']
+      .any(name.endsWith);
+  }
+  @override Widget build(BuildContext context)=>Scaffold(
+    appBar:AppBar(title:const Text('Toolbox')),
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:Center(child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:550),
+        child:ListView(shrinkWrap:true,padding:const EdgeInsets.all(22),
+          children:[
+            DesignPanel(child:Column(children:[
+              const Icon(Icons.photo_filter_outlined,color:FileTheme.violet,
+                size:46),
+              const SizedBox(height:12),
+              Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis),
+              const SizedBox(height:10),
+              Text(isImage?'Edit the selected photo using Image Editing':
+                'Image Editing supports images only.',
+                textAlign:TextAlign.center),
+              const SizedBox(height:16),
+              FilledButton.icon(
+                onPressed:isImage && File(file.path).existsSync()
+                  ?()=>Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder:(_)=>ImageEditingPage(
+                      sourcePath:file.path,sourceName:file.name))):null,
+                icon:const Icon(Icons.auto_fix_high_rounded),
+                label:const Text('Image Editing')),
+              const SizedBox(height:9),
+              OutlinedButton.icon(
+                onPressed:File(file.path).existsSync()
+                  ?()=>OpenFilex.open(file.path):null,
+                icon:const Icon(Icons.open_in_new_rounded),
+                label:const Text('Open with another app')),
             ])),
-            const SizedBox(height: 16),
-            Text('File selected for Toolbox', textAlign: TextAlign.center,
-              style: TextStyle(color: FileTheme.foreground(context),
-                fontSize: 17, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text('This file is ready for Toolbox. Photo and document '
-              'editing engines will be added in the Toolbox phase.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: FileTheme.muted(context))),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: File(file.path).existsSync()
-                ? () => OpenFilex.open(file.path) : null,
-              icon: const Icon(Icons.open_in_new_rounded),
-              label: const Text('Open with another app')),
-          ],
-        ),
+          ]),
       )),
     ),
   );
@@ -1788,6 +1787,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
+    ImageEditingCart.instance.addListener(_importEditedCart);
+    _importEditedCart();
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) async {
         if (Platform.isAndroid) {
@@ -1811,6 +1812,25 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   void _changed() { if (mounted) setState(() {}); }
 
+  Future<void> _importEditedCart() async {
+    if(!mounted)return;
+    final added=ImageEditingCart.instance.takeAll();
+    if(added.isEmpty)return;
+    final sources=<File>[],names=<String>[],sizes=<int>[];
+    for(final item in added){
+      if(!await item.file.exists())continue;
+      sources.add(item.file);
+      names.add(item.name);
+      sizes.add(await item.file.length());
+    }
+    if(sources.isEmpty||!mounted)return;
+    setState((){
+      _showSamples=false;
+      _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
+    });
+    _snack('Edited image is ready in File Share Cart. Tap Send to transfer.');
+  }
+
   @override
   void dispose() {
     _midnight?.cancel();
@@ -1819,6 +1839,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
+    ImageEditingCart.instance.removeListener(_importEditedCart);
     super.dispose();
   }
 
@@ -1840,6 +1861,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       screen = FileCategoriesPage(mode: widget.mode, onMode: widget.onMode);
     } else if (title == 'Login') {
       screen = LoginPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Image Editing') {
+      screen = const ImageEditingLauncherPage();
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
@@ -1884,6 +1907,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       const Divider(height: 12),
       _nav('Home', Icons.home_outlined, pinned: pinned),
       _nav('Files', Icons.folder_outlined, pinned: pinned),
+      _nav('Image Editing', Icons.photo_filter_outlined, pinned: pinned),
       _nav('Devices', Icons.devices_rounded, pinned: pinned),
       _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
       _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
@@ -2320,10 +2344,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     tooltip: 'Choose files',
                     onPressed: _choosing ? null : _choose,
                     icon: const Icon(Icons.add_rounded)),
-                  const IconButton(
-                    tooltip: 'Tools coming later',
-                    onPressed: null,
-                    icon: Icon(Icons.handyman_outlined)),
+                  IconButton(
+                    tooltip: 'Image Editing',
+                    onPressed:()=>_navigate('Image Editing'),
+                    icon:const Icon(Icons.handyman_outlined)),
                   Expanded(child: Text(_staged.isEmpty
                       ? 'Choose files to send...'
                       : _staged.length.toString() + ' selection(s)',
