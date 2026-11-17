@@ -24,6 +24,8 @@ jobs:
           channel: stable
       - name: Generate missing Android runner
         run: flutter create --project-name file_share --platforms=android .
+      - name: Configure Android release ML Kit keep rules
+        run: python3 tool/ensure_mlkit_proguard.py
       - name: Install packages
         run: flutter pub get
       - name: Flutter analyzer
