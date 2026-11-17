@@ -71,6 +71,8 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   Future<void> initialize() async {
     if (!Platform.isWindows) return;
     await windowManager.ensureInitialized();
+    // Maximize the normal Windows window; do not hide the system taskbar.
+    await windowManager.maximize();
     final icon = await _writeTrayIcon();
     await desktop_tray.trayManager.setIcon(icon.path);
     await desktop_tray.trayManager.setToolTip('File Share — LAN receiver');
@@ -1484,6 +1486,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _choosing = false;
   bool _showSamples = true;
   bool _refreshing = false;
+  bool _desktopSidebarVisible = true;
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
 
@@ -1566,42 +1569,70 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     Navigator.of(context).push(fadePage(screen));
   }
 
-  Widget _nav(String label, IconData icon, {bool enabled = true}) => ListTile(
+  Widget _nav(String label, IconData icon, {bool enabled = true,
+    bool pinned = false}) => ListTile(
     leading: Icon(icon, color: FileTheme.violet),
     title: Text(label),
     enabled: enabled,
     trailing: enabled ? const Icon(Icons.chevron_right_rounded)
       : const DesignTag('Later'),
     onTap: enabled ? () {
-      Navigator.pop(context);
-      _navigate(label);
+      if (!pinned) Navigator.pop(context);
+      if (label != 'Home') _navigate(label);
     } : null,
+  );
+
+  Widget _navContents({required bool pinned}) => SafeArea(
+    child: ListView(children: [
+      Padding(padding: const EdgeInsets.all(20),
+        child: Row(children: [
+          const AppLogo(),
+          const SizedBox(width: 12),
+          Expanded(child: Text('File Share', style: TextStyle(
+            fontWeight: FontWeight.w800, fontSize: 20,
+            color: FileTheme.foreground(context)))),
+          if (pinned) IconButton(
+            tooltip: 'Hide sidebar',
+            onPressed: () => setState(() => _desktopSidebarVisible = false),
+            icon: const Icon(Icons.menu_open_rounded, color: FileTheme.violet)),
+        ])),
+      const Divider(height: 12),
+      _nav('Home', Icons.home_outlined, pinned: pinned),
+      _nav('Files', Icons.folder_outlined, pinned: pinned),
+      _nav('Devices', Icons.devices_rounded, pinned: pinned),
+      _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
+      _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
+      _nav('Settings', Icons.settings_outlined, pinned: pinned),
+      _nav('Profile', Icons.person_outline_rounded, pinned: pinned),
+      AnimatedBuilder(
+        animation: PersonalCloud.instance,
+        builder: (_, __) => PersonalCloud.instance.connected
+          ? ListTile(
+              leading: const Icon(Icons.logout_rounded, color: FileTheme.violet),
+              title: const Text('Logout'),
+              onTap: () async {
+                if (!pinned) Navigator.pop(context);
+                await PersonalCloud.instance.signOutLocal();
+                _snack('Cloud signed out. Offline LAN stays available.');
+              })
+          : _nav('Login', Icons.login_rounded, pinned: pinned),
+      ),
+    ]),
   );
 
   Widget _drawer() => Drawer(
     backgroundColor: FileTheme.surface(context),
-    child: SafeArea(child: ListView(children: [
-      const Padding(padding: EdgeInsets.all(20),
-        child: Row(children: [AppLogo(), SizedBox(width: 15),
-          Expanded(child: Text('File Share',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 21)))])),
-      const Divider(),
-      _nav('Home', Icons.home_outlined),
-      _nav('Files', Icons.folder_outlined),
-      _nav('Devices', Icons.devices_rounded),
-      _nav('My QR', Icons.qr_code_2_rounded),
-      _nav('Cloud Setup', Icons.cloud_outlined),
-      _nav('Settings', Icons.settings_outlined),
-      _nav('Profile', Icons.person_outline_rounded),
-      PersonalCloud.instance.connected
-        ? ListTile(leading:const Icon(Icons.logout_rounded,color:FileTheme.violet),
-            title:const Text('Logout'),onTap:() async {
-              Navigator.pop(context);
-              await PersonalCloud.instance.signOutLocal();
-              _snack('Signed out of cloud. Offline LAN remains available.');
-            })
-        : _nav('Login', Icons.login_rounded),
-    ])),
+    child: _navContents(pinned: false),
+  );
+
+  Widget _desktopSidebar() => Container(
+    width: 248,
+    decoration: BoxDecoration(
+      color: FileTheme.surface(context).withValues(alpha: .93),
+      border: Border(right: BorderSide(
+        color: FileTheme.violet.withValues(alpha: .13))),
+    ),
+    child: _navContents(pinned: true),
   );
 
 
@@ -1848,6 +1879,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
+    final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
     final groups = _timeline();
     final useDemo = _showSamples && groups.isEmpty && _staged.isEmpty;
     final samples = mockTransfers.where((f) =>
@@ -1858,18 +1890,26 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       drawer: _drawer(),
       body: Container(
         decoration: BoxDecoration(gradient: FileTheme.background(context)),
-        child: SafeArea(child: Center(child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(children: [
+        child: SafeArea(child: Row(children: [
+          if (desktop && _desktopSidebarVisible) _desktopSidebar(),
+          Expanded(child: Column(children: [
             Padding(
               padding: EdgeInsets.fromLTRB(wide ? 24 : 10, 10,
                 wide ? 24 : 10, 5),
               child: DesignPanel(
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 5),
                 child: Row(children: [
-                  IconButton(tooltip: 'Open navigation',
-                    onPressed: () => _scaffold.currentState?.openDrawer(),
-                    icon: const Icon(Icons.menu_rounded, color: FileTheme.violet)),
+                  IconButton(
+                    tooltip: desktop
+                      ? (_desktopSidebarVisible ? 'Hide sidebar' : 'Show sidebar')
+                      : 'Open navigation',
+                    onPressed: desktop
+                      ? () => setState(() =>
+                          _desktopSidebarVisible = !_desktopSidebarVisible)
+                      : () => _scaffold.currentState?.openDrawer(),
+                    icon: Icon(desktop && _desktopSidebarVisible
+                      ? Icons.menu_open_rounded : Icons.menu_rounded,
+                      color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('File Transfer', style: TextStyle(fontSize: wide ? 21 : 17,
@@ -1978,7 +2018,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
             ),
           ]),
-        ))),
+          ),
+        ])),
       ),
     ));
   }
