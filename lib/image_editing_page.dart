@@ -116,7 +116,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     final next=source.removeLast();
     (undo?_redo:_undo).add(current);
     if(_steps.isNotEmpty && undo)_steps.removeLast();
-    setState(()=>_bytes=next);
+    final size=await ImageEditingEngine.dimensions(next);
+    if(!mounted)return;
+    setState((){
+      _bytes=next;
+      _ratio=size[0]/size[1];
+      _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+    });
     await _saveDraft();
   }
 
