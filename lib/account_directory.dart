@@ -79,15 +79,20 @@ class AccountDirectory {
     });
   }
 
-  /// Find the first linked personal Worker; no password is sent to this service.
+  /// Resolve the owner's first-linked Worker. No password enters Central D1.
   Future<String> resolveWorker(String email) async {
     final normalized=email.trim().toLowerCase();
     final data=await _post('/v1/directory/resolve',{'email':normalized});
     final worker=data['workerUrl'], linkedEmail=data['email'];
     if(worker is! String || linkedEmail!=normalized ||
-       !RegExp(r'^https://[a-z0-9-]+\\.[a-z0-9-]+\\.workers\\.dev It is NOT
-  /// saved in central D1 or local preferences. On success, the directory
-  /// proxies login to the user's private Worker.
+       !RegExp(r'^https://[a-z0-9-]+\\.[a-z0-9-]+\\.workers\\.dev\$').hasMatch(worker)) {
+      throw const FormatException('Directory returned an invalid personal cloud');
+    }
+    return worker;
+  }
+
+  /// Legacy login for APKs that have not upgraded to direct Worker login.
+  /// New clients must use resolveWorker and authenticate directly.
   Future<DirectoryLogin> signIn(String email,String password)async{
     final response=await _post('/v1/directory/login',{
       'email':email.trim().toLowerCase(),
