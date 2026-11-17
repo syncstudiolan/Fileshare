@@ -1744,23 +1744,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
-  Timer? _cloudInboxTimer;
   bool _dashboardForeground=true;
 
-  void _syncCloudInbox() {
+  void _resumeCloudInbox() {
     if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
     final cloud=PersonalCloud.instance;
-    if(cloud.signedIn && !cloud.loading){
-      unawaited(cloud.refreshFiles());
+    if(cloud.signedIn){
+      cloud.startLiveInbox();
+      // Fetch once when opening/resuming to recover missed offline events.
+      if(!cloud.loading)unawaited(cloud.refreshFiles());
     }
-  }
-
-  void _startCloudInboxSync() {
-    _cloudInboxTimer?.cancel();
-    _syncCloudInbox();
-    // Foreground-only metadata polling: no R2 file fetch until preview.
-    _cloudInboxTimer=Timer.periodic(const Duration(seconds:15),
-      (_)=>_syncCloudInbox());
   }
 
   void _armMidnight() {
@@ -1777,13 +1770,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if(state==AppLifecycleState.resumed){
       _dashboardForeground=true;
-      _syncCloudInbox();
+      _resumeCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
     }else if(state==AppLifecycleState.paused ||
              state==AppLifecycleState.inactive ||
              state==AppLifecycleState.detached){
       _dashboardForeground=false;
+      PersonalCloud.instance.stopLiveInbox();
     }
   }
 
@@ -1794,7 +1788,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
-    if(widget.enableBackends)_startCloudInboxSync();
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) async {
         if (Platform.isAndroid) {
@@ -1809,7 +1802,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
       PersonalCloud.instance.restore().then((_) async {
         await PersonalCloud.instance.cleanupLocalCache();
-        _syncCloudInbox();
+        _resumeCloudInbox();
       }).catchError((Object e) {
           _snack('Personal cloud storage unavailable: ' + e.toString());
         });
@@ -1821,7 +1814,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
-    _cloudInboxTimer?.cancel();
+    PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
