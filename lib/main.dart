@@ -1728,6 +1728,24 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
+  Timer? _cloudInboxTimer;
+  bool _dashboardForeground=true;
+
+  void _syncCloudInbox() {
+    if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
+    final cloud=PersonalCloud.instance;
+    if(cloud.signedIn && !cloud.loading){
+      unawaited(cloud.refreshFiles());
+    }
+  }
+
+  void _startCloudInboxSync() {
+    _cloudInboxTimer?.cancel();
+    _syncCloudInbox();
+    // Foreground-only metadata polling: no R2 file fetch until preview.
+    _cloudInboxTimer=Timer.periodic(const Duration(seconds:15),
+      (_)=>_syncCloudInbox());
+  }
 
   void _armMidnight() {
     _midnight?.cancel();
@@ -1742,8 +1760,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if(state==AppLifecycleState.resumed){
+      _dashboardForeground=true;
+      _syncCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
+    }else if(state==AppLifecycleState.paused ||
+             state==AppLifecycleState.inactive ||
+             state==AppLifecycleState.detached){
+      _dashboardForeground=false;
     }
   }
 
@@ -1754,6 +1778,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
+    if(widget.enableBackends)_startCloudInboxSync();
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) async {
         if (Platform.isAndroid) {
@@ -1778,6 +1803,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
+    _cloudInboxTimer?.cancel();
     _sidebarVisibleNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
