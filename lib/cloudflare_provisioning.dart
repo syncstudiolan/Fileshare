@@ -21,7 +21,7 @@ class CloudflareProvisioner extends ChangeNotifier {
   String status='Ready to connect';
   bool busy=false;
   void _progress(String value){status=value;notifyListeners();}
-  Uri _api(String path)=>Uri.https('api.cloudflare.com','/client/v4$path');
+  Uri _api(String path)=>Uri.parse('https://api.cloudflare.com/client/v4$path');
 
   static String _secret(){
     final rng=Random.secure();
