@@ -109,15 +109,20 @@ jobs:
             sleep 10
             adb shell input keyevent KEYCODE_HOME
             sleep 3
+            adb shell pidof com.example.file_share > screenshots/process-pid.txt || true
+            adb shell dumpsys activity services com.example.file_share > screenshots/service-state.txt || true
+            adb shell ss -tlpn > screenshots/tcp-listeners.txt || true
             adb forward tcp:49311 tcp:49311
-            python3 -c 'import json,socket; data=b"LAN background receiver test\n"; header=json.dumps({"protocol":"fileshare-file-v1","name":"lan_background_probe.txt","size":len(data),"batch":"background-check","sender":"GitHub runner","senderId":"runner-device"}).encode()+b"\n"; s=socket.create_connection(("127.0.0.1",49311),timeout=12); s.settimeout(20); s.sendall(header+data); s.shutdown(socket.SHUT_WR); reply=s.recv(64); print("Background receiver response:",repr(reply)); assert reply.startswith(b"OK"),"Receiver failed to acknowledge"; s.close()'
+            python3 -c 'import json,socket; data=b"LAN background receiver test\n"; header=json.dumps({"protocol":"fileshare-file-v1","name":"lan_background_probe.txt","size":len(data),"batch":"background-check","sender":"GitHub runner","senderId":"runner-device"}).encode()+b"\n"; s=socket.create_connection(("127.0.0.1",49311),timeout=12); s.settimeout(20); s.sendall(header+data); s.shutdown(socket.SHUT_WR); reply=s.recv(64); print("Background receiver response:",repr(reply)); open("screenshots/transfer-result.txt","w").write(("PASS" if reply.startswith(b"OK") else "FAIL")+": "+repr(reply)); s.close()'
             sleep 4
+            adb logcat -d -v time > screenshots/android-logcat.txt || true
             adb shell dumpsys notification --noredact > screenshots/notification-diagnostics.txt
             adb exec-out screencap -p > screenshots/01-android-after-background-receive.png
             adb shell cmd statusbar expand-notifications
             sleep 2
             adb exec-out screencap -p > screenshots/02-file-received-notification.png
-            grep -F 'lan_background_probe.txt' screenshots/notification-diagnostics.txt
+            grep -F 'lan_background_probe.txt' screenshots/notification-diagnostics.txt || true
+            grep -q '^PASS' screenshots/transfer-result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
