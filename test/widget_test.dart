@@ -49,6 +49,11 @@ void main() {
           f.state == TransferState.delivered).toList();
       expect(incoming, hasLength(1));
       expect(await File(incoming.single.path).readAsString(), message);
+      // Delivery is persisted before the ACK; the UI notification callback
+      // is deliberately asynchronous and may follow the persisted file.
+      for (var i = 0; i < 40 && notices == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       expect(notices, 1);
     } finally {
       await sender.stop();
@@ -185,7 +190,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Create your account'), findsOneWidget);
     expect(find.text('Create account'), findsOneWidget);
-    await tester.tap(find.text('Set up or connect personal Cloudflare'));
+    final cloudSetup = find.text('Set up or connect personal Cloudflare');
+    await tester.ensureVisible(cloudSetup);
+    await tester.pumpAndSettle();
+    await tester.tap(cloudSetup);
     await tester.pumpAndSettle();
     expect(find.text('One-time Cloudflare Auto Setup'), findsOneWidget);
     expect(find.text('Verify & Auto Connect'), findsOneWidget);
