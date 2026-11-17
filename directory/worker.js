@@ -1,8 +1,8 @@
 // File Share account directory. Hosted ONE TIME by the app operator, not
-// inside an individual user's Worker. Stores ONLY verified email -> Worker URL.
+// inside an individual user's Worker. Stores ONLY bound email -> Worker URL.
 // Passwords are never written to the directory database or logged. On login,
 // credentials are forwarded over HTTPS to the user's own Worker for verification.
-// Never deploy with placeholder secrets, unverified email, or open URL redirects.
+// Email ownership is not verified: prevent cloud rebinding and reject arbitrary URL redirects.
 const encoder = new TextEncoder();
 const json = (obj, status = 200) => Response.json(obj, {
   status,
@@ -45,20 +45,6 @@ function hexToBytes(hex) {
   if (!/^[a-f0-9]{64}$/.test(hex)) return null;
   return Uint8Array.from(hex.match(/../g), x => parseInt(x, 16));
 }
-async function otpKey(env) {
-  return crypto.subtle.importKey('raw', encoder.encode(env.DIRECTORY_OTP_SECRET),
-    {name: 'HMAC', hash: 'SHA-256'}, false, ['sign', 'verify']);
-}
-async function otpSignature(env, email, nonce, otp) {
-  const body = encoder.encode('fileshare.link.v1|' + email + '|' + nonce + '|' + otp);
-  return bytesToHex(await crypto.subtle.sign('HMAC', await otpKey(env), body));
-}
-async function verifyOtp(env, email, nonce, otp, digest) {
-  const expected = hexToBytes(digest);
-  if (!expected) return false;
-  const body = encoder.encode('fileshare.link.v1|' + email + '|' + nonce + '|' + otp);
-  return crypto.subtle.verify('HMAC', await otpKey(env), expected, body);
-}
 async function sha256(text) {
   return bytesToHex(await crypto.subtle.digest('SHA-256',encoder.encode(text)));
 }
@@ -96,84 +82,37 @@ async function verifyPersonalSession(worker, email, session) {
   } catch (_) { return false; }
 }
 
-async function sendEmail(env, email, otp) {
-  const result = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'authorization': 'Bearer ' + env.RESEND_API_KEY,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: env.EMAIL_FROM,
-      to: [email],
-      subject: 'Verify your File Share account',
-      text: 'Your File Share verification code is ' + otp +
-        '. It expires in 10 minutes. Do not share it.',
-    }),
-    signal: AbortSignal.timeout(12000),
-    redirect: 'error',
-  });
-  if (!result.ok) throw new Error('Email delivery provider refused request');
-}
-
+// No email delivery or OTP service. A verified personal Worker session is
+// required to link an address. This is account binding, NOT proof that the
+// mailbox belongs to that person. First successful binding is immutable.
 async function claim(request, env) {
-  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return fail('Email service not configured',503);
   const body = await readJson(request);
-  const email=normalizedEmail(body?.email);
-  const worker=personalWorker(body?.workerUrl);
+  const email = normalizedEmail(body?.email);
+  const worker = personalWorker(body?.workerUrl);
   if (!isEmail(email) || !worker) return fail('Invalid account details',400);
-  if (!await throttle(env,'claim',request,email,3,15*60*1000)) {
+  if (!await throttle(env,'claim',request,email,3,15*60*1000))
     return fail('Please retry later',429);
-  }
-  if (!await verifyPersonalSession(worker,email,body?.personalSession)) {
-    return fail('Personal Worker ownership proof required',403);
-  }
-  const existing = await env.DB.prepare(
-    'SELECT email FROM accounts WHERE email=?').bind(email).first();
-  if (existing) return fail('Account already linked; sign in instead',409);
-  const raw = crypto.getRandomValues(new Uint32Array(1))[0];
-  const otp = String(raw % 100000000).padStart(8,'0');
-  const nonce = crypto.randomUUID();
-  const digest = await otpSignature(env,email,nonce,otp);
-  const now=Date.now();
-  await env.DB.prepare(
-    'INSERT INTO claims(email,worker_url,nonce,otp_hash,expires_at,attempts) ' +
-    'VALUES(?,?,?,?,?,0) ON CONFLICT(email) DO UPDATE SET ' +
-    'worker_url=excluded.worker_url,nonce=excluded.nonce,' +
-    'otp_hash=excluded.otp_hash,expires_at=excluded.expires_at,attempts=0'
-  ).bind(email,worker,nonce,digest,now+10*60*1000).run();
-  try { await sendEmail(env,email,otp); }
-  catch (_) {
-    await env.DB.prepare('DELETE FROM claims WHERE email=? AND nonce=?')
-      .bind(email,nonce).run();
-    return fail('Verification email could not be delivered',503);
-  }
-  return json({ok:true,requiresOtp:true,expiresInSeconds:600});
-}
+  if (!await verifyPersonalSession(worker,email,body?.personalSession))
+    return fail('Personal Worker session required',403);
 
-async function verify(request,env) {
-  const body=await readJson(request);
-  const email=normalizedEmail(body?.email);
-  const otp=body?.code;
-  if(!isEmail(email) || typeof otp !== 'string' ||
-     !/^[0-9]{8}$/.test(otp)) return fail('Invalid verification code',400);
-  if(!await throttle(env,'verify',request,email,10,15*60*1000))
-    return fail('Please retry later',429);
-  const claim=await env.DB.prepare(
-    'SELECT worker_url,nonce,otp_hash,expires_at,attempts FROM claims WHERE email=?'
-  ).bind(email).first();
-  if(!claim || claim.expires_at<Date.now() || claim.attempts>=5)
-    return fail('Invalid or expired verification code',403);
-  await env.DB.prepare('UPDATE claims SET attempts=attempts+1 WHERE email=?')
-    .bind(email).run();
-  if(!await verifyOtp(env,email,claim.nonce,otp,claim.otp_hash))
-    return fail('Invalid or expired verification code',403);
-  // Email ownership + personal Worker session were both verified.
-  const result=await env.DB.prepare(
+  const existing = await env.DB.prepare(
+    'SELECT worker_url FROM accounts WHERE email=?').bind(email).first();
+  if (existing) {
+    // An existing email can never be rebound to a different cloud account.
+    if (existing.worker_url !== worker)
+      return fail('This account is already bound to another cloud',409);
+    return json({ok:true,linked:true,alreadyLinked:true});
+  }
+  const result = await env.DB.prepare(
     'INSERT OR IGNORE INTO accounts(email,worker_url,verified_at) VALUES(?,?,?)'
-  ).bind(email,claim.worker_url,Date.now()).run();
-  if(result.meta?.changes!==1) return fail('Email already linked',409);
-  await env.DB.prepare('DELETE FROM claims WHERE email=?').bind(email).run();
+  ).bind(email,worker,Date.now()).run();
+  if (result.meta?.changes !== 1) {
+    const current = await env.DB.prepare(
+      'SELECT worker_url FROM accounts WHERE email=?').bind(email).first();
+    return current?.worker_url === worker ?
+      json({ok:true,linked:true,alreadyLinked:true}) :
+      fail('This account is already bound to another cloud',409);
+  }
   return json({ok:true,linked:true});
 }
 
@@ -227,7 +166,7 @@ export default {
       if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')
         return fail('JSON required',415);
       if(url.pathname==='/v1/directory/claim')return claim(request,env);
-      if(url.pathname==='/v1/directory/verify')return verify(request,env);
+      // OTP endpoint intentionally removed; an app cannot prove mailbox ownership itself.
       if(url.pathname==='/v1/directory/login')return signIn(request,env);
       return fail('Not found',404);
     }catch(_){return fail('Request could not be completed',500);}
