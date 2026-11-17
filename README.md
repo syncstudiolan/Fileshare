@@ -2,6 +2,54 @@
 
 Independent Flutter/Dart project at https://github.com/syncstudiolan/Fileshare. Android APK and Windows EXE are the first targets; iOS and macOS are future targets. Do not modify earlier Bank Setu or Sync Studio repositories.
 
+## Draft update — Windows sidebar and personal Cloudflare accounts (17 Nov 2026)
+
+All changes remain on Draft PR #1, NOT on main. By owner request,
+the offline-validation GitHub Action now has ONLY a manual trigger.
+NO new APK, Windows EXE, GitHub build, CI or release was run for these changes.
+
+Windows opens maximized, with a fixed 248px left navigation menu. The
+hamburger collapses and restores it. The main chat fills the remaining
+width, and the light/dark toggle stays in the header. Small Android and
+Windows layouts keep the familiar drawer.
+
+### Account creation and first-time cloud connection
+
+- Open Cloud Setup, enter the owner-provided Cloudflare Account ID and a
+  restricted API token. Cloudflare token permissions: Workers Scripts
+  Read/Write, D1 Read/Write, Workers R2 Storage Read/Write. User must
+  first activate R2 and a workers.dev subdomain.
+- The app verifies Cloudflare credentials, provisions/reuses the user's
+  own D1 database, R2 bucket and Worker script, installs the schema,
+  embeds the guest upload page, enables workers.dev and midnight IST
+  cleanup, and runs a tiny, one-time R2+D1 connectivity check.
+- The Cloudflare administrative API Token is NOT stored. Only a random
+  owner bootstrap secret and signed login session are stored securely
+  on the device. Partial setup retries reuse named resources. An
+  unrecognized pre-existing Worker is NEVER overwritten.
+- Create one owner account on that personal Worker using email and a
+  password of at least 10 characters. The owner account is in their
+  own D1. Password verification uses a salted PBKDF2 digest and limits
+  repeated failed logins. The app stores 24-hour signed sessions.
+- Logout clears local login but preserves setup and email so re-login
+  needs only Worker URL, email and password, not a new Cloudflare token.
+  Another device needs the SAME Worker URL, email and password.
+  Offline LAN works with or without any cloud account.
+
+### Verification and limitations
+
+Cloudflare provisioning and email/password endpoints have only been
+statically reviewed. They have NOT been exercised against a real
+Cloudflare account or Android/Windows build this iteration. There is
+no central global account directory, so email alone cannot discover
+the personal Worker across devices. Email verification, recovery,
+immediate server-side logout token revocation and push notifications
+are still future work. A copied stateless token remains usable until
+its 24-hour expiry; evaluate session revocation before production.
+Verify password hashing performance against Cloudflare's 10ms CPU
+limit on free Workers before release. The user will decide when to
+run any further build or live-cloud test.
+
 ## Verified scope and current implementation status
 
 | Area | Code status | Practical status |
