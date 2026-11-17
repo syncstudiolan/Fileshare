@@ -292,7 +292,7 @@ async function authApi(request,env,url){
       return fail('Owner account already registered',409);
     const salt=crypto.getRandomValues(new Uint8Array(16));
     const result=await env.DB.prepare(
-      'INSERT OR IGNORE INTO accounts(email,salt,hash,created_at) VALUES(?,?,?,?)'
+      'INSERT OR IGNORE INTO accounts(singleton,email,salt,hash,created_at) VALUES(1,?,?,?,?)'
     ).bind(email,b64url(salt),await derivePassword(password,salt),Date.now()).run();
     if(result.meta?.changes!==1)return fail('Account already exists',409);
     const session=await makeSession(email,env);
