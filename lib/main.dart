@@ -2832,11 +2832,11 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
               Text('One-time deployment checklist',style:TextStyle(
                 fontWeight:FontWeight.w800,color:FileTheme.foreground(context))),
               const SizedBox(height:12),
-              const Text('1. Create D1 and R2 in your own Cloudflare account.\n'
-                '2. Apply cloudflare/schema.sql to D1.\n'
-                '3. Deploy worker.js with the guest page assets.\n'
-                '4. Set a strong OWNER_TOKEN as a Worker secret.\n'
-                '5. Connect above, then open My QR and Generate.'),
+              const Text('1. Enter your Cloudflare Account ID and restricted API token above.\n'
+                '2. Tap Verify & Auto Connect — the app creates D1, R2 and your private Worker.\n'
+                '3. The app installs its D1 schema, binds your resources and saves the owner secret securely.\n'
+                '4. After setup succeeds, create your email/password account.\n'
+                '5. Verify your email to enable automatic login on another device; then open My QR and Generate.'),
             ])),
         ]),
       ))),
