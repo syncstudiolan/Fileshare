@@ -4,10 +4,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application android:label="File Share"
-        android:name="${applicationName}"
+        android:name=".FileShareApplication"
         android:icon="@mipmap/ic_launcher">
         <activity android:name=".MainActivity"
             android:exported="true" android:launchMode="singleTop"
@@ -35,7 +36,7 @@
         <service
             android:name=".LanKeepAliveService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"/>
+            android:foregroundServiceType="connectedDevice"/>
         <meta-data android:name="flutterEmbedding" android:value="2"/>
     </application>
 </manifest>
