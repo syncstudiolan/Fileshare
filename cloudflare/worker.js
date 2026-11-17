@@ -242,10 +242,14 @@ const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes)))
   .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
 const from64 = value => Uint8Array.from(atob(value.replace(/-/g,'+')
   .replace(/_/g,'/').padEnd(Math.ceil(value.length/4)*4,'=')),c=>c.charCodeAt(0));
-async function derivePassword(password,salt){
-  const key=await crypto.subtle.importKey('raw',enc.encode(password),'PBKDF2',false,['deriveBits']);
+// Keep password verification feasible on the Workers Free CPU budget.
+// OWNER_TOKEN is a server-side pepper: a copied D1 hash alone is insufficient
+// for offline guessing. Retain per-account random salt and login throttles.
+async function derivePassword(password,salt,env){
+  const key=await crypto.subtle.importKey('raw',
+    enc.encode(password+'\\u0000'+env.OWNER_TOKEN),'PBKDF2',false,['deriveBits']);
   return b64url(await crypto.subtle.deriveBits(
-    {name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},key,256));
+    {name:'PBKDF2',salt,iterations:12000,hash:'SHA-256'},key,256));
 }
 const hmacKey=env=>crypto.subtle.importKey('raw',enc.encode(env.OWNER_TOKEN),
   {name:'HMAC',hash:'SHA-256'},false,['sign','verify']);
@@ -293,7 +297,7 @@ async function authApi(request,env,url){
     const salt=crypto.getRandomValues(new Uint8Array(16));
     const result=await env.DB.prepare(
       'INSERT OR IGNORE INTO accounts(singleton,email,salt,hash,created_at) VALUES(1,?,?,?,?)'
-    ).bind(email,b64url(salt),await derivePassword(password,salt),Date.now()).run();
+    ).bind(email,b64url(salt),await derivePassword(password,salt,env),Date.now()).run();
     if(result.meta?.changes!==1)return fail('Account already exists',409);
     const session=await makeSession(email,env);
     return json({ok:true,email,session:session.token,expiresAt:session.exp},201);
@@ -308,7 +312,7 @@ async function authApi(request,env,url){
   const account=await env.DB.prepare('SELECT salt,hash FROM accounts WHERE email=?')
     .bind(email).first();
   const computed=await derivePassword(password,
-    account?from64(account.salt):new Uint8Array(16));
+    account?from64(account.salt):new Uint8Array(16),env);
   if(!account||account.hash!==computed){
     await env.DB.prepare(
       'INSERT INTO auth_attempts(id,failures,changed_at) VALUES(?,1,?) '+
