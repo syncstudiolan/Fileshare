@@ -1,6 +1,7 @@
 package com.example.file_share
 
 import android.Manifest
+import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,7 +16,6 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.OpenableColumns
-import io.flutter.app.FlutterApplication
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -28,7 +28,7 @@ import java.io.File
  * The connectedDevice foreground service keeps the LAN process available.
  * Android force-stop, reboot and OEM battery kills are still OS limitations.
  */
-class FileShareApplication : FlutterApplication() {
+class FileShareApplication : Application() {
     companion object {
         const val ENGINE_ID = "file_share_lan"
         const val CHANNEL_NAME = "file_share.native"
