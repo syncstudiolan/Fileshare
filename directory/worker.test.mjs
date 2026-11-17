@@ -112,6 +112,18 @@ test('first personal cloud binding requires session; different Worker cannot tak
       'correct-secure-password'),false);
   }finally{globalThis.fetch=originalFetch;}
 });
+test('directory lookup returns an existing owner and rejects an unknown email',async()=>{
+  const state=env();
+  state.DB.accounts.set(email,{worker_url:personalOrigin,email});
+  const known=await worker.fetch(make('/v1/directory/resolve',{email}),state);
+  assert.equal(known.status,200);
+  assert.equal((await known.json()).workerUrl,personalOrigin);
+  const missing=await worker.fetch(make('/v1/directory/resolve',{
+    email:'unknown@example.com',
+  }),state);
+  assert.equal(missing.status,404);
+  assert.equal((await missing.json()).error,'Email address is not registered');
+});
 test('directory health requires no mail service',async()=>{
   const state=env();
   const response=await worker.fetch(
