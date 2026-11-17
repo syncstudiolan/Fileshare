@@ -2375,6 +2375,9 @@ class CloudConnectPage extends StatefulWidget {
 class _CloudConnectPageState extends State<CloudConnectPage> {
   final _url=TextEditingController();
   final _secret=TextEditingController();
+  final _accountId=TextEditingController();
+  final _apiToken=TextEditingController();
+  late final CloudflareProvisioner _provisioner;
   bool _busy=false, _show=false;
   String? _message;
 
@@ -2382,13 +2385,39 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
   void initState() {
     super.initState();
     _url.text=PersonalCloud.instance.endpoint ?? '';
+    _provisioner=CloudflareProvisioner()..addListener(_cloudProgress);
   }
+
+  void _cloudProgress(){if(mounted)setState((){});}
 
   @override
   void dispose() {
+    _provisioner.removeListener(_cloudProgress);
+    _provisioner.dispose();
+    _accountId.dispose();
+    _apiToken.dispose();
     _url.dispose();
     _secret.dispose();
     super.dispose();
+  }
+
+  Future<void> _autoConnect() async {
+    if(_busy)return;
+    setState((){_busy=true;_message=null;});
+    try{
+      final result=await _provisioner.provision(_accountId.text,_apiToken.text);
+      _apiToken.clear(); // Admin token is never persisted.
+      await PersonalCloud.instance.connectWorker(
+        result.workerUrl,result.ownerSecret);
+      _url.text=result.workerUrl;
+      if(mounted)setState(()=>_message='Worker, private D1 database, R2 bucket '
+        'and guest QR page connected. Create your account below.');
+    }catch(e){
+      if(mounted)setState(()=>_message='Setup could not finish: '+e.toString());
+    }finally{
+      _apiToken.clear();
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _connect() async {
@@ -2435,6 +2464,50 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
           ]),
           const SizedBox(height:18),
           DesignPanel(child:Column(
+            crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              Text('One-time Cloudflare Auto Setup',textAlign:TextAlign.center,
+                style:TextStyle(fontSize:20,fontWeight:FontWeight.w800,
+                  color:FileTheme.foreground(context))),
+              const SizedBox(height:9),
+              Text('Use your own Cloudflare account. No paid domain needed. '
+                'Enable your R2 bucket service and workers.dev address first.',
+                textAlign:TextAlign.center,style:TextStyle(
+                  fontSize:12,height:1.45,color:FileTheme.muted(context))),
+              const SizedBox(height:15),
+              TextField(controller:_accountId,enabled:!_busy,
+                decoration:const InputDecoration(
+                  labelText:'Cloudflare Account ID',
+                  prefixIcon:Icon(Icons.account_tree_outlined))),
+              const SizedBox(height:12),
+              TextField(controller:_apiToken,enabled:!_busy,
+                obscureText:!_show,autocorrect:false,
+                decoration:InputDecoration(
+                  labelText:'Restricted Cloudflare API Token',
+                  prefixIcon:const Icon(Icons.key_outlined),
+                  suffixIcon:IconButton(
+                    tooltip:'Show or hide secret',
+                    onPressed:()=>setState(()=>_show=!_show),
+                    icon:Icon(_show?Icons.visibility_off_outlined:
+                      Icons.visibility_outlined)))),
+              const SizedBox(height:10),
+              Text('API Token permissions: Workers Scripts Read/Write, '
+                'D1 Read/Write and Workers R2 Storage Write. The token is '
+                'used once and cleared; it is not stored by File Share.',
+                style:TextStyle(fontSize:12,height:1.4,
+                  color:FileTheme.muted(context))),
+              const SizedBox(height:15),
+              FilledButton.icon(onPressed:_busy?null:_autoConnect,
+                icon:const Icon(Icons.verified_user_outlined),
+                label:const Text('Verify & Auto Connect')),
+              if(_provisioner.busy)...[
+                const SizedBox(height:12),
+                const LinearProgressIndicator(),
+                Text(_provisioner.status,
+                  style:TextStyle(color:FileTheme.muted(context))),
+              ],
+            ])),
+          const SizedBox(height:12),
+          DesignPanel(child:Column(
             crossAxisAlignment:CrossAxisAlignment.stretch,
             children:[
               const Icon(Icons.cloud_sync_outlined,color:FileTheme.violet,size:48),
@@ -2444,7 +2517,7 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
                   fontWeight:FontWeight.w800,fontSize:19,
                   color:FileTheme.foreground(context))),
               const SizedBox(height:10),
-              Text('Advanced manual test connection. First deploy cloudflare/worker.js to YOUR account and configure D1, R2 and OWNER_TOKEN. This is not the final automatic API-token setup.',
+              Text('Advanced option: manually pair an existing personal Worker. It must already have D1, R2 and the OWNER_TOKEN setup secret.',
                 textAlign:TextAlign.center,style:TextStyle(
                   color:FileTheme.muted(context),fontSize:12,height:1.4)),
               const SizedBox(height:20),
@@ -2474,6 +2547,14 @@ class _CloudConnectPageState extends State<CloudConnectPage> {
                 OutlinedButton.icon(onPressed:_busy?null:_disconnect,
                   icon:const Icon(Icons.link_off_rounded),
                   label:const Text('Disconnect stored cloud account')),
+              ],
+              if(PersonalCloud.instance.cloudSetupSaved)...[
+                const SizedBox(height:12),
+                OutlinedButton.icon(
+                  onPressed:()=>Navigator.push(context,fadePage(
+                    LoginPage(mode:widget.mode,onMode:widget.onMode))),
+                  icon:const Icon(Icons.person_add_alt_1_rounded),
+                  label:const Text('Create account or Login')),
               ],
               if(_message!=null)...[
                 const SizedBox(height:14),
