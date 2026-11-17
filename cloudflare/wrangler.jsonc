@@ -21,6 +21,20 @@
       "bucket_name": "fileshare-personal-files"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "INBOX_EVENTS",
+        "class_name": "InboxEvents"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "file-share-inbox-events-v1",
+      "new_sqlite_classes": ["InboxEvents"]
+    }
+  ],
   "triggers": {
     "crons": [
       "30 18 * * *",
