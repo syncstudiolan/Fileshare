@@ -100,6 +100,43 @@ void main() {
     expect(find.text('Tools'), findsNothing);
   });
 
+  testWidgets('Account creation and personal Cloudflare setup are reachable',
+      (tester) async {
+    await tester.pumpWidget(const FileShareApp(initialMode: ThemeMode.light));
+    await tester.tap(find.text('Login / Create Account'));
+    await tester.pumpAndSettle();
+    expect(find.text('File Share Account'), findsOneWidget);
+    await tester.tap(find.text('New here? Create account'));
+    await tester.pumpAndSettle();
+    expect(find.text('Create your account'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
+    await tester.tap(find.text('Set up or connect personal Cloudflare'));
+    await tester.pumpAndSettle();
+    expect(find.text('One-time Cloudflare Auto Setup'), findsOneWidget);
+    expect(find.text('Verify & Auto Connect'), findsOneWidget);
+    // No credentials, network calls, setup operations or deployments from tests.
+  });
+
+  testWidgets('Windows wide view has a persistent collapsible sidebar',
+      (tester) async {
+    if (!Platform.isWindows) return;
+    await tester.binding.setSurfaceSize(const Size(1440, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const FileShareApp(
+      initialMode: ThemeMode.light, offlineDefault: true,
+      enableBackends: false,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Hide sidebar'), findsWidgets);
+    expect(find.text('Devices'), findsWidgets);
+    await tester.tap(find.byTooltip('Hide sidebar').last);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Show sidebar'), findsOneWidget);
+    await tester.tap(find.byTooltip('Show sidebar'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Hide sidebar'), findsWidgets);
+  });
+
   testWidgets('First use offers login and no-login offline LAN', (tester) async {
     await tester.pumpWidget(const FileShareApp(initialMode: ThemeMode.light));
     expect(find.text('Login / Create Account'), findsOneWidget);
