@@ -24,10 +24,10 @@ class ImageEditingEngine {
         (options[key] as num?)?.toDouble() ?? fallback;
     switch (action) {
       case 'crop':
-        final x = (decimal('x', 0) * output.width).round().clamp(0, output.width - 1);
-        final y = (decimal('y', 0) * output.height).round().clamp(0, output.height - 1);
-        final w = (decimal('w', 1) * output.width).round().clamp(1, output.width - x);
-        final h = (decimal('h', 1) * output.height).round().clamp(1, output.height - y);
+        final x = (decimal('x', 0) * output.width).round().clamp(0, output.width - 1).toInt();
+        final y = (decimal('y', 0) * output.height).round().clamp(0, output.height - 1).toInt();
+        final w = (decimal('w', 1) * output.width).round().clamp(1, output.width - x).toInt();
+        final h = (decimal('h', 1) * output.height).round().clamp(1, output.height - y).toInt();
         output = img.copyCrop(output, x: x, y: y, width: w, height: h);
       case 'rotate':
         output = img.copyRotate(output, angle: decimal('degrees', 90));
@@ -63,9 +63,9 @@ class ImageEditingEngine {
           throw const FormatException('Subject mask is unavailable');
         }
         for (var y = 0; y < output.height; y++) {
-          final my = (y * maskHeight ~/ output.height).clamp(0, maskHeight - 1);
+          final my = (y * maskHeight ~/ output.height).clamp(0, maskHeight - 1).toInt();
           for (var x = 0; x < output.width; x++) {
-            final mx = (x * maskWidth ~/ output.width).clamp(0, maskWidth - 1);
+            final mx = (x * maskWidth ~/ output.width).clamp(0, maskWidth - 1).toInt();
             final px = output.getPixel(x, y);
             final alpha = (px.a * data[my * maskWidth + mx] / 255).round();
             output.setPixelRgba(x, y, px.r, px.g, px.b, alpha);
@@ -77,7 +77,7 @@ class ImageEditingEngine {
           {'x': decimal('x', .5), 'y': decimal('y', .5)},
         ];
         final radius = (decimal('radius', .03) *
-          math.min(output.width, output.height)).round().clamp(1, 240);
+          math.min(output.width, output.height)).round().clamp(1, 240).toInt();
         final softness = decimal('softness', .4).clamp(0.01, 1.0);
         final erase=action=='erase';
         for(final point in points){
@@ -97,8 +97,8 @@ class ImageEditingEngine {
           }
         }
       case 'resize':
-        final targetWidth = number('width', output.width).clamp(1, 8192);
-        final targetHeight = number('height', output.height).clamp(1, 8192);
+        final targetWidth = number('width', output.width).clamp(1, 8192).toInt();
+        final targetHeight = number('height', output.height).clamp(1, 8192).toInt();
         output = img.copyResize(output, width: targetWidth, height: targetHeight,
           interpolation: img.Interpolation.cubic);
       case 'flatten':
@@ -130,7 +130,7 @@ class ImageEditingEngine {
     var source = decoded;
     final format = request['format'] as String;
     if (format == 'PNG') return Uint8List.fromList(img.encodePng(source, level: 9));
-    var quality = (request['quality'] as int).clamp(1, 100);
+    var quality = (request['quality'] as int).clamp(1, 100).toInt();
     final targetBytes = (request['targetKb'] as int).clamp(1, 500000) * 1024;
     Uint8List encode(int q) => Uint8List.fromList(img.encodeJpg(source, quality: q));
     var result = encode(quality);
