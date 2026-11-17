@@ -1599,7 +1599,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       _nav('Profile', Icons.person_outline_rounded, pinned: pinned),
       AnimatedBuilder(
         animation: PersonalCloud.instance,
-        builder: (_, __) => PersonalCloud.instance.connected
+        builder: (_, __) => PersonalCloud.instance.signedIn
           ? ListTile(
               leading: const Icon(Icons.logout_rounded, color: FileTheme.violet),
               title: const Text('Logout'),
@@ -2596,7 +2596,7 @@ class _MyQrPageState extends State<MyQrPage> {
   @override
   void initState() {
     super.initState();
-    if(PersonalCloud.instance.connected){
+    if(PersonalCloud.instance.signedIn){
       WidgetsBinding.instance.addPostFrameCallback((_)=>_run(()
         =>PersonalCloud.instance.loadQr()));
     }
@@ -2648,7 +2648,7 @@ class _MyQrPageState extends State<MyQrPage> {
                 style:TextStyle(fontWeight:FontWeight.w800,fontSize:19,
                   color:FileTheme.foreground(context))),
               const SizedBox(height:10),
-              Text(cloud.connected
+              Text(cloud.signedIn
                   ? 'Your QR remains until you revoke or regenerate it.'
                   : 'Connect your own Cloudflare Worker first.',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:12),
@@ -2668,18 +2668,21 @@ class _MyQrPageState extends State<MyQrPage> {
                 SelectableText(link,textAlign:TextAlign.center,
                   style:TextStyle(color:FileTheme.foreground(context),fontSize:12)),
               const SizedBox(height:20),
-              if(!cloud.connected)
+              if(!cloud.signedIn)
                 FilledButton.icon(
                   onPressed:()=>Navigator.pushReplacement(context,fadePage(
-                    CloudConnectPage(mode:widget.mode,onMode:widget.onMode))),
+                    cloud.cloudSetupSaved
+                      ? LoginPage(mode:widget.mode,onMode:widget.onMode)
+                      : CloudConnectPage(mode:widget.mode,onMode:widget.onMode))),
                   icon:const Icon(Icons.cloud_outlined),
-                  label:const Text('Connect Personal Cloud')),
-              if(cloud.connected && link==null)
+                  label:Text(cloud.cloudSetupSaved
+                    ? 'Login to Personal Cloud' : 'Connect Personal Cloud')),
+              if(cloud.signedIn && link==null)
                 FilledButton.icon(
                   onPressed:_busy?null:()=>_run(()=>cloud.createQr()),
                   icon:const Icon(Icons.add_circle_outline_rounded),
                   label:const Text('Generate Permanent QR')),
-              if(cloud.connected && link!=null)...[
+              if(cloud.signedIn && link!=null)...[
                 Wrap(spacing:8,runSpacing:8,alignment:WrapAlignment.center,
                   children:[
                     OutlinedButton.icon(
