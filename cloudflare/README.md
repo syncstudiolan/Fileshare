@@ -38,7 +38,7 @@ existing Worker without its previously saved owner secret.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/q/{qr}` | Guest browser page, secure guest browser cookie |
-| POST | `/v1/guest/session` | Reserve up to 200 MB and one of 4 sessions in rolling 24 hours |
+| POST | `/v1/guest/session` | Reserve up to 200 MB and one of 4 sessions per IST calendar day |
 | PUT | `/v1/guest/file/{session}/{file}` | Small file upload (<= 6 MiB) |
 | POST | `/v1/guest/file/{session}/{file}/start` | Begin large multipart upload |
 | PUT | `/v1/guest/file/{session}/{file}/part/{number}` | 6 MiB multipart chunk |
@@ -56,11 +56,11 @@ Owner endpoints require a valid signed personal Worker session or the setup-only
 ## Quotas, cleanup and request budgets
 
 - Guest identity is a secure cookie + separate hashed IP. Browsers do **not** expose genuine hardware IDs; clearing cookies or switching browsers can bypass personal limits.
-- Each QR/guest identity gets four sessions and 200 MiB of reserved files over a rolling 24-hour window. A session may contain many smaller files (up to 500 selections in the current implementation).
+- Each QR/guest identity gets four sessions and 200 MiB of reserved files per IST calendar day. A session may contain many smaller files (up to 500 selections in the current implementation).
 - Large files use 6 MiB R2 multipart chunks. No single 200 MB HTTP request is attempted.
-- Files uploaded before the following 00:00 IST expire at that midnight. Guest quota records survive until their rolling 24h window ends.
-- Cron jobs at 18:30, 20:30 and 22:30 UTC (00:00, 02:00, 04:00 IST) perform one cleanup and up to two delayed retries, instead of constant polling.
-- The cleanup checks D1 first and **does not issue an R2 delete request when there are no expired files**.
+- Files uploaded before the following 00:00 IST expire at that midnight. Expired R2 objects, D1 upload rows, D1 multipart-part records and unreferenced expired guest-session rows are deleted together; no persistent deletion queue is created. The per-guest quota resets at midnight IST.
+- Cron jobs at 18:30, 20:30 and 22:30 UTC (00:00, 02:00, 04:00 IST) perform one cleanup and up to two delayed retries, instead of constant polling. R2 keys are deleted in batches; D1 records in <=100-ID statements to respect D1's 100-parameter limit. Successful progress causes **at most one WebSocket `files-changed` event per scheduled invocation**, not one event per file. Empty retries send no event or R2 delete request.
+- The cleanup checks D1 first and **does not issue an R2 delete request when there are no expired files**. If R2 deletion fails, affected D1 upload records are retained for the retry cron; no separate queue records are stored. The app also removes expired QR cards locally at midnight without needing a network call. The permanent QR code and personal owner account remain intact.
 - Each cleanup processes up to 20 batches of 500 files. Additional backlog waits for the next scheduled run.
 - Client files already saved into the user's Downloads folder are NOT deleted by this cloud cleanup.
 
