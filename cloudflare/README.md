@@ -2,18 +2,36 @@
 
 This folder contains a Worker, D1 schema, private R2 binding and a static guest-upload page. It **does not require sharing your Cloudflare credentials with ChatGPT**.
 
-## Manual deployment for testing
+## In-app automatic provisioning (primary path)
 
-1. Create a separate Cloudflare account (or use your own) and activate R2 as required by Cloudflare. The free allowance does not prevent billing if exceeded.
-2. In `cloudflare/`, run `npx wrangler d1 create fileshare-personal-db` and copy the displayed D1 database ID into `wrangler.jsonc`.
-3. Run `npx wrangler r2 bucket create fileshare-personal-files`.
-4. Run `npx wrangler d1 execute fileshare-personal-db --remote --file=./schema.sql`.
-5. Choose a random, strong OWNER_TOKEN of at least 32 characters and set it with `npx wrangler secret put OWNER_TOKEN`. Never put it in git, code, screenshots or chat.
-6. Run `npx wrangler deploy`. Note the assigned HTTPS `*.workers.dev` URL.
-7. Open the File Share app → Cloud Setup → enter that Worker URL and the **Worker OWNER_TOKEN**. This is a manual integration-test connection. It is **NOT** the Cloudflare Account API token.
-8. Open My QR → Generate Permanent QR → share the QR URL with a guest. The guest's ordinary camera opens the browser upload page.
+Users should not manually create Worker/D1/R2 resources. In Android or
+Windows, open **Personal Cloud Setup**, enter your own Cloudflare Account ID
+and restricted API token, and tap **Verify & Auto Connect**. The app:
 
-Worker setup permissions require one-time Cloudflare authorization by the account owner. `Account ID + restricted Cloudflare API token -> fully automatic provisioning` is NOT implemented yet, and app email/password authentication is not live.
+1. Checks the token and existing resources in the user's own account.
+2. Creates/reuses its private D1 database and R2 bucket, then applies the
+   `schema.sql` tables.
+3. Uploads the module Worker, embeds the guest HTML, configures D1/R2
+   bindings and an owner secret stored in OS secure storage.
+4. Enables the personal workers.dev address, schedules cleanup, and runs
+   a private D1/R2 storage round-trip self-test.
+5. Allows one email/password account to be registered in the personal Worker;
+   the app links it to the Central Directory with a signed Worker session.
+
+On a second device, the user signs in via the Directory with email/password,
+and is returned to the *same* personal Worker. Email OTP has been removed;
+email address ownership is **not** verified. The first Directory binding
+remains immutable to prevent subsequent use of a different Cloudflare Worker.
+The Cloudflare admin API token is cleared and never stored by the app.
+
+The account owner must first enable Cloudflare R2 and workers.dev as needed
+and create a restricted token with permissions to manage D1, R2 and Workers.
+No global API key, additional domain or email sender is required.
+
+Manual Wrangler deployment below is an advanced debugging alternative, not
+part of normal user onboarding. Do not manually create a Worker with the
+automatic naming convention, as the app refuses to overwrite an unknown
+existing Worker without its previously saved owner secret.
 
 ## API endpoints
 
@@ -32,7 +50,7 @@ Worker setup permissions require one-time Cloudflare authorization by the accoun
 | GET/DELETE | `/v1/owner/file/{id}` | Stream/download or delete the owner's file |
 | GET | `/health` | Basic public health check |
 
-Owner endpoints require `Authorization: Bearer <OWNER_TOKEN>`. The secret must only be stored in an OS encrypted vault on client devices.
+Owner endpoints require a valid signed personal Worker session or the setup-only `OWNER_TOKEN`. The owner secret is kept in the OS secure vault and never committed.
 
 ## Quotas, cleanup and request budgets
 
@@ -47,8 +65,8 @@ Owner endpoints require `Authorization: Bearer <OWNER_TOKEN>`. The secret must o
 
 ## Known limitations before production use
 
-- The Worker and D1/R2 configuration have NOT been deployed or tested against a live Cloudflare account here.
-- No full authentication system, centralized account directory, multi-device secure token pairing or automatic Cloudflare provisioning is shipped yet.
+- Personal Worker auto-provisioning and account login are implemented in the app but have not been verified using a new real Android/Windows device setup. The separate Central Directory is already deployed.
+- The Free-tier-friendly password KDF is peppered with the private Worker secret and includes login throttling, but still needs live CPU-budget validation.
 - No real-time WebSocket push notification / Android background push; the owner app currently refreshes its QR feed manually.
 - Browser cookie/IP checks are abuse deterrents, not strong person identity. Additional anti-abuse controls and guest session hardening need security testing.
 - Cloudflare R2 operations, D1 rows and Worker requests use each user's own quotas/billing.
