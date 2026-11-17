@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_share/main.dart';
 import 'package:file_share/lan_engine.dart';
+import 'package:file_share/account_directory.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -117,6 +118,17 @@ void main() {
     expect(find.byTooltip('Open in Tools'),findsOneWidget);
     expect(find.byTooltip('Open in another app'),findsNothing);
     expect(tester.takeException(),isNull);
+  });
+
+  test('Official directory is configured for both Flutter targets', () {
+    // Both Android and Windows import the same AccountDirectory singleton.
+    expect(AccountDirectory.instance.enabled, isTrue);
+    expect(AccountDirectory.validateDirectoryUrl(
+      'https://fileshare-directory.modeltech0.workers.dev'),
+      'https://fileshare-directory.modeltech0.workers.dev');
+    expect(
+      () => AccountDirectory.validateDirectoryUrl('http://127.0.0.1:8787'),
+      throwsFormatException);
   });
 
   test('LAN file names cannot contain path separators', () {
