@@ -75,7 +75,9 @@ class ImageEditingHistory extends ChangeNotifier {
     final root=await directory;
     final previous=drafts.where((x)=>x.id==id).firstOrNull;
     final old=previous?.filePath;
-    final path='${root.path}${Platform.pathSeparator}${id}_${DateTime.now().microsecondsSinceEpoch}.png';
+    final extension=bytes.length>=2 && bytes[0]==0xff && bytes[1]==0xd8
+      ?'jpg':'png';
+    final path='${root.path}${Platform.pathSeparator}${id}_${DateTime.now().microsecondsSinceEpoch}.$extension';
     final file=File(path);
     await file.writeAsBytes(bytes,flush:true);
     final now=DateTime.now();
