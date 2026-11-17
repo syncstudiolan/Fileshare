@@ -11,6 +11,8 @@ import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
+import 'image_editing_page.dart';
+import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
 import 'account_directory.dart';
@@ -1322,51 +1324,48 @@ class FullScreenFilePreview extends StatelessWidget {
   );
 }
 
-/// The selected file is handed to Toolbox. Editing engines are a later phase.
+/// Route image files from Received/Sent/QR directly to the real editor.
 class SelectedFileToolsPage extends StatelessWidget {
-  const SelectedFileToolsPage({super.key, required this.file});
+  const SelectedFileToolsPage({super.key,required this.file});
   final LanFile file;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Open in Tools')),
-    body: Container(
-      decoration: BoxDecoration(gradient: FileTheme.background(context)),
-      child: Center(child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 580),
-        child: ListView(shrinkWrap: true, padding: const EdgeInsets.all(22),
-          children: [
-            DesignPanel(child: Row(children: [
-              const Icon(Icons.auto_fix_high_rounded,
-                color: FileTheme.pink, size: 38),
-              const SizedBox(width: 14),
-              Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontWeight: FontWeight.w800,
-                      color: FileTheme.foreground(context))),
-                  Text(_formatBytes(file.size),
-                    style: TextStyle(color: FileTheme.muted(context))),
-                ],
-              )),
+  bool get isImage {
+    final name=file.name.toLowerCase();
+    return ['.jpg','.jpeg','.png','.webp','.gif','.bmp']
+      .any(name.endsWith);
+  }
+  @override Widget build(BuildContext context)=>Scaffold(
+    appBar:AppBar(title:const Text('Toolbox')),
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:Center(child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:550),
+        child:ListView(shrinkWrap:true,padding:const EdgeInsets.all(22),
+          children:[
+            DesignPanel(child:Column(children:[
+              const Icon(Icons.photo_filter_outlined,color:FileTheme.violet,
+                size:46),
+              const SizedBox(height:12),
+              Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis),
+              const SizedBox(height:10),
+              Text(isImage?'Edit the selected photo using Image Editing':
+                'Image Editing supports images only.',
+                textAlign:TextAlign.center),
+              const SizedBox(height:16),
+              FilledButton.icon(
+                onPressed:isImage && File(file.path).existsSync()
+                  ?()=>Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder:(_)=>ImageEditingPage(
+                      sourcePath:file.path,sourceName:file.name))):null,
+                icon:const Icon(Icons.auto_fix_high_rounded),
+                label:const Text('Image Editing')),
+              const SizedBox(height:9),
+              OutlinedButton.icon(
+                onPressed:File(file.path).existsSync()
+                  ?()=>OpenFilex.open(file.path):null,
+                icon:const Icon(Icons.open_in_new_rounded),
+                label:const Text('Open with another app')),
             ])),
-            const SizedBox(height: 16),
-            Text('File selected for Toolbox', textAlign: TextAlign.center,
-              style: TextStyle(color: FileTheme.foreground(context),
-                fontSize: 17, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text('This file is ready for Toolbox. Photo and document '
-              'editing engines will be added in the Toolbox phase.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: FileTheme.muted(context))),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: File(file.path).existsSync()
-                ? () => OpenFilex.open(file.path) : null,
-              icon: const Icon(Icons.open_in_new_rounded),
-              label: const Text('Open with another app')),
-          ],
-        ),
+          ]),
       )),
     ),
   );
@@ -1562,11 +1561,69 @@ String _formatBytes(int bytes) {
 }
 
 
+bool _isCloudImage(String name) {
+  final lower=name.toLowerCase();
+  return lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+    lower.endsWith('.png') || lower.endsWith('.webp') ||
+    lower.endsWith('.gif');
+}
+
+/// Preview images stream from the authenticated Worker to private app cache.
+class CloudImageThumbnail extends StatefulWidget {
+  const CloudImageThumbnail({super.key,required this.file,required this.onOpen});
+  final CloudFile file;
+  final VoidCallback onOpen;
+  @override
+  State<CloudImageThumbnail> createState()=>_CloudImageThumbnailState();
+}
+class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
+  Future<File>? _image;
+  @override
+  void initState(){super.initState();_load();}
+  @override
+  void didUpdateWidget(covariant CloudImageThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if(oldWidget.file.id!=widget.file.id)_load();
+  }
+  void _load(){
+    _image=_isCloudImage(widget.file.name) && widget.file.size<=10*1024*1024
+      ?PersonalCloud.instance.download(widget.file):null;
+  }
+  @override
+  Widget build(BuildContext context)=>InkWell(
+    onTap:widget.onOpen,
+    borderRadius:BorderRadius.circular(10),
+    child:ClipRRect(borderRadius:BorderRadius.circular(10),
+      child:SizedBox(width:60,height:60,
+        child:_image==null
+          ?const Icon(Icons.insert_drive_file_outlined,
+              color:FileTheme.pink,size:30)
+          :FutureBuilder<File>(
+              future:_image,
+              builder:(context,snapshot){
+                if(snapshot.hasData){
+                  return Image.file(snapshot.data!,fit:BoxFit.cover,
+                    cacheWidth:160,
+                    errorBuilder:(_,__,___)=>const Icon(
+                      Icons.broken_image_outlined,color:FileTheme.pink));
+                }
+                if(snapshot.hasError)return const Icon(
+                  Icons.broken_image_outlined,color:FileTheme.pink);
+                return const Center(child:SizedBox(width:24,height:24,
+                  child:CircularProgressIndicator(strokeWidth:2)));
+              }),
+      ),
+    ),
+  );
+}
+
 class CloudInboxCard extends StatelessWidget {
   const CloudInboxCard({super.key, required this.items,
-    required this.onSave, required this.onDelete, required this.onShare});
+    required this.onSave, required this.onDelete, required this.onShare,
+    required this.onPreview, required this.onTools});
   final List<CloudFile> items;
-  final Future<void> Function(CloudFile) onSave, onDelete, onShare;
+  final Future<void> Function(CloudFile) onSave, onDelete, onShare,
+    onPreview, onTools;
 
   @override
   Widget build(BuildContext context) {
@@ -1588,7 +1645,7 @@ class CloudInboxCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
           Row(children: [
             Expanded(child: Text(items.length>1
-              ? items.length.toString()+' Files (QR Group)' : first.name,
+              ? items.length.toString()+' Files (QR Group)' : 'Guest QR upload',
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(color: FileTheme.foreground(context),
                 fontWeight: FontWeight.w800))),
@@ -1598,28 +1655,44 @@ class CloudInboxCard extends StatelessWidget {
           Text('From Guest browser · Guest QR · Online',
             style: TextStyle(color: FileTheme.muted(context),fontSize:11)),
           for(final file in items.take(5))
-            Row(children: [
-              const Icon(Icons.insert_drive_file_outlined,
-                color:FileTheme.pink,size:32),
-              const SizedBox(width:9),
-              Expanded(child: Column(crossAxisAlignment:CrossAxisAlignment.start,
-                children: [
-                  Text(file.name,maxLines:1,overflow:TextOverflow.ellipsis,
-                    style:TextStyle(color:FileTheme.foreground(context),
-                      fontWeight:FontWeight.w700,fontSize:12)),
-                  Text(_formatBytes(file.size),
-                    style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
-                ])),
-              IconButton(tooltip:'Download received QR file',
-                onPressed:()=>onSave(file),
-                icon:const Icon(Icons.download_rounded,color:FileTheme.pink)),
-              IconButton(tooltip:'Delete QR file',
-                onPressed:()=>onDelete(file),
-                icon:const Icon(Icons.delete_outline_rounded,color:FileTheme.pink)),
-              IconButton(tooltip:'Share QR file externally',
-                onPressed:()=>onShare(file),
-                icon:const Icon(Icons.ios_share_rounded,color:FileTheme.pink)),
-            ]),
+            Padding(padding:const EdgeInsets.only(top:12),
+              child:Column(children:[
+                Row(children:[
+                  CloudImageThumbnail(key:ValueKey('qr-thumb-'+file.id),
+                    file:file,onOpen:()=>onPreview(file)),
+                  const SizedBox(width:10),
+                  Expanded(child:InkWell(
+                    onTap:()=>onPreview(file),
+                    child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+                      children:[
+                        Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis,
+                          style:TextStyle(color:FileTheme.foreground(context),
+                            fontWeight:FontWeight.w700,fontSize:13)),
+                        const SizedBox(height:4),
+                        Text(_formatBytes(file.size),
+                          style:TextStyle(color:FileTheme.muted(context),
+                            fontSize:11)),
+                      ]),
+                  )),
+                ]),
+                const SizedBox(height:5),
+                Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[
+                  IconButton(tooltip:'Download received QR file',
+                    onPressed:()=>onSave(file),
+                    icon:const Icon(Icons.download_rounded,color:FileTheme.pink)),
+                  IconButton(tooltip:'Delete QR file',
+                    onPressed:()=>onDelete(file),
+                    icon:const Icon(Icons.delete_outline_rounded,
+                      color:FileTheme.pink)),
+                  IconButton(tooltip:'Share QR file externally',
+                    onPressed:()=>onShare(file),
+                    icon:const Icon(Icons.ios_share_rounded,color:FileTheme.pink)),
+                  IconButton(tooltip:'Open in Tools',
+                    onPressed:()=>onTools(file),
+                    icon:const Icon(Icons.auto_fix_high_rounded,
+                      color:FileTheme.pink)),
+                ]),
+              ])),
           if(items.length>5)
             Text('+ '+(items.length-5).toString()+' more files',
               style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
@@ -1670,6 +1743,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
+  bool _dashboardForeground=true;
+
+  void _resumeCloudInbox() {
+    if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
+    final cloud=PersonalCloud.instance;
+    if(cloud.signedIn){
+      cloud.startLiveInbox();
+      // Fetch once when opening/resuming to recover missed offline events.
+      if(!cloud.loading)unawaited(cloud.refreshFiles());
+    }
+  }
 
   void _armMidnight() {
     _midnight?.cancel();
@@ -1684,8 +1768,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if(state==AppLifecycleState.resumed){
+      _dashboardForeground=true;
+      _resumeCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
+    }else if(state==AppLifecycleState.paused ||
+             state==AppLifecycleState.inactive ||
+             state==AppLifecycleState.detached){
+      _dashboardForeground=false;
+      PersonalCloud.instance.stopLiveInbox();
     }
   }
 
@@ -1696,6 +1787,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
+    ImageEditingCart.instance.addListener(_importEditedCart);
+    _importEditedCart();
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) async {
         if (Platform.isAndroid) {
@@ -1708,8 +1801,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         }
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
-      PersonalCloud.instance.restore().then((_) =>
-        PersonalCloud.instance.cleanupLocalCache()).catchError((Object e) {
+      PersonalCloud.instance.restore().then((_) async {
+        await PersonalCloud.instance.cleanupLocalCache();
+        _resumeCloudInbox();
+      }).catchError((Object e) {
           _snack('Personal cloud storage unavailable: ' + e.toString());
         });
     });
@@ -1717,13 +1812,34 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   void _changed() { if (mounted) setState(() {}); }
 
+  Future<void> _importEditedCart() async {
+    if(!mounted)return;
+    final added=ImageEditingCart.instance.takeAll();
+    if(added.isEmpty)return;
+    final sources=<File>[],names=<String>[],sizes=<int>[];
+    for(final item in added){
+      if(!await item.file.exists())continue;
+      sources.add(item.file);
+      names.add(item.name);
+      sizes.add(await item.file.length());
+    }
+    if(sources.isEmpty||!mounted)return;
+    setState((){
+      _showSamples=false;
+      _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
+    });
+    _snack('Edited image is ready in File Share Cart. Tap Send to transfer.');
+  }
+
   @override
   void dispose() {
     _midnight?.cancel();
+    PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
+    ImageEditingCart.instance.removeListener(_importEditedCart);
     super.dispose();
   }
 
@@ -1745,6 +1861,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       screen = FileCategoriesPage(mode: widget.mode, onMode: widget.onMode);
     } else if (title == 'Login') {
       screen = LoginPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Image Editing') {
+      screen = const ImageEditingLauncherPage();
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
@@ -1789,6 +1907,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       const Divider(height: 12),
       _nav('Home', Icons.home_outlined, pinned: pinned),
       _nav('Files', Icons.folder_outlined, pinned: pinned),
+      _nav('Image Editing', Icons.photo_filter_outlined, pinned: pinned),
       _nav('Devices', Icons.devices_rounded, pinned: pinned),
       _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
       _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
@@ -1911,6 +2030,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     finally{if(mounted)setState(()=>_choosing=false);}
   }
 
+  /// Remove only temporary editor-to-cart snapshots after LAN has
+  /// durably copied them, never the user's original or image history.
+  Future<void> _cleanupEditedCartSnapshots(Iterable<File> sources) async {
+    final root=await getApplicationSupportDirectory();
+    final prefix=root.path+Platform.pathSeparator+'image_editing_cart'+
+      Platform.pathSeparator;
+    for(final file in sources){
+      if(!file.absolute.path.startsWith(prefix))continue;
+      try{if(await file.exists())await file.delete();}catch(_){}
+    }
+  }
   Future<void> _send() async {
     if(_staged.isEmpty || !appLan.started)return;
     final batches=List<PendingBatch>.from(_staged);
@@ -1919,6 +2049,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         // This persists a private copy and queues even with ZERO peers.
         await appLan.enqueue(batch.sources,names:batch.labels);
         if(mounted)setState(()=>_staged.remove(batch));
+        unawaited(_cleanupEditedCartSnapshots(batch.sources));
       }catch(e){_snack('Could not queue selected files: '+e.toString());}
     }
     if(appLan.peers.isEmpty){
@@ -2000,6 +2131,36 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     return timeline;
   }
 
+  LanFile _cloudAsLocalFile(CloudFile entry, File local) => LanFile(
+    id:'cloud_'+entry.id,batch:entry.session,name:entry.name,
+    path:local.path,peer:'Guest browser',incoming:true,
+    size:entry.size,created:entry.created,state:TransferState.delivered);
+
+  Future<void> _previewCloud(CloudFile entry) async {
+    try{
+      final local=await PersonalCloud.instance.download(entry);
+      if(!mounted)return;
+      final selected=_cloudAsLocalFile(entry,local);
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder:(_)=>FullScreenFilePreview(
+          file:selected,
+          onSave:(_)=>_saveCloud(entry),
+          onDelete:(_)=>_deleteCloud(entry),
+          onShare:(_)=>_shareCloud(entry),
+          onTools:(_)=>_openCloudTools(entry))));
+    }catch(e){_snack('QR Preview failed: '+e.toString());}
+  }
+
+  Future<void> _openCloudTools(CloudFile entry) async {
+    try{
+      final local=await PersonalCloud.instance.download(entry);
+      if(!mounted)return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder:(_)=>SelectedFileToolsPage(
+          file:_cloudAsLocalFile(entry,local))));
+    }catch(e){_snack('QR Tools failed: '+e.toString());}
+  }
+
   Future<void> _saveCloud(CloudFile entry) async {
     try {
       final downloaded = await PersonalCloud.instance.download(entry);
@@ -2062,12 +2223,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               trailing:IconButton(
                 tooltip:'Remove selected file',icon:const Icon(Icons.close_rounded),
                 onPressed:(){
+                  final removed=batch.sources[i];
                   setState((){
                     batch.sources.removeAt(i);
                     batch.labels.removeAt(i);
                     batch.sizes.removeAt(i);
                     if(batch.sources.isEmpty)_staged.remove(batch);
                   });
+                  unawaited(_cleanupEditedCartSnapshots([removed]));
                 }),
             ),
       ],
@@ -2174,7 +2337,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         onShare: _share, onTools: _openFileTools)
                     : CloudInboxCard(items: groups[i].cloud!,
                         onSave: _saveCloud, onDelete: _deleteCloud,
-                        onShare: _shareCloud))
+                        onShare: _shareCloud, onPreview: _previewCloud,
+                        onTools: _openCloudTools))
               : useDemo
                 ? ListView.builder(
                     padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
@@ -2194,10 +2358,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     tooltip: 'Choose files',
                     onPressed: _choosing ? null : _choose,
                     icon: const Icon(Icons.add_rounded)),
-                  const IconButton(
-                    tooltip: 'Tools coming later',
-                    onPressed: null,
-                    icon: Icon(Icons.handyman_outlined)),
+                  IconButton(
+                    tooltip: 'Image Editing',
+                    onPressed:()=>_navigate('Image Editing'),
+                    icon:const Icon(Icons.handyman_outlined)),
                   Expanded(child: Text(_staged.isEmpty
                       ? 'Choose files to send...'
                       : _staged.length.toString() + ' selection(s)',
@@ -2440,7 +2604,7 @@ class FeatureDesignPage extends StatelessWidget {
         const DesignTag('Upload button disabled until complete'),
         const SizedBox(height: 16),
         _line(c, Icons.shield_outlined, 'Per-guest quota',
-          '200 MB and up to 4 upload sessions per rolling 24 hours'),
+          '200 MB and up to 4 upload sessions per IST day'),
       ]),
     ),
   ]);
@@ -2932,7 +3096,7 @@ class _MyQrPageState extends State<MyQrPage> {
             ])),
             const SizedBox(height:14),
             DesignPanel(child:Text(
-              'Guest limit: 200 MB total and 4 upload sessions per rolling 24 hours. '
+              'Guest limit: 200 MB total and 4 upload sessions per IST day. '
               'Every guest has a separate browser-based quota. All temporary QR '
               'files expire at 12:00 AM IST.',
               style:TextStyle(fontSize:12,height:1.5,

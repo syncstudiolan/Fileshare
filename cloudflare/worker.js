@@ -98,9 +98,11 @@ async function createSession(request, env) {
   const now = Date.now();
   const session = id();
   const expires = nextMidnightIST(now);
+  // Quota resets at midnight with the guest_sessions table purge.
+  const quotaWindowStart = expires - DAY;
   const statements = [
     // A single conditional INSERT enforces the four-session and 200-MB
-    // rolling window atomically. Failed condition breaks FK child inserts.
+    // current IST day atomically. Failed condition breaks FK child inserts.
     env.DB.prepare(
       'INSERT INTO guest_sessions(id,qr,guest_key,ip_hash,created_at,reserved_bytes,expires_at) ' +
       'SELECT ?,?,?,?,?,?,? WHERE ' +
@@ -108,7 +110,7 @@ async function createSession(request, env) {
       'AND (SELECT COALESCE(SUM(reserved_bytes),0) FROM guest_sessions ' +
       'WHERE qr=? AND guest_key=? AND created_at>=?) + ? <= ?'
     ).bind(session, body.qr, who.key, who.ipHash, now, total, expires,
-      body.qr, who.key, now - DAY, body.qr, who.key, now - DAY, total, QUOTA),
+      body.qr, who.key, quotaWindowStart, body.qr, who.key, quotaWindowStart, total, QUOTA),
   ];
   const returned = files.map((f, i) => ({
     id: id(),
@@ -230,11 +232,56 @@ async function finish(request, env, session) {
     'SELECT COUNT(*) AS pending FROM uploads WHERE session_id=? AND completed=0'
   ).bind(session).first();
   if (row.pending) return fail('Some uploads have not finished', 409);
-  await env.DB.prepare('UPDATE guest_sessions SET completed=1 WHERE id=?')
-    .bind(session).run();
+  const updated=await env.DB.prepare(
+    'UPDATE guest_sessions SET completed=1 WHERE id=? AND completed=0'
+  ).bind(session).run();
+  if(updated.meta?.changes)await notifyOwnerInbox(env);
   return json({ok: true});
 }
 
+
+// Per-owner hibernating WebSocket room. Only invalidation events are sent;
+// actual files stay in private R2 and metadata in D1.
+export class InboxEvents {
+  constructor(state,env) { this.state=state;this.env=env; }
+  async fetch(request) {
+    const url=new URL(request.url);
+    if(url.pathname==='/internal/inbox-notify' && request.method==='POST') {
+      for(const socket of this.state.getWebSockets()) {
+        try{socket.send('files-changed');}
+        catch(_){try{socket.close(1011,'Reconnect');}catch(_){}}
+      }
+      return new Response(null,{status:204});
+    }
+    if(url.pathname!=='/internal/inbox-socket' ||
+       request.headers.get('Upgrade')?.toLowerCase()!=='websocket') {
+      return new Response('WebSocket upgrade required',{status:426});
+    }
+    const [client,server]=Object.values(new WebSocketPair());
+    this.state.acceptWebSocket(server);
+    return new Response(null,{status:101,webSocket:client});
+  }
+  webSocketMessage(socket,message) {
+    if(message==='ping')socket.send('pong');
+  }
+  webSocketClose(socket,code,reason) {
+    try{socket.close(code,reason);}catch(_){}
+  }
+  webSocketError(socket) {
+    try{socket.close(1011,'Socket error');}catch(_){}
+  }
+}
+// A WebSocket failure is not an upload failure. The app reconciles D1 on
+// reconnect, so missed signals never permanently lose a file.
+async function notifyOwnerInbox(env) {
+  if(!env.INBOX_EVENTS)return;
+  try {
+    const room=env.INBOX_EVENTS.getByName('owner');
+    await room.fetch('https://inbox.internal/internal/inbox-notify',{
+      method:'POST',
+    });
+  }catch(_){}
+}
 
 const AUTH_PERIOD = 24 * 60 * 60 * 1000;
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -417,38 +464,75 @@ async function ownerApi(request, env, url) {
     if (!item) return json({ok: true});
     await env.FILES.delete(item.object_key);
     await env.DB.prepare('DELETE FROM uploads WHERE id=?').bind(fileMatch[1]).run();
+    await notifyOwnerInbox(env);
     return json({ok: true});
   }
   return fail('Not found', 404);
 }
 
+// QR-only, midnight-IST cleanup. No persistent delete queue is created.
+// A scheduled invocation deletes R2 objects in batches, removes their D1
+// uploads and multipart-part records, then broadcasts ONE invalidation event
+// for the whole run. Retry crons reuse the same expired D1 rows only if an
+// earlier delete failed, never recording additional queue entries.
 async function cleanup(env) {
-  const now = Date.now();
-  // A single short DB query is needed by the scheduled trigger. No R2 delete
-  // request is issued if the table has no expired files.
-  // Process multiple batches in the same midnight job (for example 2,000
-  // one-MB files). Cap work per run; the +2h/+4h schedules retry leftovers.
-  for (let batch = 0; batch < 20; batch++) {
-    const rows = await env.DB.prepare(
-      'SELECT id,object_key,upload_id FROM uploads ' +
-      'WHERE expires_at<=? LIMIT 500'
-    ).bind(now).all();
-    if (!rows.results.length) break; // no R2 delete call on empty inbox
-    for (const item of rows.results) {
-      if (item.upload_id) {
-        await env.FILES.resumeMultipartUpload(item.object_key, item.upload_id)
-          .abort().catch(() => {});
+  const now=Date.now();
+  let recordsDeleted=0;
+  try {
+    // 20 * 500 = 10,000 records max per invocation. The +2h/+4h crons
+    // retry an incomplete batch with no extra R2 calls when there is no work.
+    for(let batch=0;batch<20;batch++){
+      const rows=await env.DB.prepare(
+        'SELECT id,object_key,upload_id FROM uploads '+
+        'WHERE expires_at<=? LIMIT 500'
+      ).bind(now).all();
+      const items=rows.results||[];
+      if(!items.length)break;
+      // Abort unfinished multipart uploads before deleting their objects.
+      // R2 delete is idempotent; on failure D1 rows stay for the retry cron.
+      for(const item of items){
+        if(item.upload_id){
+          await env.FILES.resumeMultipartUpload(item.object_key,item.upload_id)
+            .abort().catch(()=>{});
+        }
+      }
+      await env.FILES.delete(items.map(item=>item.object_key));
+      // Cloudflare D1 supports at most 100 bind parameters per statement.
+      // Delete multipart rows and upload rows in groups of <=100 IDs,
+      // rather than N requests or one invalid 500-ID statement.
+      const ids=items.map(item=>item.id);
+      for(let offset=0;offset<ids.length;offset+=100){
+        const chunk=ids.slice(offset,offset+100);
+        const placeholders=chunk.map(()=>'?').join(',');
+        await env.DB.batch([
+          env.DB.prepare(
+            'DELETE FROM upload_parts WHERE file_id IN ('+placeholders+')'
+          ).bind(...chunk),
+          env.DB.prepare(
+            'DELETE FROM uploads WHERE id IN ('+placeholders+')'
+          ).bind(...chunk),
+        ]);
+        recordsDeleted+=chunk.length;
       }
     }
-    await env.FILES.delete(rows.results.map((item) => item.object_key));
-    const statements = rows.results.map((item) =>
-      env.DB.prepare('DELETE FROM uploads WHERE id=?').bind(item.id));
-    await env.DB.batch(statements);
+    // Remove expired, unreferenced guest session metadata at midnight.
+    // Retain permanent qr_codes and the personal owner account.
+    // Midnight resets QR guest quotas; no rolling-24h session history stays.
+    await env.DB.prepare(
+      'DELETE FROM guest_sessions WHERE expires_at<=? AND '+
+      'NOT EXISTS (SELECT 1 FROM uploads WHERE uploads.session_id=guest_sessions.id)'
+    ).bind(now).run();
+    // The old auth-attempt records should not accumulate indefinitely.
+    await env.DB.prepare(
+      'DELETE FROM auth_attempts WHERE changed_at<?'
+    ).bind(now-DAY).run();
+  }finally{
+    // Maximum one broadcast for all deleted files per cron invocation.
+    // Do not signal an unchanged inbox and never persist notification jobs.
+    if(recordsDeleted>0){
+      await notifyOwnerInbox(env);
+    }
   }
-  // Keep guest usage data for rolling 24h even after midnight file cleanup.
-  await env.DB.prepare('DELETE FROM guest_sessions WHERE created_at<? ' +
-    'AND NOT EXISTS (SELECT 1 FROM uploads WHERE uploads.session_id=guest_sessions.id)')
-    .bind(now - DAY).run();
 }
 
 export default {
@@ -462,6 +546,20 @@ export default {
         return fail('Cross-origin request refused', 403);
       }
       if (url.pathname.startsWith('/v1/auth/')) return authApi(request, env, url);
+      // Never expose the WebSocket room directly: authenticate the owner
+      // before upgrading, then use the internal Durable Object binding.
+      if(url.pathname==='/v1/owner/events' && request.method==='GET') {
+        if(!await owner(request,env))
+          return fail('Owner authentication required',401);
+        if(!env.INBOX_EVENTS)
+          return fail('Live inbox not provisioned; update cloud setup',503);
+        if(request.headers.get('Upgrade')?.toLowerCase()!=='websocket')
+          return fail('WebSocket upgrade required',426);
+        const room=env.INBOX_EVENTS.getByName('owner');
+        return room.fetch(new Request('https://inbox.internal/internal/inbox-socket',{
+          headers:{Upgrade:'websocket'},
+        }));
+      }
       if (url.pathname.startsWith('/v1/owner/')) {
         return ownerApi(request, env, url);
       }

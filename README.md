@@ -102,7 +102,7 @@ run any further build or live-cloud test.
 | External native Share | share_plus wired | Actual platform share UI not tested |
 | LAN 24-hour cleanup | History and private cache cleanup implemented | Background when Android is killed not guaranteed |
 | QR guest web page | Implemented in cloudflare/public/guest.html | Automatically deployed to each owner's personal Worker; real Cloudflare test pending |
-| Per-guest 200 MiB / 4 sessions | D1 conditional quota reservation implemented | Cookie/IP is not trustworthy hardware identity |
+| Per-guest 200 MiB / 4 sessions per IST day | D1 conditional quota reservation implemented | Cookie/IP is not trustworthy hardware identity |
 | 200MB large file | R2 multipart 6-MiB chunks implemented | Real upload/retry/network test required |
 | Owner's QR generate/revoke/regenerate | Worker routes + app QR image integrated | Requires connected Worker and owner secret |
 | QR files in unified feed | Integrated via PersonalCloud.refreshFiles | Manual refresh currently; real-time push not implemented |
@@ -158,7 +158,7 @@ See `cloudflare/README.md`. Every owner uses their own Worker + D1 + R2 and secr
 - Sent cards on the right have no Download; received cards on the left have Download, Delete, external Share and future Toolbox.
 - LAN transfers use local disk streaming and are not app-size-limited, but disk space/network speed remain physical constraints.
 - Sender originals are never deleted by local cleanup. App-owned temporary received copies expire 24h after receiving; expired batches and temporary records are pruned.
-- QR guest browser files are available only to the owner's secret-authorized Worker clients, and expire at midnight IST. Guest quota accounting survives until its rolling 24h end.
+- QR guest browser files are available only to the owner's secret-authorized Worker clients, and expire at midnight IST. Expired QR upload, multipart and guest-session metadata is cleared at the midnight IST cleanup after R2 deletion; no persistent deletion queue is stored. Daily guest quota resets at midnight IST. A single WebSocket invalidation per successful scheduled cleanup refreshes open client inboxes, and local QR cards expire at midnight without a network call.
 - Idle cloud polling is disabled. Cloud inbox needs explicit Refresh until push notification/real-time delivery is built.
 - A browser does not reveal a permanent hardware ID. Guest cookie and hashed IP are abuse signals, not guaranteed person identity.
 

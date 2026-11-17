@@ -30,6 +30,16 @@ class PersonalCloud extends ChangeNotifier {
   int _sessionExpiry = 0;
   String? _qrLink;
   final List<CloudFile> files = [];
+  final Map<String, Future<File>> _downloadsInFlight = {};
+  // A single foreground WebSocket replaces all periodic inbox polling.
+  WebSocket? _inboxSocket;
+  StreamSubscription<dynamic>? _inboxSubscription;
+  Timer? _inboxReconnect;
+  bool _inboxLiveEnabled=false;
+  bool _inboxConnecting=false;
+  bool _inboxRefreshPending=false;
+  int _inboxReconnectFailures=0;
+
   String? error;
   bool loading = false;
   bool _loggedOut = false;
@@ -229,6 +239,7 @@ class PersonalCloud extends ChangeNotifier {
   /// Real email/password login and cross-device recovery require the future
   /// account auth service; this is NOT a replacement for authentication.
   Future<void> signOutLocal() async {
+    stopLiveInbox();
     _loggedOut = true;
     _sessionToken=null;
     _qrLink = null;
@@ -239,6 +250,7 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    stopLiveInbox();
     _host = null;
     _ownerToken = null;
     _sessionToken=null;
@@ -284,7 +296,97 @@ class PersonalCloud extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// No idle polling. Called explicitly by user refresh or a future push.
+  /// Open one authenticated WebSocket while the dashboard is foregrounded.
+  /// Only a 'files-changed' signal crosses the socket; metadata is fetched
+  /// once on reconnect and when a real upload/delete event arrives.
+  void startLiveInbox() {
+    if(_inboxLiveEnabled)return;
+    _inboxLiveEnabled=true;
+    _inboxReconnectFailures=0;
+    unawaited(_connectLiveInbox());
+  }
+
+  void stopLiveInbox() {
+    _inboxLiveEnabled=false;
+    _inboxReconnect?.cancel();
+    _inboxReconnect=null;
+    final old=_inboxSocket;
+    _inboxSocket=null;
+    unawaited(_inboxSubscription?.cancel()??Future<void>.value());
+    _inboxSubscription=null;
+    if(old!=null)unawaited(old.close());
+  }
+
+  Future<void> _connectLiveInbox() async {
+    if(!_inboxLiveEnabled || _inboxConnecting || _inboxSocket!=null ||
+       !signedIn || _host==null)return;
+    _inboxConnecting=true;
+    try {
+      final uri=_host!.replace(scheme:'wss',path:'/v1/owner/events');
+      final socket=await WebSocket.connect(uri.toString(),headers:{
+        HttpHeaders.authorizationHeader:'Bearer '+_sessionToken!,
+      }).timeout(const Duration(seconds:12));
+      if(!_inboxLiveEnabled || !signedIn){
+        await socket.close();
+        return;
+      }
+      _inboxSocket=socket;
+      _inboxReconnectFailures=0;
+      // Reconcile missed upload events after any network interruption.
+      unawaited(_refreshAfterEvent());
+      _inboxSubscription=socket.listen((message){
+        if(message=='files-changed')unawaited(_refreshAfterEvent());
+      },onError:(Object _){
+        _lostLiveInbox(socket);
+      },onDone:(){
+        _lostLiveInbox(socket);
+      },cancelOnError:true);
+    }catch(error){
+      // Legacy Workers respond 404 to the new endpoint. Do NOT probe them
+      // every minute: owner must explicitly upgrade Worker once via Auto
+      // Connect. Genuine network drops still use bounded reconnect backoff.
+      final message=error.toString();
+      if(message.contains('HTTP status code: 404') ||
+         message.contains('HTTP status code: 426') ||
+         message.contains('HTTP status code: 503')){
+        _inboxLiveEnabled=false;
+      }else{
+        _scheduleInboxReconnect();
+      }
+    }finally{
+      _inboxConnecting=false;
+    }
+  }
+
+  void _lostLiveInbox(WebSocket socket) {
+    if(!identical(_inboxSocket,socket))return;
+    _inboxSocket=null;
+    unawaited(_inboxSubscription?.cancel()??Future<void>.value());
+    _inboxSubscription=null;
+    _scheduleInboxReconnect();
+  }
+
+  void _scheduleInboxReconnect() {
+    if(!_inboxLiveEnabled || !signedIn || _inboxReconnect!=null)return;
+    const seconds=[2,4,8,16,30,60];
+    final index=_inboxReconnectFailures.clamp(0,seconds.length-1);
+    _inboxReconnectFailures++;
+    // Backoff only after a broken socket; never poll a healthy connection.
+    _inboxReconnect=Timer(Duration(seconds:seconds[index]),(){
+      _inboxReconnect=null;
+      unawaited(_connectLiveInbox());
+    });
+  }
+
+  Future<void> _refreshAfterEvent() async {
+    if(loading){
+      _inboxRefreshPending=true;
+      return;
+    }
+    await refreshFiles();
+  }
+
+  /// Metadata fetch is event-triggered or explicit, never timed polling.
   Future<void> refreshFiles() async {
     if (!connected || loading) return;
     loading = true;
@@ -313,7 +415,16 @@ class PersonalCloud extends ChangeNotifier {
       files..clear()..addAll(fetched);
       error = null;
     } catch (e) { error = 'Cloud inbox refresh failed: ' + e.toString(); }
-    finally { loading = false; notifyListeners(); }
+    finally {
+      loading = false;
+      notifyListeners();
+      // If an upload notification arrived while another refresh was
+      // in-flight, coalesce it into ONE follow-up D1 request.
+      if(_inboxRefreshPending && _inboxLiveEnabled){
+        _inboxRefreshPending=false;
+        scheduleMicrotask(() => unawaited(_refreshAfterEvent()));
+      }
+    }
   }
 
   static int nextMidnightIst() {
@@ -357,29 +468,46 @@ class PersonalCloud extends ChangeNotifier {
     unawaited(cleanupLocalCache());
   }
 
-  Future<File> download(CloudFile item) async {
-    if (!connected) throw StateError('Cloud not connected');
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
-    final cache = await _cacheDir();
-    final safe = item.name.replaceAll(RegExp(r'[/\\\x00-\x1f]'), '_');
-    final target = File(cache.path + Platform.pathSeparator + 'cloud_' +
-      nextMidnightIst().toString() + '_' + item.id + '_' + safe);
-    try {
-      final request = await client.getUrl(
-        _host!.resolve('/v1/owner/file/' + item.id));
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' +
-        (signedIn ? _sessionToken! : _ownerToken!));
-      final response = await request.close();
-      if (response.statusCode != 200) {
-        throw StateError('Cloud download returned HTTP ' +
-          response.statusCode.toString());
-      }
-      await response.pipe(target.openWrite());
-      return target;
-    } catch (_) {
-      if (await target.exists()) await target.delete();
+  /// Reuse downloads across thumbnail, preview, Share, Tools and Save.
+  /// File data stays in private storage and expires with the QR files.
+  Future<File> download(CloudFile item) {
+    final pending=_downloadsInFlight[item.id];
+    if(pending!=null)return pending;
+    final task=_downloadFile(item);
+    _downloadsInFlight[item.id]=task;
+    task.then((_) => _downloadsInFlight.remove(item.id),
+      onError:(Object _) => _downloadsInFlight.remove(item.id));
+    return task;
+  }
+
+  Future<File> _downloadFile(CloudFile item) async {
+    if(!connected)throw StateError('Cloud not connected');
+    final cache=await _cacheDir();
+    final safe=item.name.replaceAll(RegExp(r'[/\\\x00-\x1f]'),'_');
+    final target=File(cache.path+Platform.pathSeparator+'cloud_'+
+      nextMidnightIst().toString()+'_'+item.id+'_'+safe);
+    if(await target.exists()){
+      if(await target.length()==item.size)return target;
+      await target.delete();
+    }
+    final temporary=File(target.path+'.part');
+    final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
+    try{
+      final request=await client.getUrl(
+        _host!.resolve('/v1/owner/file/'+item.id));
+      request.headers.set(HttpHeaders.authorizationHeader,'Bearer '+
+        (signedIn?_sessionToken!:_ownerToken!));
+      final response=await request.close().timeout(const Duration(seconds:30));
+      if(response.statusCode!=200)throw StateError(
+        'Cloud download returned HTTP '+response.statusCode.toString());
+      await response.pipe(temporary.openWrite());
+      if(await temporary.length()!=item.size)throw const FormatException(
+        'Cloud file download was incomplete');
+      return temporary.rename(target.path);
+    }catch(_){
+      if(await temporary.exists())await temporary.delete();
       rethrow;
-    } finally { client.close(force: true); }
+    }finally{client.close(force:true);}
   }
 
   Future<void> deleteRemote(CloudFile item) async {
