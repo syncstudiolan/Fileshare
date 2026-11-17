@@ -55,7 +55,7 @@ run any further build or live-cloud test.
 | Area | Code status | Practical status |
 | --- | --- | --- |
 | Lavender/Pink light and dark UI | Implemented | Device-specific visual QA still required |
-| Welcome, skip-to-LAN, login form | UI implemented | Central email/password authentication NOT implemented |
+| Welcome, skip-to-LAN, login form | Per-owner Worker signup/login code implemented | Central global email-only discovery and email verification NOT implemented |
 | One unified chat for LAN + QR | Implemented | Real QR feed needs user's deployed Worker |
 | LAN peer discovery | UDP broadcast engine implemented | Two-device discovery not yet tested; router/Windows Firewall may block |
 | Direct LAN file transfer | TCP streamed send/receive and delivery acknowledgement implemented | No device-to-device test yet |
@@ -71,8 +71,8 @@ run any further build or live-cloud test.
 | Owner's QR generate/revoke/regenerate | Worker routes + app QR image integrated | Requires connected Worker and owner secret |
 | QR files in unified feed | Integrated via PersonalCloud.refreshFiles | Manual refresh currently; real-time push not implemented |
 | Midnight IST QR cleanup | Worker scheduled batch cleanup + app card expiry | Real Cron timing and error retries untested |
-| One-time per-user Cloudflare Account ID/API Token provisioning | Not implemented | Requires secured provisioning flow, deployments and permissions |
-| Login and cross-device account linking | Not implemented | Needs central identity/account directory |
+| One-time per-user Cloudflare Account ID/API Token provisioning | Implemented in code | Real user-owned Cloudflare deployment and permissions test NOT run |
+| Personal Worker email/password account and cross-device login | Implemented in code | Same Worker URL required; no central global account directory or live auth test |
 | Android background receiving | Foreground sockets only | Foreground service and OS/background tests remain |
 | Native Android/Windows runners | Partially configured; Android Manifest committed | Generated platform files/builds not yet verified |
 | LAN secure peer trust, retries and transfer resume | Not implemented | Needs robust production engineering |
