@@ -73,21 +73,27 @@ class ImageEditingEngine {
         }
       case 'erase':
       case 'restore':
-        final x = (decimal('x', .5) * output.width).round();
-        final y = (decimal('y', .5) * output.height).round();
-        final radius = (decimal('radius', .03) * math.min(output.width, output.height))
-            .round().clamp(1, 240);
+        final points=(options['points'] as List?) ?? [
+          {'x': decimal('x', .5), 'y': decimal('y', .5)},
+        ];
+        final radius = (decimal('radius', .03) *
+          math.min(output.width, output.height)).round().clamp(1, 240);
         final softness = decimal('softness', .4).clamp(0.01, 1.0);
-        final erase = action == 'erase';
-        for (var py = math.max(0, y - radius); py <= math.min(output.height - 1, y + radius); py++) {
-          for (var px = math.max(0, x - radius); px <= math.min(output.width - 1, x + radius); px++) {
-            final distance = math.sqrt(math.pow(px - x, 2) + math.pow(py - y, 2));
-            if (distance > radius) continue;
-            final feather = ((radius - distance) / (radius * softness)).clamp(0.0, 1.0);
-            final pixel = output.getPixel(px, py);
-            final alpha = erase ? pixel.a * (1 - feather)
-                : pixel.a + (255 - pixel.a) * feather;
-            output.setPixelRgba(px, py, pixel.r, pixel.g, pixel.b, alpha.round());
+        final erase=action=='erase';
+        for(final point in points){
+          if(point is! Map)continue;
+          final x=((point['x'] as num).toDouble()*output.width).round();
+          final y=((point['y'] as num).toDouble()*output.height).round();
+          for(var py=math.max(0,y-radius);py<=math.min(output.height-1,y+radius);py++){
+            for(var px=math.max(0,x-radius);px<=math.min(output.width-1,x+radius);px++){
+              final distance=math.sqrt((px-x)*(px-x)+(py-y)*(py-y));
+              if(distance>radius)continue;
+              final feather=((radius-distance)/(radius*softness)).clamp(0.0,1.0);
+              final pixel=output.getPixel(px,py);
+              final alpha=erase?pixel.a*(1-feather):
+                pixel.a+(255-pixel.a)*feather;
+              output.setPixelRgba(px,py,pixel.r,pixel.g,pixel.b,alpha.round());
+            }
           }
         }
       case 'resize':
@@ -119,13 +125,14 @@ class ImageEditingEngine {
     });
 
   static Uint8List _compressOperation(Map<String, Object?> request) {
-    var source = img.decodeImage(request['bytes'] as Uint8List);
-    if (source == null) throw const FormatException('Invalid image');
+    final decoded = img.decodeImage(request['bytes'] as Uint8List);
+    if (decoded == null) throw const FormatException('Invalid image');
+    var source = decoded;
     final format = request['format'] as String;
     if (format == 'PNG') return Uint8List.fromList(img.encodePng(source, level: 9));
     var quality = (request['quality'] as int).clamp(1, 100);
     final targetBytes = (request['targetKb'] as int).clamp(1, 500000) * 1024;
-    Uint8List encode(int q) => Uint8List.fromList(img.encodeJpg(source!, quality: q));
+    Uint8List encode(int q) => Uint8List.fromList(img.encodeJpg(source, quality: q));
     var result = encode(quality);
     if (result.length <= targetBytes) return result;
     // Target-size search is bounded and saves the smallest valid result.
