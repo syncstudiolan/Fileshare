@@ -118,3 +118,42 @@ test('directory health requires no mail service',async()=>{
     new Request('https://directory.example.net/health'),state);
   assert.equal(response.status,200);
 });
+
+test('same-account Worker login and claim use local service binding',async()=>{
+  const state=env();
+  state.LOCAL_PERSONAL_URL=personalOrigin;
+  const calls=[];
+  state.LOCAL_PERSONAL_WORKER={
+    async fetch(request){
+      calls.push({url:request.url,method:request.method});
+      if(request.url.endsWith('/v1/auth/me')){
+        assert.equal(request.headers.get('authorization'),'Bearer '+session);
+        return Response.json({ok:true,email});
+      }
+      if(request.url.endsWith('/v1/auth/login')){
+        const body=await request.json();
+        assert.equal(body.email,email);
+        assert.equal(body.password,'correct-secure-password');
+        return Response.json({ok:true,email,session,
+          expiresAt:Date.now()+3600000});
+      }
+      throw Error('Unexpected service binding route');
+    },
+  };
+  globalThis.fetch=async()=>{throw Error('Same-zone public fetch prohibited');};
+  try{
+    const linked=await worker.fetch(make('/v1/directory/claim',{
+      email,workerUrl:personalOrigin,personalSession:session,
+    }),state);
+    assert.equal(linked.status,200);
+    const login=await worker.fetch(make('/v1/directory/login',{
+      email,password:'correct-secure-password',
+    }),state);
+    assert.equal(login.status,200);
+    assert.equal((await login.json()).workerUrl,personalOrigin);
+    assert.deepEqual(calls.map(x=>new URL(x.url).pathname),
+      ['/v1/auth/me','/v1/auth/login']);
+  }finally{
+    globalThis.fetch=originalFetch;
+  }
+});
