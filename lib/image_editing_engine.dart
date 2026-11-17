@@ -134,9 +134,21 @@ class ImageEditingEngine {
     if (decoded == null) throw const FormatException('Invalid image');
     var source = decoded;
     final format = request['format'] as String;
-    if (format == 'PNG') return Uint8List.fromList(img.encodePng(source, level: 9));
+    final targetBytes = (request['targetKb'] as int).clamp(1, 500000).toInt() * 1024;
+    if(format=='PNG'){
+      var result=Uint8List.fromList(img.encodePng(source,level:9));
+      if(result.length<=targetBytes)return result;
+      for(var i=0;i<12;i++){
+        final width=(source.width*.82).round();
+        final height=(source.height*.82).round();
+        if(width<32||height<32)break;
+        source=img.copyResize(source,width:width,height:height);
+        result=Uint8List.fromList(img.encodePng(source,level:9));
+        if(result.length<=targetBytes)break;
+      }
+      return result;
+    }
     var quality = (request['quality'] as int).clamp(1, 100).toInt();
-    final targetBytes = (request['targetKb'] as int).clamp(1, 500000) * 1024;
     Uint8List encode(int q) => Uint8List.fromList(img.encodeJpg(source, quality: q));
     var result = encode(quality);
     if (result.length <= targetBytes) return result;
