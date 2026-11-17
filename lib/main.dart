@@ -2058,6 +2058,36 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     return timeline;
   }
 
+  LanFile _cloudAsLocalFile(CloudFile entry, File local) => LanFile(
+    id:'cloud_'+entry.id,batch:entry.session,name:entry.name,
+    path:local.path,peer:'Guest browser',incoming:true,
+    size:entry.size,created:entry.created,state:TransferState.delivered);
+
+  Future<void> _previewCloud(CloudFile entry) async {
+    try{
+      final local=await PersonalCloud.instance.download(entry);
+      if(!mounted)return;
+      final selected=_cloudAsLocalFile(entry,local);
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder:(_)=>FullScreenFilePreview(
+          file:selected,
+          onSave:(_)=>_saveCloud(entry),
+          onDelete:(_)=>_deleteCloud(entry),
+          onShare:(_)=>_shareCloud(entry),
+          onTools:(_)=>_openCloudTools(entry))));
+    }catch(e){_snack('QR Preview failed: '+e.toString());}
+  }
+
+  Future<void> _openCloudTools(CloudFile entry) async {
+    try{
+      final local=await PersonalCloud.instance.download(entry);
+      if(!mounted)return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder:(_)=>SelectedFileToolsPage(
+          file:_cloudAsLocalFile(entry,local))));
+    }catch(e){_snack('QR Tools failed: '+e.toString());}
+  }
+
   Future<void> _saveCloud(CloudFile entry) async {
     try {
       final downloaded = await PersonalCloud.instance.download(entry);
@@ -2232,7 +2262,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         onShare: _share, onTools: _openFileTools)
                     : CloudInboxCard(items: groups[i].cloud!,
                         onSave: _saveCloud, onDelete: _deleteCloud,
-                        onShare: _shareCloud))
+                        onShare: _shareCloud, onPreview: _previewCloud,
+                        onTools: _openCloudTools))
               : useDemo
                 ? ListView.builder(
                     padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
