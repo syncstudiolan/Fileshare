@@ -98,9 +98,11 @@ async function createSession(request, env) {
   const now = Date.now();
   const session = id();
   const expires = nextMidnightIST(now);
+  // Quota resets at midnight with the guest_sessions table purge.
+  const quotaWindowStart = expires - DAY;
   const statements = [
     // A single conditional INSERT enforces the four-session and 200-MB
-    // rolling window atomically. Failed condition breaks FK child inserts.
+    // current IST day atomically. Failed condition breaks FK child inserts.
     env.DB.prepare(
       'INSERT INTO guest_sessions(id,qr,guest_key,ip_hash,created_at,reserved_bytes,expires_at) ' +
       'SELECT ?,?,?,?,?,?,? WHERE ' +
@@ -108,7 +110,7 @@ async function createSession(request, env) {
       'AND (SELECT COALESCE(SUM(reserved_bytes),0) FROM guest_sessions ' +
       'WHERE qr=? AND guest_key=? AND created_at>=?) + ? <= ?'
     ).bind(session, body.qr, who.key, who.ipHash, now, total, expires,
-      body.qr, who.key, now - DAY, body.qr, who.key, now - DAY, total, QUOTA),
+      body.qr, who.key, quotaWindowStart, body.qr, who.key, quotaWindowStart, total, QUOTA),
   ];
   const returned = files.map((f, i) => ({
     id: id(),
@@ -513,8 +515,8 @@ async function cleanup(env) {
         recordsDeleted+=chunk.length;
       }
     }
-    // Remove expired or now-unreferenced guest session metadata as part of
-    // the same midnight job. Retain qr_codes and the personal owner account.
+    // Remove expired, unreferenced guest session metadata at midnight.
+    // Retain permanent qr_codes and the personal owner account.
     // Midnight resets QR guest quotas; no rolling-24h session history stays.
     await env.DB.prepare(
       'DELETE FROM guest_sessions WHERE expires_at<=? AND '+
