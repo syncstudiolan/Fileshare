@@ -12,6 +12,7 @@ import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
 import 'personal_cloud.dart';
+import 'cloudflare_provisioning.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:flutter/material.dart';
@@ -675,161 +676,153 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _key = GlobalKey<FormState>();
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  bool _register = false;
-  bool _hidden = true;
+  final _key=GlobalKey<FormState>();
+  final _email=TextEditingController();
+  final _password=TextEditingController();
+  final _workerUrl=TextEditingController();
+  bool _register=false,_hidden=true,_busy=false;
+  String? _error;
 
-  @override
-  void dispose() {
-    _email.dispose();
-    _password.dispose();
+  @override void initState(){
+    super.initState();
+    final cloud=PersonalCloud.instance;
+    _workerUrl.text=cloud.workerOrigin??'';
+    _register=cloud.canRegisterAccount && !cloud.signedIn;
+    _email.text=cloud.accountEmail??'';
+  }
+  @override void dispose(){
+    _email.dispose();_password.dispose();_workerUrl.dispose();
     super.dispose();
   }
-
+  Future<void> _submit()async{
+    if(_busy||!(_key.currentState?.validate()??false))return;
+    final cloud=PersonalCloud.instance;
+    setState((){_busy=true;_error=null;});
+    try{
+      if(_register){
+        await cloud.registerAccount(_email.text,_password.text);
+      }else{
+        await cloud.loginAccount(_workerUrl.text,_email.text,_password.text);
+      }
+      await SharedPreferencesAsync().setBool('offline_start',true);
+      if(!mounted)return;
+      Navigator.of(context).pushAndRemoveUntil(fadePage(
+        DashboardPage(mode:widget.mode,onMode:widget.onMode)),(_)=>false);
+    }catch(e){
+      if(mounted)setState(()=>_error=e.toString().replaceFirst('Bad state: ',''));
+    }finally{if(mounted)setState(()=>_busy=false);}
+  }
+  void _openCloudSetup(){
+    Navigator.push(context,fadePage(
+      CloudConnectPage(mode:widget.mode,onMode:widget.onMode)
+    )).then((_){
+      if(mounted)setState((){
+        _workerUrl.text=PersonalCloud.instance.workerOrigin??'';
+        _register=PersonalCloud.instance.canRegisterAccount;
+      });
+    });
+  }
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: Container(
-          decoration: BoxDecoration(gradient: FileTheme.background(context)),
-          child: SafeArea(
-            child: Column(children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
+  Widget build(BuildContext context)=>Scaffold(
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:SafeArea(child:Column(children:[
+        Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),
+          child:Row(children:[
+            IconButton(tooltip:'Back',onPressed:()=>Navigator.maybePop(context),
+              icon:const Icon(Icons.arrow_back_rounded)),
+            Expanded(child:Text('File Share Account',
+              style:Theme.of(context).textTheme.titleLarge)),
+            AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+          ])),
+        Expanded(child:Center(child:ConstrainedBox(
+          constraints:const BoxConstraints(maxWidth:520),
+          child:ListView(shrinkWrap:true,
+            padding:const EdgeInsets.all(24),children:[
+              const Center(child:AppLogo(size:68)),
+              const SizedBox(height:22),
+              Text(_register?'Create your account':'Welcome back',
+                textAlign:TextAlign.center,style:TextStyle(
+                  fontSize:28,fontWeight:FontWeight.w800,
+                  color:FileTheme.foreground(context))),
+              const SizedBox(height:9),
+              Text('Your account lives on your own private Cloudflare Worker. '
+                'Offline LAN works without signing in.',
+                textAlign:TextAlign.center,
+                style:TextStyle(color:FileTheme.muted(context),height:1.4)),
+              const SizedBox(height:24),
+              Form(key:_key,child:Column(children:[
+                TextFormField(
+                  controller:_workerUrl,enabled:!_register&&!_busy,
+                  keyboardType:TextInputType.url,
+                  decoration:const InputDecoration(
+                    labelText:'Personal Worker URL',
+                    hintText:'https://name.account.workers.dev',
+                    prefixIcon:Icon(Icons.cloud_outlined)),
+                  validator:(value)=>_register?null:
+                    ((value??'').contains('.workers.dev')?null:
+                      'Enter your own Worker URL or connect Cloudflare first'),
                 ),
-                child: Row(children: [
-                  IconButton(
-                    tooltip: 'Back',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                  ),
-                  Expanded(
-                    child: Text('Account',
-                        style: Theme.of(context).textTheme.titleLarge),
-                  ),
-                  AppearanceButton(mode: widget.mode, onChange: widget.onMode),
-                ]),
-              ),
-              Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 500),
-                    child: ListView(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.all(24),
-                      children: [
-                        const Center(child: AppLogo(size: 68)),
-                        const SizedBox(height: 22),
-                        Text(
-                          _register ? 'Create your account' : 'Welcome back',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: FileTheme.foreground(context),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Login to connect your personal Cloudflare and QR.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: FileTheme.muted(context)),
-                        ),
-                        const SizedBox(height: 28),
-                        Form(
-                          key: _key,
-                          child: Column(children: [
-                            TextFormField(
-                              controller: _email,
-                              keyboardType: TextInputType.emailAddress,
-                              autofillHints: const [AutofillHints.email],
-                              decoration: const InputDecoration(
-                                labelText: 'Email address',
-                                prefixIcon: Icon(Icons.mail_outline_rounded),
-                              ),
-                              validator: (value) =>
-                                  (value == null ||
-                                          !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                                              .hasMatch(value.trim()))
-                                      ? 'Enter a valid email'
-                                      : null,
-                            ),
-                            const SizedBox(height: 14),
-                            TextFormField(
-                              controller: _password,
-                              obscureText: _hidden,
-                              autofillHints: [
-                                _register
-                                    ? AutofillHints.newPassword
-                                    : AutofillHints.password
-                              ],
-                              decoration: InputDecoration(
-                                labelText: 'Password',
-                                prefixIcon:
-                                    const Icon(Icons.lock_outline_rounded),
-                                suffixIcon: IconButton(
-                                  tooltip:
-                                      _hidden ? 'Show password' : 'Hide password',
-                                  onPressed: () =>
-                                      setState(() => _hidden = !_hidden),
-                                  icon: Icon(_hidden
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined),
-                                ),
-                              ),
-                              validator: (value) =>
-                                  (value == null || value.length < 8)
-                                      ? 'Use at least 8 characters'
-                                      : null,
-                            ),
-                            const SizedBox(height: 18),
-                            SizedBox(
-                              height: 54,
-                              width: double.infinity,
-                              child: FilledButton(
-                                onPressed: () {
-                                  if (!_key.currentState!.validate()) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        'Authentication backend is not connected. No credentials were sent.',
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child: Text(_register
-                                    ? 'Create account'
-                                    : 'Login'),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextButton(
-                              onPressed: () =>
-                                  setState(() => _register = !_register),
-                              child: Text(_register
-                                  ? 'Already have an account? Login'
-                                  : 'New here? Create account'),
-                            ),
-                            const SizedBox(height: 18),
-                            Text('Phase 1 UI only · Authentication is not active',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: FileTheme.muted(context),
-                                )),
-                          ]),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      );
+                const SizedBox(height:12),
+                TextFormField(
+                  controller:_email,enabled:!_busy,
+                  keyboardType:TextInputType.emailAddress,
+                  autofillHints:const [AutofillHints.email],
+                  decoration:const InputDecoration(labelText:'Email address',
+                    prefixIcon:Icon(Icons.mail_outline_rounded)),
+                  validator:(value)=>RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                    .hasMatch(value?.trim()??'')?null:'Enter valid email'),
+                const SizedBox(height:12),
+                TextFormField(controller:_password,
+                  obscureText:_hidden,enabled:!_busy,
+                  autofillHints:[_register?AutofillHints.newPassword:
+                    AutofillHints.password],
+                  decoration:InputDecoration(
+                    labelText:'Password (10+ characters)',
+                    prefixIcon:const Icon(Icons.lock_outline_rounded),
+                    suffixIcon:IconButton(
+                      tooltip:_hidden?'Show password':'Hide password',
+                      onPressed:()=>setState(()=>_hidden=!_hidden),
+                      icon:Icon(_hidden?Icons.visibility_outlined:
+                        Icons.visibility_off_outlined))),
+                  validator:(value)=>(value??'').length>=10?null:
+                    'Use at least 10 characters'),
+                const SizedBox(height:16),
+                if(_register&&!PersonalCloud.instance.canRegisterAccount)
+                  Padding(padding:const EdgeInsets.only(bottom:12),
+                    child:Text('First connect or provision your personal '
+                      'Cloudflare Worker to register the account securely.',
+                      textAlign:TextAlign.center,
+                      style:TextStyle(color:FileTheme.muted(context)))),
+                if(_error!=null)Padding(
+                  padding:const EdgeInsets.only(bottom:10),
+                  child:Text(_error!,textAlign:TextAlign.center,
+                    style:const TextStyle(color:Colors.deepOrange))),
+                SizedBox(height:52,width:double.infinity,
+                  child:FilledButton(
+                    onPressed:_busy?null:_submit,
+                    child:_busy?const SizedBox(width:22,height:22,
+                      child:CircularProgressIndicator(strokeWidth:2)):
+                      Text(_register?'Create account':'Login'))),
+                const SizedBox(height:11),
+                TextButton(
+                  onPressed:_busy?null:()=>setState(()=>_register=!_register),
+                  child:Text(_register?'Already registered? Login':
+                    'New here? Create account')),
+                OutlinedButton.icon(
+                  onPressed:_busy?null:_openCloudSetup,
+                  icon:const Icon(Icons.cloud_sync_outlined),
+                  label:const Text('Set up or connect personal Cloudflare')),
+              ])),
+              const SizedBox(height:15),
+              Text('On another device, sign in with your same email/password '
+                'and Worker URL. Your Cloudflare API token is not needed again.',
+                textAlign:TextAlign.center,
+                style:TextStyle(fontSize:12,color:FileTheme.muted(context))),
+            ]))),
+      ])),
+    ),
+  );
 }
 
 /* Full UI design preview: all transfer items, counts, progress and devices
