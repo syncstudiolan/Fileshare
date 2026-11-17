@@ -36,7 +36,7 @@ class PersonalCloud extends ChangeNotifier {
       _sessionExpiry > DateTime.now().millisecondsSinceEpoch;
   String? get accountEmail => _accountEmail;
   bool get connected => !_loggedOut && _host != null &&
-    (signedIn || _ownerToken != null);
+    (signedIn || (_ownerToken != null && _accountEmail == null));
   bool get cloudSetupSaved => _host != null;
   bool get canRegisterAccount => _ownerToken != null && _host != null;
   String? get workerOrigin => _host?.origin;
@@ -103,7 +103,7 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _call(String method, String path) {
-    if (!connected) throw StateError('Connect your personal cloud first');
+    if (!connected) throw StateError('Please login. Your Cloudflare setup is retained.');
     return _request(_host!, signedIn ? _sessionToken! : _ownerToken!, method, path);
   }
 
