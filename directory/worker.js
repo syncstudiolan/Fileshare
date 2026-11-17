@@ -67,11 +67,23 @@ async function throttle(env, kind, request, email, max, windowMs) {
   return true;
 }
 
-async function verifyPersonalSession(worker, email, session) {
+// Service binding avoids unsupported same-account workers.dev -> workers.dev
+// subrequests. For customers on OTHER Cloudflare accounts use public HTTPS.
+// The local binding is only used for the one exact operator-owned hostname.
+function personalFetch(env, worker, route, options) {
+  const url = worker + route;
+  const local = env.LOCAL_PERSONAL_WORKER;
+  if (local && env.LOCAL_PERSONAL_URL === worker) {
+    return local.fetch(new Request(url, options));
+  }
+  return fetch(url, options);
+}
+
+async function verifyPersonalSession(worker, email, session, env) {
   if (typeof session !== 'string' || session.length < 24 ||
       session.length > 1800) return false;
   try {
-    const response = await fetch(worker + '/v1/auth/me', {
+    const response = await personalFetch(env, worker, '/v1/auth/me', {
       headers: {'authorization': 'Bearer ' + session, 'accept':'application/json'},
       signal: AbortSignal.timeout(10000),
       redirect: 'error',
@@ -92,7 +104,7 @@ async function claim(request, env) {
   if (!isEmail(email) || !worker) return fail('Invalid account details',400);
   if (!await throttle(env,'claim',request,email,6,15*60*1000))
     return fail('Please retry later',429);
-  if (!await verifyPersonalSession(worker,email,body?.personalSession))
+  if (!await verifyPersonalSession(worker,email,body?.personalSession,env))
     return fail('Personal Worker session required',403);
 
   const existing = await env.DB.prepare(
@@ -133,7 +145,7 @@ async function signIn(request,env) {
   // NEVER placed in the directory database or written to a log.
   let response;
   try {
-    response=await fetch(worker+'/v1/auth/login',{
+    response=await personalFetch(env,worker,'/v1/auth/login',{
       method:'POST',
       headers:{'content-type':'application/json','accept':'application/json'},
       body:JSON.stringify({email,password}),
