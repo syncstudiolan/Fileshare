@@ -1807,8 +1807,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         }
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
-      PersonalCloud.instance.restore().then((_) =>
-        PersonalCloud.instance.cleanupLocalCache()).catchError((Object e) {
+      PersonalCloud.instance.restore().then((_) async {
+        await PersonalCloud.instance.cleanupLocalCache();
+        _syncCloudInbox();
+      }).catchError((Object e) {
           _snack('Personal cloud storage unavailable: ' + e.toString());
         });
     });
