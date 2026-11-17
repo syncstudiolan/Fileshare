@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS upload_parts (
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
-  email TEXT PRIMARY KEY,
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  email TEXT UNIQUE NOT NULL,
   salt TEXT NOT NULL,
   hash TEXT NOT NULL,
   created_at INTEGER NOT NULL
