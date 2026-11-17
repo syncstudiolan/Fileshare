@@ -367,10 +367,17 @@ class LanEngine extends ChangeNotifier {
           _attempts[key]=DateTime.now();
           final source=File(item.path);
           if(!await source.exists())continue;
-          final entry=LanFile(id:newId(),batch:batch.id,name:item.name,
+          final matches=files.where((f)=>!f.incoming && f.batch==batch.id &&
+            f.peerId==peer.id && f.id==item.id);
+          final entry=matches.isNotEmpty ? matches.first : LanFile(
+            id:item.id,batch:batch.id,name:item.name,
             path:item.path,peer:peer.name,peerId:peer.id,incoming:false,
             size:item.size,created:batch.created,state:TransferState.preparing);
-          files.insert(0,entry);_update(save:true);
+          if(matches.isEmpty)files.insert(0,entry);
+          entry.state=TransferState.preparing;
+          entry.error=null;
+          entry.done=0;
+          _update(save:true);
           await _sendOne(source,peer,entry);
           if(entry.state==TransferState.delivered){
             batch.deliveredKeys.add(key);_saveQueue();
@@ -499,17 +506,20 @@ class LanEngine extends ChangeNotifier {
     try {
       final header = <int>[];
       var ready = false, got = 0, expected = -1;
+      var alreadyDelivered = false;
       Future<void> store(List<int> bytes) async {
         if (bytes.isEmpty) return;
         if (got + bytes.length > expected) {
           throw const FormatException('More bytes than declared');
         }
-        out!.add(bytes);
+        if (!alreadyDelivered) out!.add(bytes);
         got += bytes.length;
-        record!.done = got;
-        if (got == expected || got % (1024 * 1024) < bytes.length) {
-          await out!.flush();
-          _notify();
+        if (!alreadyDelivered) {
+          record!.done = got;
+          if (got == expected || got % (1024 * 1024) < bytes.length) {
+            await out!.flush();
+            _notify();
+          }
         }
       }
 
@@ -538,20 +548,34 @@ class LanEngine extends ChangeNotifier {
             throw const FormatException('Invalid transfer');
           }
           expected = meta['size'] as int;
-          final id = newId();
+          final senderId = (meta['senderId'] as String?) ?? socket.remoteAddress.address;
+          final transferId = (meta['id'] as String?) ?? '';
+          // Stable, scoped IDs survive ACK loss and sender retries.
+          final id = transferId.isEmpty ? newId() : '${senderId}_$transferId';
           final name = safeFileName(meta['name'] as String);
           final destination = _inbox!.path + Platform.pathSeparator + id + '_' + name;
-          part = File(destination + '.part');
-          out = part.openWrite();
-          record = LanFile(
-            id: id, batch: safeFileName((meta['batch'] as String?) ?? id),
-            name: name, path: destination,
-            peer: safeFileName((meta['sender'] as String?) ?? socket.remoteAddress.address),
-            peerId: (meta['senderId'] as String?) ?? '',
-            incoming: true, size: expected, created: DateTime.now(),
-            state: TransferState.receiving);
-          files.insert(0, record);
-          _update(save: true);
+          final existing = files.where((f) => f.incoming && f.id == id &&
+            f.state == TransferState.delivered && f.size == expected &&
+            f.name == name && File(f.path).existsSync());
+          alreadyDelivered = existing.isNotEmpty;
+          if (alreadyDelivered) {
+            record = existing.first;
+          } else {
+            // A previous partial attempt must not produce another card.
+            files.removeWhere((f) => f.incoming && f.id == id &&
+              f.state != TransferState.delivered);
+            part = File(destination + '.part');
+            out = part.openWrite();
+            record = LanFile(
+              id: id, batch: safeFileName((meta['batch'] as String?) ?? id),
+              name: name, path: destination,
+              peer: safeFileName((meta['sender'] as String?) ?? socket.remoteAddress.address),
+              peerId: senderId,
+              incoming: true, size: expected, created: DateTime.now(),
+              state: TransferState.receiving);
+            files.insert(0, record);
+            _update(save: true);
+          }
           ready = true;
           await store(chunk.sublist(newline + 1));
         }
@@ -562,17 +586,23 @@ class LanEngine extends ChangeNotifier {
       if (!ready || got != expected) {
         throw const SocketException('Incoming file incomplete');
       }
-      await out!.flush();
-      await out.close();
-      out = null;
-      await part!.rename(record!.path);
-      record.state = TransferState.delivered;
-      record.done = expected;
-      // The peer receives OK only AFTER persistence of the complete file.
+      if (!alreadyDelivered) {
+        await out!.flush();
+        await out.close();
+        out = null;
+        await part!.rename(record!.path);
+        record.state = TransferState.delivered;
+        record.done = expected;
+        // Persist completion before acknowledging so a retry is idempotent.
+        _update(save: true);
+        await _writes;
+      }
       socket.add(utf8.encode('OK\n'));
       await socket.flush();
+      // Let the ACK leave the TCP stack before cancelling the stream/socket.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
       final callback = onReceived;
-      if (callback != null) {
+      if (!alreadyDelivered && callback != null) {
         unawaited(Future.sync(() => callback(record!)).catchError((Object e) {
           error = 'System notification unavailable: $e';
           _notify();
