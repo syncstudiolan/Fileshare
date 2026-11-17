@@ -368,9 +368,9 @@ class LanEngine extends ChangeNotifier {
           final source=File(item.path);
           if(!await source.exists())continue;
           final matches=files.where((f)=>!f.incoming && f.batch==batch.id &&
-            f.peerId==peer.id && f.id==item.id);
+            f.peerId==peer.id && f.id=='${item.id}_${peer.id}');
           final entry=matches.isNotEmpty ? matches.first : LanFile(
-            id:item.id,batch:batch.id,name:item.name,
+            id:'${item.id}_${peer.id}',batch:batch.id,name:item.name,
             path:item.path,peer:peer.name,peerId:peer.id,incoming:false,
             size:item.size,created:batch.created,state:TransferState.preparing);
           if(matches.isEmpty)files.insert(0,entry);
