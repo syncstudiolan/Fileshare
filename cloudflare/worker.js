@@ -323,6 +323,23 @@ async function authApi(request,env,url){
 
 async function ownerApi(request, env, url) {
   if (!await owner(request, env)) return fail('Owner authentication required', 401);
+  if (url.pathname === '/v1/owner/self-test' && request.method === 'POST') {
+    // The only R2 probe is triggered by an explicit one-time setup action.
+    // It leaves no object in the bucket.
+    const key = 'setup-self-test/' + id();
+    const data = 'file-share-storage-test';
+    try {
+      await env.FILES.put(key, data);
+      const item = await env.FILES.get(key);
+      if (!item || await item.text() !== data) {
+        return fail('R2 round-trip verification failed', 503);
+      }
+      await env.DB.prepare('SELECT 1').first();
+      return json({ok: true, d1: true, r2: true});
+    } finally {
+      await env.FILES.delete(key).catch(() => {});
+    }
+  }
   if (url.pathname === '/v1/owner/qr' && request.method === 'GET') {
     const code = await env.DB.prepare(
       'SELECT token,created_at FROM qr_codes WHERE active=1 ORDER BY created_at DESC LIMIT 1'
