@@ -71,6 +71,46 @@ jobs:
           $bytes = (Get-ChildItem $bundle -Recurse -File | Measure-Object -Property Length -Sum).Sum
           Write-Host "Windows release bundle size: $bytes bytes"
           Get-ChildItem $bundle -File | Select-Object Name,Length
+      - name: Run real Windows EXE hidden and transfer a file by TCP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = (Resolve-Path "build/windows/x64/runner/Release").Path
+          $exe = Join-Path $folder "file_share.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--lan-smoke", "--background" -WorkingDirectory $folder -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+              if ($proc.HasExited) { throw "Windows EXE exited with code $($proc.ExitCode)" }
+              $port = Get-NetTCPConnection -LocalPort 49311 -State Listen -ErrorAction SilentlyContinue
+              if ($port) { $ready = $true; break }
+            }
+            if (-not $ready) { throw "Windows LAN TCP listener did not start" }
+            $payload = "Windows background LAN transfer proof"
+            $header = '{"protocol":"fileshare-file-v1","name":"windows_smoke.txt","size":' +
+              [Text.Encoding]::UTF8.GetByteCount($payload) +
+              ',"batch":"win-smoke","sender":"Windows GitHub CI","senderId":"windows-ci"}'
+            $bytes = [Text.Encoding]::UTF8.GetBytes($header + [char]10 + $payload)
+            $client = [System.Net.Sockets.TcpClient]::new("127.0.0.1", 49311)
+            try {
+              $client.ReceiveTimeout = 20000
+              $stream = $client.GetStream()
+              $stream.Write($bytes,0,$bytes.Length)
+              $stream.Flush()
+              $buffer = New-Object byte[] 64
+              $read = $stream.Read($buffer,0,$buffer.Length)
+              $ack = [Text.Encoding]::UTF8.GetString($buffer,0,$read)
+              Write-Host "Real Windows LAN receiver ACK: $ack"
+              if (-not $ack.StartsWith("OK")) { throw "Windows receiver did not persist the file" }
+              $proc.Refresh()
+              if ($proc.HasExited) { throw "Windows receiver exited instead of running in background" }
+              Write-Host "PASS: Windows release EXE live in background and LAN TCP ACK received."
+            } finally { $client.Dispose() }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: file-share-windows-release
