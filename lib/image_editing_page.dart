@@ -461,17 +461,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       setState((){
         if(_cropResize){
           _crop=Rect.fromLTRB(_crop.left,_crop.top,
-            (_crop.right+dx).clamp(_crop.left+.05,1),
-            (_crop.bottom+dy).clamp(_crop.top+.05,1));
+            (_crop.right+dx).clamp(_crop.left+.05,1).toDouble(),
+            (_crop.bottom+dy).clamp(_crop.top+.05,1).toDouble());
         }else{
-          final l=(_crop.left+dx).clamp(0,1-_crop.width);
-          final t=(_crop.top+dy).clamp(0,1-_crop.height);
+          final l=(_crop.left+dx).clamp(0,1-_crop.width).toDouble();
+          final t=(_crop.top+dy).clamp(0,1-_crop.height).toDouble();
           _crop=Rect.fromLTWH(l,t,_crop.width,_crop.height);
         }
       });
     }else if(_tool=='Erase'){
-      final point=Offset((d.localPosition.dx/size.width).clamp(0,1),
-        (d.localPosition.dy/size.height).clamp(0,1));
+      final point=Offset((d.localPosition.dx/size.width).clamp(0,1).toDouble(),
+        (d.localPosition.dy/size.height).clamp(0,1).toDouble());
       _stroke.add(point);
     }
   }
