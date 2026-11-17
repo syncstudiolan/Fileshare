@@ -1311,6 +1311,56 @@ class FullScreenFilePreview extends StatelessWidget {
   );
 }
 
+/// The selected file is handed to Toolbox. Editing engines are a later phase.
+class SelectedFileToolsPage extends StatelessWidget {
+  const SelectedFileToolsPage({super.key, required this.file});
+  final LanFile file;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Open in Tools')),
+    body: Container(
+      decoration: BoxDecoration(gradient: FileTheme.background(context)),
+      child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 580),
+        child: ListView(shrinkWrap: true, padding: const EdgeInsets.all(22),
+          children: [
+            DesignPanel(child: Row(children: [
+              const Icon(Icons.auto_fix_high_rounded,
+                color: FileTheme.pink, size: 38),
+              const SizedBox(width: 14),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.w800,
+                      color: FileTheme.foreground(context))),
+                  Text(_formatBytes(file.size),
+                    style: TextStyle(color: FileTheme.muted(context))),
+                ],
+              )),
+            ])),
+            const SizedBox(height: 16),
+            Text('File selected for Toolbox', textAlign: TextAlign.center,
+              style: TextStyle(color: FileTheme.foreground(context),
+                fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text('This file is ready for Toolbox. Photo and document '
+              'editing engines will be added in the Toolbox phase.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: FileTheme.muted(context))),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: File(file.path).existsSync()
+                ? () => OpenFilex.open(file.path) : null,
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Open with another app')),
+          ],
+        ),
+      )),
+    ),
+  );
+}
+
 class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
     super.key, required this.items, required this.onSave,
@@ -1898,6 +1948,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     catch (e) { _snack('Delete failed: ' + e.toString()); }
   }
 
+  Future<void> _openFileTools(LanFile file) async {
+    final navigator = Platform.isWindows && _desktopNavigator.currentState != null
+      ? _desktopNavigator.currentState! : Navigator.of(context);
+    await navigator.push(MaterialPageRoute<void>(
+      builder: (_) => SelectedFileToolsPage(file: file)));
+  }
+
 
   List<TimelineGroup> _timeline() {
     final hidden = _staged.map((item) => item.id).toSet();
@@ -2096,7 +2153,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   itemCount: groups.length,
                   itemBuilder: (_, i) => groups[i].lan != null
                     ? LiveTransferCard(items: groups[i].lan!,
-                        onSave: _saveReceived, onDelete: _delete, onShare: _share)
+                        onSave: _saveReceived, onDelete: _delete,
+                        onShare: _share, onTools: _openFileTools)
                     : CloudInboxCard(items: groups[i].cloud!,
                         onSave: _saveCloud, onDelete: _deleteCloud,
                         onShare: _shareCloud))
@@ -2959,6 +3017,10 @@ class FileCategoriesPage extends StatelessWidget {
     await SharePlus.instance.share(ShareParams(files:[XFile(item.path)]));
   }
   Future<void> _delete(LanFile item)=>appLan.remove(item.id);
+  Future<void> _openTools(BuildContext context, LanFile item) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => SelectedFileToolsPage(file: item)));
+  }
 
   Widget _rows(BuildContext context,List<LanFile> entries){
     if(entries.isEmpty){
@@ -2983,7 +3045,8 @@ class FileCategoriesPage extends StatelessWidget {
               trailing:const Icon(Icons.chevron_right_rounded),
               onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
                 builder:(_)=>FullScreenFilePreview(
-                  file:item,onSave:_save,onDelete:_delete,onShare:_share))),
+                  file:item,onSave:_save,onDelete:_delete,onShare:_share,
+                  onTools:(item)=>_openTools(context,item)))),
             )),
         );
       },
@@ -3011,7 +3074,8 @@ class FileCategoriesPage extends StatelessWidget {
                   trailing:const Icon(Icons.chevron_right_rounded),
                   onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
                     builder:(_)=>FullScreenFilePreview(file:item,
-                      onSave:_save,onDelete:_delete,onShare:_share)))),
+                      onSave:_save,onDelete:_delete,onShare:_share,
+                  onTools:(item)=>_openTools(context,item))))),
             ],
           ))),
     ]);
