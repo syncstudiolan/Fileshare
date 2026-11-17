@@ -651,3 +651,57 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
       }),
   );
 }
+
+class ImageEditingLauncherPage extends StatelessWidget {
+  const ImageEditingLauncherPage({super.key});
+  Future<void> _select(BuildContext context)async{
+    try {
+      final selection=await FilePicker.pickFiles(type:FileType.image);
+      if(selection.isEmpty || !context.mounted)return;
+      final file=selection.first;
+      if(file.path==null)throw StateError('Selected image has no local path');
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>
+        ImageEditingPage(sourcePath:file.path,sourceName:file.name)));
+    }catch(error){
+      if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Image selection failed: $error')));
+    }
+  }
+  @override Widget build(BuildContext context)=>Scaffold(
+    appBar:AppBar(title:const Text('Image Editing')),
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:Center(child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:620),
+        child:ListView(shrinkWrap:true,padding:const EdgeInsets.all(20),
+          children:[
+            const Icon(Icons.photo_filter_outlined,size:72,
+              color:FileTheme.violet),
+            const SizedBox(height:14),
+            Text('Image Editing',textAlign:TextAlign.center,
+              style:Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height:8),
+            Text('Background removal, compression, freeform crop, filters, '
+              'manual erase and photo adjustments.',
+              textAlign:TextAlign.center,
+              style:TextStyle(color:FileTheme.muted(context))),
+            const SizedBox(height:26),
+            FilledButton.icon(onPressed:()=>_select(context),
+              icon:const Icon(Icons.add_photo_alternate_outlined),
+              label:const Text('Choose Image')),
+            const SizedBox(height:12),
+            OutlinedButton.icon(onPressed:()=>Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder:(_)=>const ImageEditingHistoryPage())),
+              icon:const Icon(Icons.history),
+              label:const Text('Image History / Continue Editing')),
+            const SizedBox(height:10),
+            Text('All drafts stay private on this Android or Windows device. '
+              'Each saved stage can be sent to the File Share Cart.',
+              textAlign:TextAlign.center,
+              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+          ]),
+      )),
+    ),
+  );
+}
