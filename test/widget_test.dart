@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_share/main.dart';
 import 'package:file_share/lan_engine.dart';
 import 'package:file_share/account_directory.dart';
+import 'package:file_share/personal_cloud.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -84,6 +85,27 @@ void main() {
   });
 
   Future<void> noop(LanFile _) async {}
+
+  Future<void> noopCloud(CloudFile _) async {}
+
+  testWidgets('Guest QR card shows filename once and four real actions',
+      (tester) async {
+    final file=CloudFile(id:'demo-cloud-1',session:'guest-test',
+      name:'received-document.pdf',size:210000,
+      created:DateTime.utc(2026,11,17,10,15));
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:ListView(children:[
+        CloudInboxCard(items:[file],onSave:noopCloud,onDelete:noopCloud,
+          onShare:noopCloud,onPreview:noopCloud,onTools:noopCloud),
+      ]),
+    )));
+    expect(find.text('received-document.pdf'),findsOneWidget);
+    expect(find.byTooltip('Download received QR file'),findsOneWidget);
+    expect(find.byTooltip('Delete QR file'),findsOneWidget);
+    expect(find.byTooltip('Share QR file externally'),findsOneWidget);
+    expect(find.byTooltip('Open in Tools'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
 
   testWidgets('Received card has one filename and exactly four actions',
       (tester) async {
