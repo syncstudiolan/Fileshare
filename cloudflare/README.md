@@ -1,6 +1,6 @@
 # Personal Cloudflare backend — user-owned Worker
 
-This folder contains a Worker, D1 schema, private R2 binding and a static guest-upload page. It **does not require sharing your Cloudflare credentials with ChatGPT**.
+This folder contains a Worker, D1 schema, private R2 binding, SQLite Durable Object and a static guest-upload page. It **does not require sharing your Cloudflare credentials with ChatGPT**.
 
 ## In-app automatic provisioning (primary path)
 
@@ -12,7 +12,7 @@ and restricted API token, and tap **Verify & Auto Connect**. The app:
 2. Creates/reuses its private D1 database and R2 bucket, then applies the
    `schema.sql` tables.
 3. Uploads the module Worker, embeds the guest HTML, configures D1/R2
-   bindings and an owner secret stored in OS secure storage.
+   bindings, hibernating inbox notification object and an owner secret stored in OS secure storage.
 4. Enables the personal workers.dev address, schedules cleanup, and runs
    a private D1/R2 storage round-trip self-test.
 5. Allows one email/password account to be registered in the personal Worker;
@@ -48,6 +48,7 @@ existing Worker without its previously saved owner secret.
 | POST | `/v1/owner/qr/regenerate` | Revoke old QR and generate a new one |
 | GET | `/v1/owner/files?offset=0` | Protected guest inbox, paginated |
 | GET/DELETE | `/v1/owner/file/{id}` | Stream/download or delete the owner's file |
+| GET (WebSocket) | `/v1/owner/events` | Authenticated live inbox invalidation; hibernating Durable Object |
 | GET | `/health` | Basic public health check |
 
 Owner endpoints require a valid signed personal Worker session or the setup-only `OWNER_TOKEN`. The owner secret is kept in the OS secure vault and never committed.
@@ -67,7 +68,10 @@ Owner endpoints require a valid signed personal Worker session or the setup-only
 
 - Personal Worker auto-provisioning and account login are implemented in the app but have not been verified using a new real Android/Windows device setup. The separate Central Directory is already deployed.
 - The Free-tier-friendly password KDF is peppered with the private Worker secret and includes login throttling, but still needs live CPU-budget validation.
-- No real-time WebSocket push notification / Android background push; the owner app currently refreshes its QR feed manually.
+- Event-based **foreground** QR inbox: a guest batch completion emits one small `files-changed` message from the Personal Worker to a hibernatable Durable Object and owner WebSocket. The app refreshes inbox metadata on that signal or reconnect, with no 15-second polling. Multiple devices may listen to the same private room. WebSocket connections and notifications still count toward Free quotas, but an idle hibernated object does not need an always-awake worker. This is not Android push when the app is terminated.
+- When the app is in background or stopped, WebSockets cannot reliably deliver notifications. On resume it reconnects and reads D1 to recover missed files. Background notifications would require separate Android push integration.
+- **Existing clients upgrading from an older Worker**: after merging this Draft and installing the corresponding APK, the owner must run **Verify & Auto Connect** again with a restricted Cloudflare token on the originally provisioned device. It reuses the existing personal Worker/D1/R2, applies the `InboxEvents` SQLite Durable Object migration and keeps the saved owner secret. Do not disconnect, clear app data or regenerate QR. A different device without the original bootstrap secret cannot overwrite that Worker.
+- `404`/`503` from the legacy live endpoint is not retried every minute. The manual Refresh button continues working until upgrade.
 - Browser cookie/IP checks are abuse deterrents, not strong person identity. Additional anti-abuse controls and guest session hardening need security testing.
 - Cloudflare R2 operations, D1 rows and Worker requests use each user's own quotas/billing.
 - Cloudflare's exact midnight execution timing and Android background behavior are not guaranteed to the second.
