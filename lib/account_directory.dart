@@ -7,8 +7,8 @@ import 'package:http/http.dart' as http;
 /// Shared File Share directory, deployed ONCE by the app publisher.
 /// A user never needs to enter their Worker address on a second device.
 /// The directory does not store passwords, Cloudflare tokens, or files.
-/// The personal Worker validates the password; the directory only returns
-/// that Worker's signed session on successful authentication.
+/// The personal Worker validates the password. The directory resolves its URL
+/// without ever receiving the password from new Android or Windows clients.
 class DirectoryLogin {
   const DirectoryLogin({
     required this.email, required this.workerUrl,
@@ -77,6 +77,49 @@ class AccountDirectory {
       'workerUrl':workerUrl,
       'personalSession':personalSession,
     });
+  }
+
+  /// Find the first linked personal Worker; no password is sent to this service.
+  Future<String> resolveWorker(String email) async {
+    final normalized=email.trim().toLowerCase();
+    final data=await _post('/v1/directory/resolve',{'email':normalized});
+    final worker=data['workerUrl'], linkedEmail=data['email'];
+    if(worker is! String || linkedEmail!=normalized ||
+       !RegExp(r'^https://[a-z0-9-]+\\.[a-z0-9-]+\\.workers\\.dev It is NOT
+  /// saved in central D1 or local preferences. On success, the directory
+  /// proxies login to the user's private Worker.
+  Future<DirectoryLogin> signIn(String email,String password)async{
+    final response=await _post('/v1/directory/login',{
+      'email':email.trim().toLowerCase(),
+      'password':password,
+    });
+    final worker=response['workerUrl'],token=response['session'];
+    final account=response['email'],expires=response['expiresAt'];
+    if(worker is! String || token is! String ||
+       account is! String || expires is! num ||
+       expires.toInt()<=DateTime.now().millisecondsSinceEpoch){
+      throw const FormatException('Directory sent an invalid cloud session');
+    }
+    return DirectoryLogin(
+      workerUrl:worker,session:token,email:account,expiresAt:expires.toInt());
+  }
+
+  @visibleForTesting
+  static String validateDirectoryUrl(String raw){
+    final uri=Uri.tryParse(raw);
+    if(uri==null||uri.scheme!='https'||uri.hasPort||
+       uri.userInfo.isNotEmpty||uri.query.isNotEmpty||
+       uri.fragment.isNotEmpty||!uri.host.contains('.')){
+      throw const FormatException('HTTPS directory address required');
+    }
+    return uri.origin;
+  }
+}
+)
+           .hasMatch(worker)) {
+      throw const FormatException('Directory returned an invalid personal cloud');
+    }
+    return worker;
   }
 
   /// The password travels only in an encrypted HTTPS request. It is NOT
