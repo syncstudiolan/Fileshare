@@ -2,6 +2,58 @@
 
 Independent Flutter/Dart project at https://github.com/syncstudiolan/Fileshare. Android APK and Windows EXE are the first targets; iOS and macOS are future targets. Do not modify earlier Bank Setu or Sync Studio repositories.
 
+## Draft update — Email-only cloud discovery on any device
+
+**Code is saved, NOT deployed or built.** The official app needs one
+publisher-operated central directory Worker and D1 for account discovery.
+This is separate from each customer's personal Cloudflare Worker/R2/D1.
+The user does NOT configure the directory, buy a domain or provide a
+Cloudflare API token on a second device.
+
+1. First install: user provisions their personal Cloudflare Worker and
+   creates an owner account with an email and password.
+2. The app sends the email, personal Worker URL and signed Worker account
+   session to the central directory. The directory checks the session
+   with the user's personal Worker. It sends an **8-digit email OTP** and
+   saves the Worker mapping ONLY after the email owner confirms the code.
+3. The directory stores only verified **email -> Worker URL**. Passwords
+   are NEVER saved in plaintext, hashed form, or any other form in the
+   central database. The personal Worker retains its salted password
+   verifier; the central server briefly forwards the password via
+   encrypted HTTPS to the personal Worker during login, then returns
+   the personal Worker's short-lived session on success.
+4. Second Android/Windows device: enter only email and password. The
+   directory resolves the Worker URL, asks the personal Worker to
+   authenticate, and returns a signed session. The app verifies the
+   personal Worker session again before storing it in OS secure storage.
+5. Existing installations can select **Existing Worker? Link it once**,
+   log into their existing Worker, and verify their email, then future
+   devices get automatic discovery.
+
+The application build variable FILE_SHARE_DIRECTORY_URL points to the
+operator's official central Worker HTTPS address. Until the operator
+deploys this directory and configures a future app build, email-only
+cloud discovery is unavailable and manual Worker URL login remains.
+The central directory's email sender is configured with Resend API
+credentials stored as Cloudflare secrets. End users never see those
+credentials. Resend has a limited free tier and requires verified email
+sender credentials; no paid service will be enabled without approval.
+
+Directory source, D1 schema, deployment config, and mocked software
+tests are in /directory/. The directory claim/OTP/login flows passed a
+mocked software-level integration check with fake D1/email/HTTPS,
+including invalid Worker rejection, invalid session rejection, OTP
+checking, bad-password rejection and successful cloud discovery. This
+is NOT a live Cloudflare integration, real email delivery, or a
+successful device-to-device login test. No APK/EXE or workflow was run.
+
+Privacy and security: strict personal Worker URL validation prevents
+server-side requests to arbitrary hosts; no public email lookup;
+session proof + mailbox OTP prevent unauthorized directory linking;
+short OTP TTL and login request throttling; no password persistence
+in central D1. Later work includes password recovery, unlink/migration,
+account lifecycle handling, and live security/CPU testing.
+
 ## Draft update — Windows sidebar and personal Cloudflare accounts (17 Nov 2026)
 
 All changes remain on Draft PR #1, NOT on main. By owner request,
@@ -40,8 +92,7 @@ Windows layouts keep the familiar drawer.
 
 Cloudflare provisioning and email/password endpoints have only been
 statically reviewed. They have NOT been exercised against a real
-Cloudflare account or Android/Windows build this iteration. There is
-no central global account directory, so email alone cannot discover
+Cloudflare account or Android/Windows build this iteration. The central global account directory is implemented in code but is NOT yet deployed, so email alone cannot discover
 the personal Worker across devices. Email verification, recovery,
 immediate server-side logout token revocation and push notifications
 are still future work. A copied stateless token remains usable until
