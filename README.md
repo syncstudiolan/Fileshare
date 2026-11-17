@@ -78,8 +78,7 @@ Windows layouts keep the familiar drawer.
 
 Cloudflare provisioning and email/password endpoints have only been
 statically reviewed. They have NOT been exercised against a real
-Cloudflare account or Android/Windows build this iteration. The central global account directory is implemented in code but is NOT yet deployed, so email alone cannot discover
-the personal Worker across devices. Email verification, recovery,
+Cloudflare account or Android/Windows build this iteration. The central account directory is deployed, but real device login is still unverified. Account recovery,
 immediate server-side logout token revocation and push notifications
 are still future work. A copied stateless token remains usable until
 its 24-hour expiry; evaluate session revocation before production.
@@ -92,7 +91,7 @@ run any further build or live-cloud test.
 | Area | Code status | Practical status |
 | --- | --- | --- |
 | Lavender/Pink light and dark UI | Implemented | Device-specific visual QA still required |
-| Welcome, skip-to-LAN, login form | Per-owner Worker signup/login code implemented | Central global email-only discovery and email verification NOT implemented |
+| Welcome, skip-to-LAN, login form | Per-owner Worker signup/login code implemented | Central Directory deployed; live account and device tests pending; email OTP intentionally removed |
 | One unified chat for LAN + QR | Implemented | Real QR feed needs user's deployed Worker |
 | LAN peer discovery | UDP broadcast engine implemented | Two-device discovery not yet tested; router/Windows Firewall may block |
 | Direct LAN file transfer | TCP streamed send/receive and delivery acknowledgement implemented | No device-to-device test yet |
@@ -102,7 +101,7 @@ run any further build or live-cloud test.
 | Receiver Save to Downloads | Streaming copy implemented | Android scoped-storage behavior needs testing |
 | External native Share | share_plus wired | Actual platform share UI not tested |
 | LAN 24-hour cleanup | History and private cache cleanup implemented | Background when Android is killed not guaranteed |
-| QR guest web page | Implemented in cloudflare/public/guest.html | Requires manual deployment and real Cloudflare test |
+| QR guest web page | Implemented in cloudflare/public/guest.html | Automatically deployed to each owner's personal Worker; real Cloudflare test pending |
 | Per-guest 200 MiB / 4 sessions | D1 conditional quota reservation implemented | Cookie/IP is not trustworthy hardware identity |
 | 200MB large file | R2 multipart 6-MiB chunks implemented | Real upload/retry/network test required |
 | Owner's QR generate/revoke/regenerate | Worker routes + app QR image integrated | Requires connected Worker and owner secret |
