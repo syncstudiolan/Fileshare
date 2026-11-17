@@ -34,6 +34,23 @@ class ImageEditingEngine {
         final w = (decimal('w', 1) * output.width).round().clamp(1, output.width - x).toInt();
         final h = (decimal('h', 1) * output.height).round().clamp(1, output.height - y).toInt();
         output = img.copyCrop(output, x: x, y: y, width: w, height: h);
+      case 'perspective':
+        double point(String key) =>
+            ((options[key] as num?)?.toDouble()??0).clamp(0.0,1.0);
+        final tl=img.Point(point('tlx')*output.width,point('tly')*output.height);
+        final tr=img.Point(point('trx')*output.width,point('try')*output.height);
+        final br=img.Point(point('brx')*output.width,point('bry')*output.height);
+        final bl=img.Point(point('blx')*output.width,point('bly')*output.height);
+        final width=(math.max(math.sqrt(math.pow(tr.x-tl.x,2)+math.pow(tr.y-tl.y,2)),
+          math.sqrt(math.pow(br.x-bl.x,2)+math.pow(br.y-bl.y,2))))
+          .round().clamp(1,8192).toInt();
+        final height=(math.max(math.sqrt(math.pow(bl.x-tl.x,2)+math.pow(bl.y-tl.y,2)),
+          math.sqrt(math.pow(br.x-tr.x,2)+math.pow(br.y-tr.y,2))))
+          .round().clamp(1,8192).toInt();
+        output=img.copyRectify(output,topLeft:tl,topRight:tr,
+          bottomLeft:bl,bottomRight:br,
+          interpolation:img.Interpolation.linear,
+          toImage:img.Image(width:width,height:height,numChannels:4));
       case 'rotate':
         output = img.copyRotate(output, angle: decimal('degrees', 90));
       case 'flip':
