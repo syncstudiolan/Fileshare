@@ -211,12 +211,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         await file.writeAsBytes(data);
         await SharePlus.instance.share(ShareParams(files:[XFile(file.path)]));
       }else{
-        final folder=await getDownloadsDirectory();
-        if(folder==null)throw StateError('Downloads folder unavailable; use Share');
-        await folder.create(recursive:true);
-        final file=File('${folder.path}${Platform.pathSeparator}$name');
-        await file.writeAsBytes(data,flush:true);
-        _message('Saved: ${file.path}');
+        final saved=await FilePicker.saveFile(
+          fileName:name,bytes:data,
+          mimeType:type=='jpg'?'image/jpeg':'image/png');
+        if(saved!=null)_message('Image saved successfully');
       }
     }catch(e){_message('Export failed: $e');}
   }
@@ -640,12 +638,11 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
                   TextButton.icon(onPressed:()=>_cart(entry),
                     icon:const Icon(Icons.send),label:const Text('Cart')),
                   TextButton.icon(onPressed:()async{
-                    final folder=await getDownloadsDirectory();
-                    if(folder==null)return;
-                    final target=File('${folder.path}${Platform.pathSeparator}edited_${entry.id}.png');
-                    await File(entry.filePath).copy(target.path);
-                    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content:Text('Saved to ${target.path}')));
+                    final data=await File(entry.filePath).readAsBytes();
+                    final isJpg=data.length>1 && data[0]==0xff && data[1]==0xd8;
+                    await FilePicker.saveFile(
+                      fileName:'edited_${entry.id}.${isJpg?'jpg':'png'}',
+                      bytes:data,mimeType:isJpg?'image/jpeg':'image/png');
                   },icon:const Icon(Icons.download),label:const Text('Download')),
                   TextButton.icon(onPressed:()async{
                     await ImageEditingHistory.instance.delete(entry);
@@ -664,9 +661,17 @@ class ImageEditingLauncherPage extends StatelessWidget {
       final selection=await FilePicker.pickFiles(type:FileType.image);
       if(selection.isEmpty || !context.mounted)return;
       final file=selection.first;
-      if(file.path==null)throw StateError('Selected image has no local path');
+      var path=file.path;
+      if(path==null){
+        final bytes=await file.readAsBytes();
+        final dir=await getApplicationSupportDirectory();
+        final chosen=File('${dir.path}${Platform.pathSeparator}image_pick_${DateTime.now().microsecondsSinceEpoch}.png');
+        await chosen.writeAsBytes(bytes,flush:true);
+        path=chosen.path;
+      }
+      if(!context.mounted)return;
       await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>
-        ImageEditingPage(sourcePath:file.path,sourceName:file.name)));
+        ImageEditingPage(sourcePath:path,sourceName:file.name)));
     }catch(error){
       if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content:Text('Image selection failed: $error')));
