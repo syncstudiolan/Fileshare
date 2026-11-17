@@ -90,7 +90,7 @@ async function claim(request, env) {
   const email = normalizedEmail(body?.email);
   const worker = personalWorker(body?.workerUrl);
   if (!isEmail(email) || !worker) return fail('Invalid account details',400);
-  if (!await throttle(env,'claim',request,email,3,15*60*1000))
+  if (!await throttle(env,'claim',request,email,6,15*60*1000))
     return fail('Please retry later',429);
   if (!await verifyPersonalSession(worker,email,body?.personalSession))
     return fail('Personal Worker session required',403);
