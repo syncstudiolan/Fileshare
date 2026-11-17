@@ -814,7 +814,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     ]));
 
   Widget _emptyCanvas({required bool wide}){
-    return Center(child:ConstrainedBox(
+    return Center(child:SingleChildScrollView(
+      child:ConstrainedBox(
       constraints:const BoxConstraints(maxWidth:460),
       child:Padding(padding:const EdgeInsets.all(24),
         child:Column(mainAxisSize:MainAxisSize.min,children:[
@@ -855,7 +856,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           ],
         ]),
       ),
-    ));
+    )));
   }
 
   Widget _previewArea({required bool wide}){
@@ -1035,6 +1036,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   Widget _mobileWorkspace(){
+    // Do not consume the preview with controls before an image is selected.
+    if(_bytes==null){
+      return Column(children:[
+        Expanded(child:_previewArea(wide:false)),
+        _actions(),
+      ]);
+    }
     return Column(children:[
       Expanded(flex:7,child:_previewArea(wide:false)),
       _toolStrip(),
