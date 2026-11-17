@@ -938,6 +938,14 @@ class _LoginPageState extends State<LoginPage> {
                   padding:const EdgeInsets.only(bottom:10),
                   child:Text(_error!,textAlign:TextAlign.center,
                     style:const TextStyle(color:Colors.deepOrange))),
+                if(_register && _personalAccountRegistered &&
+                   PersonalCloud.instance.signedIn) ...[
+                  const SizedBox(height:8),
+                  OutlinedButton(
+                    onPressed:_busy?null:_enterDashboard,
+                    child:const Text('Continue on this device (email-only login pending)')),
+                  const SizedBox(height:8),
+                ],
                 SizedBox(height:52,width:double.infinity,
                   child:FilledButton(
                     onPressed:_busy?null:_submit,
