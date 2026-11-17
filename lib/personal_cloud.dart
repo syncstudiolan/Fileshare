@@ -384,10 +384,6 @@ class PersonalCloud extends ChangeNotifier {
       return;
     }
     await refreshFiles();
-    if(_inboxRefreshPending && _inboxLiveEnabled){
-      _inboxRefreshPending=false;
-      await refreshFiles();
-    }
   }
 
   /// Metadata fetch is event-triggered or explicit, never timed polling.
@@ -419,7 +415,16 @@ class PersonalCloud extends ChangeNotifier {
       files..clear()..addAll(fetched);
       error = null;
     } catch (e) { error = 'Cloud inbox refresh failed: ' + e.toString(); }
-    finally { loading = false; notifyListeners(); }
+    finally {
+      loading = false;
+      notifyListeners();
+      // If an upload notification arrived while another refresh was
+      // in-flight, coalesce it into ONE follow-up D1 request.
+      if(_inboxRefreshPending && _inboxLiveEnabled){
+        _inboxRefreshPending=false;
+        scheduleMicrotask(() => unawaited(_refreshAfterEvent()));
+      }
+    }
   }
 
   static int nextMidnightIst() {
