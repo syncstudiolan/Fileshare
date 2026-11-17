@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:image/image.dart' as img;
 
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
@@ -62,12 +61,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       final path=widget.draft?.filePath??widget.sourcePath;
       if(path==null)throw StateError('Choose an image before editing');
       final bytes=await File(path).readAsBytes();
-      final data=img.decodeImage(bytes);
-      if(data==null)throw const FormatException('Unsupported image format');
+      final dimensions=await ImageEditingEngine.dimensions(bytes);
       _draftId=widget.draft?.id??
         DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       _steps.addAll(widget.draft?.steps??[]);
-      _ratio=data.width/data.height;
+      _ratio=dimensions[0]/dimensions[1];
       if(mounted)setState((){
         _bytes=Uint8List.fromList(bytes);
         _originalBytes=Uint8List.fromList(bytes);
@@ -101,10 +99,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_undo.length>15)_undo.removeAt(0);
     _redo.clear();
     _steps.add(step);
-    final decoded=img.decodeImage(next);
+    final dimensions=await ImageEditingEngine.dimensions(next);
+    if(!mounted)return;
     setState((){
       _bytes=next;
-      if(decoded!=null)_ratio=decoded.width/decoded.height;
+      _ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
     });
     await _saveDraft();
@@ -150,8 +149,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         height=WindowsBackgroundAi.modelSize;
         mask=await WindowsBackgroundAi.segmentationMask(data);
       }else{
-        final decoded=img.decodeImage(data)!;
-        width=decoded.width;height=decoded.height;
+        final dimensions=await ImageEditingEngine.dimensions(data);
+        width=dimensions[0];height=dimensions[1];
         mask=await ImageEditingEngine.simpleBackgroundMask(data,tolerance:_tolerance);
       }
       final result=await ImageEditingEngine.edit(data,'background',{
@@ -169,11 +168,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(data==null||_busy)return;
     setState(()=>_busy=true);
     try {
-      final decoded=img.decodeImage(data)!;
+      final dimensions=await ImageEditingEngine.dimensions(data);
       final mask=await ImageEditingEngine.simpleBackgroundMask(
         data,tolerance:_tolerance);
       final result=await ImageEditingEngine.edit(data,'background',{
-        'mask':mask,'maskWidth':decoded.width,'maskHeight':decoded.height,
+        'mask':mask,'maskWidth':dimensions[0],'maskHeight':dimensions[1],
       });
       await _commit(data,result,'Remove plain-color background');
       _format='PNG';
