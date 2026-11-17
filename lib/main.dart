@@ -12,6 +12,7 @@ import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
 import 'image_editing_page.dart';
+import 'toolbox_page.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
@@ -1324,51 +1325,14 @@ class FullScreenFilePreview extends StatelessWidget {
   );
 }
 
-/// Route image files from Received/Sent/QR directly to the real editor.
+/// Every supported file goes through the same searchable Toolbox catalog.
+/// Choosing Image Editing carries the selected image straight into the editor.
 class SelectedFileToolsPage extends StatelessWidget {
   const SelectedFileToolsPage({super.key,required this.file});
   final LanFile file;
-  bool get isImage {
-    final name=file.name.toLowerCase();
-    return ['.jpg','.jpeg','.png','.webp','.gif','.bmp']
-      .any(name.endsWith);
-  }
-  @override Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('Toolbox')),
-    body:Container(
-      decoration:BoxDecoration(gradient:FileTheme.background(context)),
-      child:Center(child:ConstrainedBox(
-        constraints:const BoxConstraints(maxWidth:550),
-        child:ListView(shrinkWrap:true,padding:const EdgeInsets.all(22),
-          children:[
-            DesignPanel(child:Column(children:[
-              const Icon(Icons.photo_filter_outlined,color:FileTheme.violet,
-                size:46),
-              const SizedBox(height:12),
-              Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis),
-              const SizedBox(height:10),
-              Text(isImage?'Edit the selected photo using Image Editing':
-                'Image Editing supports images only.',
-                textAlign:TextAlign.center),
-              const SizedBox(height:16),
-              FilledButton.icon(
-                onPressed:isImage && File(file.path).existsSync()
-                  ?()=>Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder:(_)=>ImageEditingPage(
-                      sourcePath:file.path,sourceName:file.name))):null,
-                icon:const Icon(Icons.auto_fix_high_rounded),
-                label:const Text('Image Editing')),
-              const SizedBox(height:9),
-              OutlinedButton.icon(
-                onPressed:File(file.path).existsSync()
-                  ?()=>OpenFilex.open(file.path):null,
-                icon:const Icon(Icons.open_in_new_rounded),
-                label:const Text('Open with another app')),
-            ])),
-          ]),
-      )),
-    ),
-  );
+  @override
+  Widget build(BuildContext context)=>FileShareToolboxPage(
+    sourcePath:file.path,sourceName:file.name);
 }
 
 class LiveTransferCard extends StatelessWidget {
@@ -1861,8 +1825,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       screen = FileCategoriesPage(mode: widget.mode, onMode: widget.onMode);
     } else if (title == 'Login') {
       screen = LoginPage(mode: widget.mode, onMode: widget.onMode);
+    } else if (title == 'Toolbox') {
+      screen = const FileShareToolboxPage();
     } else if (title == 'Image Editing') {
-      screen = const ImageEditingLauncherPage();
+      screen = const ImageEditingPage();
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
@@ -1907,7 +1873,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       const Divider(height: 12),
       _nav('Home', Icons.home_outlined, pinned: pinned),
       _nav('Files', Icons.folder_outlined, pinned: pinned),
-      _nav('Image Editing', Icons.photo_filter_outlined, pinned: pinned),
+      _nav('Toolbox', Icons.handyman_outlined, pinned: pinned),
       _nav('Devices', Icons.devices_rounded, pinned: pinned),
       _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
       _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
@@ -2359,8 +2325,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onPressed: _choosing ? null : _choose,
                     icon: const Icon(Icons.add_rounded)),
                   IconButton(
-                    tooltip: 'Image Editing',
-                    onPressed:()=>_navigate('Image Editing'),
+                    tooltip: 'Toolbox',
+                    onPressed:()=>_navigate('Toolbox'),
                     icon:const Icon(Icons.handyman_outlined)),
                   Expanded(child: Text(_staged.isEmpty
                       ? 'Choose files to send...'
