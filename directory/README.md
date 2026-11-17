@@ -1,108 +1,74 @@
-# File Share Account Directory (one shared directory)
+# File Share Central Account Directory
 
-This is a **separate, minimal service operated by the File Share app
-publisher**, not one of the customer's own Workers. It enables a person to
-install File Share on a second Android/Windows device, type **only their email
-and password**, and automatically reconnect to their original Cloudflare
-Worker without entering its address or configuring Cloudflare again.
+This Worker is deployed separately from each user's personal Cloudflare account.
+Official endpoint: `https://fileshare-directory.modeltech0.workers.dev`.
+Operator-owned D1: `fileshare-directory-db`.
 
-## Architecture
+## How registration works (no email OTP)
 
-1. On first setup the user activates R2 in their own Cloudflare account,
-   provisions their own Worker and D1, and creates an owner account there.
-2. On that first device the app sends the owner's email, personal Worker
-   **URL**, and *short-lived signed personal session* to this directory.
-   The directory verifies the session directly with the personal Worker.
-   It does not trust an unsigned claim of Worker ownership.
-3. The directory sends an eight-digit verification code to that email.
-   After confirmation it stores **email -> personal Worker URL** in its own
-   D1 database. It stores **NO plaintext password, password hash, Cloudflare
-   API token, secret, or transferred file**. The one-time code is only stored
-   as a keyed HMAC, expires in 10 minutes, and has 5 tries.
-4. On a new device File Share sends email + password via HTTPS to this
-   directory. The directory looks up the verified Worker URL **privately**,
-   forwards the credentials via HTTPS directly to the owner's Worker auth
-   endpoint, then returns that Worker's signed, expiring login session and
-   Worker URL to the client. The client independently verifies the session
-   with the personal Worker before storing it in OS secure storage.
-5. The user receives their files through the same private Worker, D1 and R2
-   account. No repeated Cloudflare token or user-facing Worker URL is needed.
-   Offline LAN mode never requires the central service.
+1. On a new Android or Windows device, the user opens **Set up or connect personal Cloudflare**.
+2. They provide their own Cloudflare Account ID and restricted API token.
+3. **Verify & Auto Connect** provisions a user-owned Worker, D1, R2 bucket,
+   applies the D1 schema, sets an owner secret, publishes the guest QR upload
+   page, schedules cleanup, and confirms storage with a self-test.
+4. The user creates one personal Worker account using an email and password.
+5. The app sends the signed *personal Worker login session* and Worker URL to
+   the Central Directory over HTTPS. The Directory verifies this session by
+   calling the specific personal Worker's `/v1/auth/me` endpoint, then makes
+   an immutable first binding `email -> personal Worker URL`.
+6. On a second device, entering email and password makes the Directory
+   authenticate against that same Worker. Its signed session is independently
+   checked by the app before it is persisted in the OS secure storage.
 
-This avoids two separate password databases. Directory transport may see
-passwords transiently to forward the login request, but neither stores nor
-logs them. Existing per-user Worker stores only its salted password verifier.
-To avoid account takeover, claiming another email requires both a valid
-Worker account session **and** proof of email ownership by OTP.
+No email is sent. No OTP is generated or checked. There are no Resend or
+transactional email credentials. The account's password, API token, and files
+are never written to Central D1. The API token is not persisted by the app.
 
-## Operator setup and deployment status — 2026-11-17
+**Important security limitation:** Without an external email-verification
+provider, neither the app nor Cloudflare can prove mailbox ownership. The
+first person to register and link a given email could be someone other than
+the mailbox owner. The one-email-one-cloud constraint prevents *subsequent*
+rebindings; it cannot protect against initial email impersonation. For
+strong mailbox ownership proof in the future, add an actual email provider
+or another external identity-verification mechanism.
 
-Operator infrastructure created (without Android/Windows builds):
+## Cloud isolation and limits
 
-- Cloudflare Worker `fileshare-directory` has been uploaded and enabled at
-  `https://fileshare-directory.modeltech0.workers.dev`.
-- Dedicated D1 `fileshare-directory-db` was created; `schema.sql` applied.
-- Cloudflare bindings `DB` and `DIRECTORY_OTP_SECRET` were configured.
-- Daily D1 cleanup schedule `0 3 * * *` configured.
-- Both Flutter platform targets share `AccountDirectory`, now pointed at
-  this operator-owned HTTPS endpoint by default.
+- First binding is permanent: the same email cannot link a different
+  personal Worker. An already-linked account can safely retry the same Worker.
+- Each personal Worker registers exactly one owner account via an owner
+  setup secret; its login verifies the stored salted password hash.
+- The Directory accepts only exact HTTPS `*.workers.dev` hosts, no arbitrary
+  URLs, ports, credentials, query strings, or redirects.
+- Directory throttles link and login attempts using D1; personal Worker also
+  limits failed logins. Do not disable brute-force protection.
+- Each client's files stay in that client's own R2 and D1, not Central D1.
+- Account recovery, email changes, and cloud migration are **not automated**.
+  Do not bypass the immutable binding without a deliberate recovery procedure.
 
-**Not yet operational end-to-end:** no transactional sender credentials,
-verified sender domain, or `EMAIL_FROM` have been configured. Therefore
-`/v1/directory/claim` intentionally returns 503. Do not represent new-user
-email verification, account creation, or second-device login as passed.
-No personal user Worker was provisioned and no real Android/Windows login was
-performed during this infrastructure-only setup.
-Personal Worker auto-provisioning is implemented in the Flutter app (D1, R2,
-Worker module, bindings, owner secret, schedules and storage self-test), and
-the Cloudflare multipart metadata transport has been corrected. This is
-code-level readiness, not a passed live provisioning test. Initial account
-registration may continue locally if email linking is unavailable, but
-**email-only login on a new device stays unavailable until OTP verification**. Do not run release/build
-workflows without a separate instruction.
+## Live configuration
 
-Remaining operator steps:
+The operator's Cloudflare account has the `fileshare-directory` Worker,
+`fileshare-directory-db` D1, `DB` binding, `DIRECTORY_RATE_SECRET` secret,
+and a daily maintenance trigger. Old email OTP bindings, claim table, and
+verification endpoints have been removed. The official Flutter client uses
+the deployed URL by default, with `FILE_SHARE_DIRECTORY_URL` override only
+for isolated staging builds.
 
-1. Keep the existing D1 binding and schema intact; do not create a duplicate.
-2. Configure a transactional email sender (Resend is supported). Set
-   Worker secrets **DIRECTORY_OTP_SECRET** (random 32+ bytes) and
-   **RESEND_API_KEY**. Configure **EMAIL_FROM** with an authenticated sending
-   address and, if needed, **ALLOWED_ORIGIN** for official web clients.
-   Secrets stay in Cloudflare, NEVER in GitHub or the APK.
-3. The directory Worker and default app URL are now configured. Confirm
-   HTTPS `/health` and email delivery before enabling production sign-up.
-   Override with **FILE_SHARE_DIRECTORY_URL** only for isolated staging.
-4. Verify outbound email availability, usage/quota, TLS, abuse controls,
-   D1 migrations, rate limiting and password security on a **test** account.
-   Prefer free tiers; do not enable a paid provider without approval.
-5. Monitor errors, provider limits and abuse protections. Enable Cloudflare
-   WAF/Turnstile if the global public directory faces excessive traffic.
+The Directory API:
+- `GET /health`
+- `POST /v1/directory/claim` — `{email, workerUrl, personalSession}`
+  → `{ok:true,linked:true}` after authenticated first binding
+- `POST /v1/directory/login` — `{email,password}`
+  → `{workerUrl,session,expiresAt,email}` after Worker authentication
 
-The directory URL is now configured in the shared Flutter app. This alone
-DOES NOT make email-only login operational until OTP sending is configured,
-a personal Worker is provisioned, and E2E tests pass. A prior-user personal
-Worker manual-login fallback remains available in the app.
+The personal Worker provides QR creation/regeneration, browser guest uploads
+to private R2, owner inbox and cleanup schedules.
 
-### Routes
+## Validation and release policy
 
-- POST /v1/directory/claim: { email, workerUrl, personalSession } -> OTP email
-- POST /v1/directory/verify: { email, code } -> verified mapping
-- POST /v1/directory/login: { email, password } -> { workerUrl, session, expiresAt, email }
-- GET /health: service status only; NEVER reveals user accounts
-
-Controls: Strict *.workers.dev URL whitelist prevents SSRF, personal Worker
-session proof, verified mailbox code, keyed OTP hash, short TTL, login and
-send throttles, no password persistence, fixed single-account mapping,
-no public email lookup, no redirects to arbitrary Workers, generic login
-failure, cleanup cron, no-store responses. Directory currently supports
-first-time binding only; changing an existing email's Worker requires
-a deliberate recovery/migration protocol, not a blind overwrite.
-
-**Important:** Resend's free tier currently includes a daily sending limit
-and requires sender-domain verification for production recipients. Cloudflare
-Email Service arbitrary-recipient sending may require Workers Paid.
-The operator must explicitly choose a provider and plan before deployment.
-
-The app has not been built, merged, or released. Only the separate directory
-Cloudflare infrastructure has been deployed and its API resources inspected.
-The code remains saved in the existing Draft PR #1.
+The code is in existing Draft PR #1, branch `offline-lan-fixes`. App
+build/release workflows must NOT be triggered until separately requested.
+Cloudflare deployment alone does not prove first-device auto-provisioning,
+email/password login on real Android/Windows builds, guest browser upload,
+or cross-device sign-in. These require explicit device tests.
