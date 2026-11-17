@@ -25,7 +25,8 @@ class AccountDirectory {
   /// Set only in the official app build configuration after directory
   /// deployment. Never invent a cloud URL or use the user's personal Worker.
   static const String _configuredUrl=
-    String.fromEnvironment('FILE_SHARE_DIRECTORY_URL',defaultValue:'');
+    String.fromEnvironment('FILE_SHARE_DIRECTORY_URL',
+      defaultValue:'https://fileshare-directory.modeltech0.workers.dev');
 
   Uri? get _host {
     if(_configuredUrl.isEmpty)return null;
