@@ -56,6 +56,69 @@ void main() {
     }
   });
 
+  test('Busy LAN listener does not create a second socket and can retry',
+      () async {
+    final temporary=await Directory.systemTemp.createTemp('fileshare_socket_');
+    final occupied=await ServerSocket.bind(InternetAddress.anyIPv4,0);
+    final engine=LanEngine(
+      tcpPort:occupied.port,discoveryPort:51587,
+      testSupportDirectory:temporary,testDeviceId:'retry-test');
+    try {
+      await engine.start();
+      expect(engine.receivingEnabled,isFalse);
+      await occupied.close();
+      await engine.retryReceiver();
+      expect(engine.receivingEnabled,isTrue);
+      await engine.retryReceiver(); // Already bound: no duplicate listener.
+      expect(engine.receivingEnabled,isTrue);
+    }finally{
+      await engine.stop();
+      await temporary.delete(recursive:true);
+    }
+  });
+
+  Future<void> noop(LanFile _) async {}
+
+  testWidgets('Received card has one filename and exactly four actions',
+      (tester) async {
+    final file=LanFile(id:'in',batch:'test',name:'receipt.pdf',
+      path:'/missing/receipt.pdf',peer:'Office PC',incoming:true,size:1024,
+      created:DateTime.utc(2026,11,17),state:TransferState.delivered);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:ListView(children:[
+        LiveTransferCard(items:[file],onSave:noop,onDelete:noop,
+          onShare:noop,onTools:noop),
+      ]),
+    )));
+    expect(find.text('receipt.pdf'),findsOneWidget);
+    expect(find.byTooltip('Download'),findsOneWidget);
+    expect(find.byTooltip('Delete'),findsOneWidget);
+    expect(find.byTooltip('Share'),findsOneWidget);
+    expect(find.byTooltip('Open in Tools'),findsOneWidget);
+    expect(find.byTooltip('Open in another app'),findsNothing);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('Sent card has one filename and no Download action',
+      (tester) async {
+    final file=LanFile(id:'out',batch:'test',name:'photo.jpg',
+      path:'/missing/photo.jpg',peer:'Other Phone',incoming:false,size:170000,
+      created:DateTime.utc(2026,11,17),state:TransferState.queued);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:ListView(children:[
+        LiveTransferCard(items:[file],onSave:noop,onDelete:noop,
+          onShare:noop,onTools:noop),
+      ]),
+    )));
+    expect(find.text('photo.jpg'),findsOneWidget);
+    expect(find.byTooltip('Download'),findsNothing);
+    expect(find.byTooltip('Delete'),findsOneWidget);
+    expect(find.byTooltip('Share'),findsOneWidget);
+    expect(find.byTooltip('Open in Tools'),findsOneWidget);
+    expect(find.byTooltip('Open in another app'),findsNothing);
+    expect(tester.takeException(),isNull);
+  });
+
   test('LAN file names cannot contain path separators', () {
     expect(LanEngine.safeFileName('../unsafe\\name.png'),
         '.._unsafe_name.png');
