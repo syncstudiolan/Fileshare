@@ -52,7 +52,13 @@ verified sender domain, or `EMAIL_FROM` have been configured. Therefore
 `/v1/directory/claim` intentionally returns 503. Do not represent new-user
 email verification, account creation, or second-device login as passed.
 No personal user Worker was provisioned and no real Android/Windows login was
-performed during this infrastructure-only setup. Do not run release/build
+performed during this infrastructure-only setup.
+Personal Worker auto-provisioning is implemented in the Flutter app (D1, R2,
+Worker module, bindings, owner secret, schedules and storage self-test), and
+the Cloudflare multipart metadata transport has been corrected. This is
+code-level readiness, not a passed live provisioning test. Initial account
+registration may continue locally if email linking is unavailable, but
+**email-only login on a new device stays unavailable until OTP verification**. Do not run release/build
 workflows without a separate instruction.
 
 Remaining operator steps:
