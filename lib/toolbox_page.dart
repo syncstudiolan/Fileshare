@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
 import 'signature_edit_page.dart';
+import 'lan_folder_share_page.dart';
 import 'package:flutter/services.dart';
 import 'editor_transfer_session.dart';
 import 'main.dart' show FileTheme,fadePage;
@@ -27,6 +28,8 @@ const _entries=[
     Icons.photo_filter_outlined,available:true,acceptsImages:true),
   _ToolEntry('Signature Edit','Camera, crop, signature filters and exact-KB export',
     Icons.draw_outlined,available:true,acceptsImages:true),
+  _ToolEntry('File Share','Share files, ZIPs and nested folders over nearby LAN',
+    Icons.folder_shared_outlined,available:true),
   _ToolEntry('Advanced PDF Editing Tools','Android-only PDF processing, scanner, OCR and history',
     Icons.picture_as_pdf_outlined,available:true),
 ];
@@ -40,6 +43,11 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
   Future<void> _open(_ToolEntry entry) async {
     final name=widget.sourceName??widget.sourcePath??'';
     final hasSource=widget.sourcePath!=null;
+    if(entry.name=='File Share'){
+      await Navigator.of(context).push(fadePage<void>(LanFolderSharePage(
+        sourcePath: widget.sourcePath, sourceName: widget.sourceName)));
+      return;
+    }
     if(entry.name=='Advanced PDF Editing Tools'){
       if(!Platform.isAndroid){
         showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
