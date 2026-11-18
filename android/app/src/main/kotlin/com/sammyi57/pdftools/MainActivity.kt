@@ -31,6 +31,13 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     appContext = applicationContext
     hostActivity = this
+    intent.getStringExtra("fileshare.pdf.theme")?.let { preference ->
+      ThemeState.set(when (preference) {
+        "dark" -> ThemePref.Dark
+        "light" -> ThemePref.Light
+        else -> ThemePref.System
+      })
+    }
     PDFBoxResourceLoader.init(applicationContext) // PdfBox's fonts and glyph lists
     preferFastestRefreshRate()
     enableEdgeToEdge()
