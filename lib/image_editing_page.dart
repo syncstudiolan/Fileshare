@@ -55,6 +55,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   int? _activeCropHandle;
   String _cropMode='Normal Crop';
   final List<Offset> _stroke=[];
+  final ValueNotifier<int> _strokeRepaint=ValueNotifier<int>(0);
   final List<_LiveEraseStroke> _pendingErase=[];
   Future<void> _eraseQueue=Future<void>.value();
   Future<void> _historyQueue=Future<void>.value();
@@ -89,6 +90,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _eraseRestoration?.dispose();
     _transformController.dispose();
     _controlScroll.dispose();
+    _strokeRepaint.dispose();
     super.dispose();
   }
   void _changeZoom(double factor){
@@ -1084,7 +1086,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       }
     }else if(_tool=='Erase'){
       if(_busy)return;
-      setState(()=>_stroke..clear()..add(point));
+      _stroke..clear()..add(point);
+      _strokeRepaint.value++;
     }
   }
   void _changeGesture(DragUpdateDetails d,Size size){
@@ -1119,7 +1122,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     }else if(_tool=='Erase'){
       final point=Offset((d.localPosition.dx/size.width).clamp(0,1).toDouble(),
         (d.localPosition.dy/size.height).clamp(0,1).toDouble());
-      setState(()=>_stroke.add(point));
+      if(_stroke.isEmpty || (_stroke.last-point).distanceSquared>0.00000025){
+        _stroke.add(point);
+        _strokeRepaint.value++;
+      }
     }
   }
   void _finishGesture(){
@@ -1186,7 +1192,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
               ?CustomPaint(painter:_RealtimeEraserPainter(
                 image:_erasePreview!,restoration:_eraseRestoration,
                 pending:_pendingErase,active:_stroke,mode:_eraseMode,
-                radius:_eraseRadius,softness:_softness))
+                radius:_eraseRadius,softness:_softness,
+                repaintTrigger:_strokeRepaint))
               :Image.memory(
                   _pendingBackgroundColor!=null&&_cutoutBytes!=null?
                     _cutoutBytes!:_bytes!,fit:BoxFit.fill,
@@ -1662,9 +1669,11 @@ class _LiveEraseStroke {
 /// Low-resolution cached bitmap stays on the GPU. Each touch updates only
 /// the stroke mask; the full-resolution pixel operation is queued separately.
 class _RealtimeEraserPainter extends CustomPainter {
-  const _RealtimeEraserPainter({required this.image,required this.restoration,
+  _RealtimeEraserPainter({required this.image,required this.restoration,
     required this.pending,required this.active,required this.mode,
-    required this.radius,required this.softness});
+    required this.radius,required this.softness,
+    required this.repaintTrigger}):super(repaint:repaintTrigger);
+  final Listenable repaintTrigger;
   final ui.Image image;
   final ui.Image? restoration;
   final List<_LiveEraseStroke> pending;
