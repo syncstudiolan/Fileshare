@@ -164,7 +164,12 @@ fun compress(bytes: ByteArray, quality: Int, maxSide: Int = MAX_SIDE[quality] ?:
 }
 
 // Each step trades more picture quality for size: JPEG quality, then the longest side photos are shrunk to.
-private val SIZE_STEPS = listOf(80 to 0, 60 to 2400, 45 to 2000, 35 to 1600, 25 to 1200, 20 to 900)
+private val SIZE_STEPS = listOf(
+  80 to 0, 60 to 2400, 45 to 2000, 35 to 1600, 25 to 1200, 20 to 900,
+  // Optional extreme compression for scan photos requested at ~200 KB.
+  // Exact sizes are not guaranteed and legibility can diminish.
+  15 to 700, 10 to 520, 7 to 400, 5 to 300,
+)
 
 /**
  * Compresses just enough to fit under `targetMB`: the gentlest step that fits, so quality is only given up where it
