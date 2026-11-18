@@ -26,12 +26,13 @@ class ImageEditingPage extends StatefulWidget {
   State<ImageEditingPage> createState()=>_ImageEditingPageState();
 }
 
-class _ImageEditingPageState extends State<ImageEditingPage> {
+class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerProviderStateMixin {
   Uint8List? _bytes;
   Uint8List? _originalBytes;
   Uint8List? _cutoutBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
+  late final AnimationController _magicController;
   bool _imagePickerBusy=false;
   String? _selectedFilter;
   String? _pendingFilter;
@@ -64,10 +65,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   @override
   void initState(){
     super.initState();
+    _magicController=AnimationController(vsync:this,
+      duration:const Duration(milliseconds:1200));
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
     unawaited(_load());
   }
   @override void dispose(){
+    _magicController.dispose();
     _transformController.dispose();
     super.dispose();
   }
@@ -220,6 +224,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _removeBackground() async {
     final data=_bytes;
     if(data==null||_busy)return;
+    _magicController.repeat();
     setState(()=>_busy=true);
     try{
       late Uint8List mask;
@@ -275,6 +280,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _message('AI background removal could not finish. Check internet for '
         'the first AI model download, or try Remove Plain Background.');
     }finally{
+      _magicController.stop();
       if(mounted)setState(()=>_busy=false);
     }
   }
@@ -282,6 +288,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _removePlainBackground()async{
     final data=_bytes;
     if(data==null||_busy)return;
+    _magicController.repeat();
     setState(()=>_busy=true);
     try {
       final dimensions=await ImageEditingEngine.dimensions(data);
@@ -294,7 +301,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _cutoutBytes=result;
       _format='PNG';
     }catch(e){_message('Plain background removal failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+    finally{
+      _magicController.stop();
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _replaceBackground({Uint8List? picture,Color? color})async {
@@ -771,9 +781,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           gaplessPlayback:true,filterQuality:FilterQuality.medium))),
         if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
-        if(_busy && _tool=='Background')const Positioned(right:12,top:12,
-          child:CircleAvatar(backgroundColor:Color(0xAA765ADB),
-            child:Icon(Icons.auto_fix_high_rounded,color:Colors.white))),
+        if(_busy && _tool=='Background')Positioned(right:12,top:12,
+          child:AnimatedBuilder(animation:_magicController,
+            builder:(context,child)=>Transform.rotate(
+              angle:_magicController.value*math.pi*2,child:child),
+            child:const CircleAvatar(backgroundColor:Color(0xCC765ADB),
+              child:Icon(Icons.auto_fix_high_rounded,color:Colors.white)))),
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
