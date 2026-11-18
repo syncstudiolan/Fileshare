@@ -37,6 +37,9 @@ jobs:
       - name: Compile upstream native Android PDF Tools and scanner
         working-directory: android
         run: ./gradlew :app:compileDebugKotlin --no-daemon --console=plain
+      - name: Verify the original 24-tool Kotlin registry on JVM
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
       - name: Build File Share Android PDF Tools test APK
         if: github.event.pull_request.number == 6
         run: flutter build apk --debug --target-platform android-arm64
