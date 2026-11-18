@@ -48,14 +48,28 @@ class EditorSessionStore {
       'updated':DateTime.now().toIso8601String(),
       'state':state,
     }),flush:true);
-    if(await file.exists())await file.delete();
-    await temp.rename(file.path);
+    final backup=File('${file.path}.bak');
+    if(await backup.exists())await backup.delete();
+    if(await file.exists())await file.rename(backup.path);
+    try{
+      await temp.rename(file.path);
+      if(await backup.exists())await backup.delete();
+    }catch(_){
+      if(!await file.exists()&&await backup.exists()){
+        await backup.rename(file.path);
+      }
+      rethrow;
+    }
   }
   Future<Map<String,dynamic>?> load(String tool,String id)async{
     final file=await _file(tool,id);
-    if(!await file.exists())return null;
+    var source=file;
+    if(!await source.exists()){
+      source=File('${file.path}.bak');
+      if(!await source.exists())return null;
+    }
     try{
-      final json=jsonDecode(await file.readAsString());
+      final json=jsonDecode(await source.readAsString());
       if(json is! Map||json['version']!=1)return null;
       return Map<String,dynamic>.from(json['state'] as Map);
     }catch(_){return null;}
