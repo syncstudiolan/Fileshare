@@ -21,9 +21,9 @@ import java.io.File
 // Cool Blue is the quiet second surface (the Recent card, the hero's words). Light is warm paper; dark is a
 // cherry-tinted near-black. Loud surfaces are a radial glow with film grain, not a glossy linear gradient.
 object Brand {
-  val tangerine = Color(0xFFFF5C34)
-  val cherry = Color(0xFF351E28)
-  val cool = Color(0xFFD7EFFF)
+  val tangerine = Color(0xFF9A80E9)
+  val cherry = Color(0xFF342744)
+  val cool = Color(0xFFE9DEFF)
 }
 
 @Immutable
@@ -49,37 +49,37 @@ data class Palette(
 )
 
 val LightPalette = Palette(
-  bg = Color(0xFFF6F2EE), surface = Color(0xFFFFFFFF), sunken = Color(0xFFEFE9E4), page = Color(0xFFFFFFFF),
-  ink = Brand.cherry, sub = Color(0xFF7B6870), faint = Color(0xFFB4A6AC), line = Color(0xFFE9E1DC),
-  lineStrong = Color(0xFFD9CEC9), accent = Brand.tangerine, accentSoft = Color(0xFFFFE4DB), accentInk = Color(0xFFB83A1C),
+  bg = Color(0xFFF9F5FF), surface = Color(0xFFFFFFFF), sunken = Color(0xFFF0E9FC), page = Color(0xFFFFFFFF),
+  ink = Brand.cherry, sub = Color(0xFF756985), faint = Color(0xFFAEA2BE), line = Color(0xFFE8DFF3),
+  lineStrong = Color(0xFFD8CBEA), accent = Brand.tangerine, accentSoft = Color(0xFFECE4FF), accentInk = Color(0xFF6443BD),
   onInk = Color(0xFFFFFFFF),
-  hero = listOf(Brand.cherry, Color(0xFF8C2F2A), Brand.tangerine),
-  panel = Brand.cherry, onPanel = Color(0xFFFFFFFF), onPanelSub = Color(0xFFCDB9C2),
+  hero = listOf(Brand.cherry, Color(0xFFBBA6EC), Brand.tangerine),
+  panel = Brand.cherry, onPanel = Color(0xFFFFFFFF), onPanelSub = Color(0xFFE5DBF7),
   dark = false,
 )
 
 // Dark is a neutral warm near-black (after Poetica), not a cherry tint: Tangerine is the only colour in it.
 val DarkPalette = Palette(
-  bg = Color(0xFF111110), surface = Color(0xFF1A1A18), sunken = Color(0xFF232321), page = Color(0xFF262624),
-  ink = Color(0xFFEDEDEB), sub = Color(0xFF9C9C99), faint = Color(0xFF6B6A66), line = Color(0xFF2A2A27),
-  lineStrong = Color(0xFF383834), accent = Color(0xFFFF6A45), accentSoft = Color(0xFF2B231F), accentInk = Color(0xFFFFB7A2),
-  onInk = Color(0xFF111110),
-  hero = listOf(Color(0xFF1C1B19), Color(0xFF6B2A1E), Brand.tangerine), // near-black, the glow alone carries the colour
-  panel = Color(0xFF1A1A18), onPanel = Color(0xFFEDEDEB), onPanelSub = Color(0xFF9C9C99),
+  bg = Color(0xFF151321), surface = Color(0xFF221E31), sunken = Color(0xFF2A253B), page = Color(0xFF302940),
+  ink = Color(0xFFF5F1FC), sub = Color(0xFFB0A7BE), faint = Color(0xFF847C92), line = Color(0xFF3D354F),
+  lineStrong = Color(0xFF4D4261), accent = Color(0xFFB69BFF), accentSoft = Color(0xFF352B50), accentInk = Color(0xFFD4C5FF),
+  onInk = Color(0xFF151321),
+  hero = listOf(Color(0xFF241E36), Color(0xFF62478E), Brand.tangerine), // near-black, the glow alone carries the colour
+  panel = Color(0xFF221E31), onPanel = Color(0xFFF5F1FC), onPanelSub = Color(0xFFB0A7BE),
   dark = true,
 )
 
 // The scanner is its own dark, camera-style surface in both themes: the dark palette's near-blacks, with Tangerine for
 // detection and actions (and Black Cherry on top of it).
 object ScanUi {
-  val bg = Color(0xFF0B0B0A)
-  val panel = Color(0xFF1A1A18)
-  val raised = Color(0xFF2A2A27)
+  val bg = Color(0xFF13101C)
+  val panel = Color(0xFF221E31)
+  val raised = Color(0xFF3D354F)
   val text = Color(0xFFFFFFFF)
-  val dim = Color(0xFF9C9C99)
-  val line = Color(0xFF2A2A27)
+  val dim = Color(0xFFB0A7BE)
+  val line = Color(0xFF3D354F)
   val accent = Brand.tangerine
-  val accentSoft = Color(0x38FF5C34)
+  val accentSoft = Color(0x389A80E9)
   val onAccent = Brand.cherry
   val scrim = Color(0x99000000)
 }
