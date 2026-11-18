@@ -43,7 +43,7 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
       if(!Platform.isAndroid){
         showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
           title:const Text('Only Available on Android'),
-          content:const Text('Advanced PDF Editing Tools are supported on Android devices only.'),
+          content:const Text('These tools are only available on Android/mobile.'),
           actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
             child:const Text('OK'))]));
         return;
