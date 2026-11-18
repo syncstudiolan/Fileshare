@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'editor_transfer_session.dart';
 
 /// Local-only PDF history. Drafts store the actual PDF so unfinished edits can
 /// be sent to the File Share cart or resumed after a process restart.
@@ -98,5 +99,6 @@ class PdfHistory extends ChangeNotifier {
     await load();_items.removeWhere((e)=>e.id==draft.id);
     await _persist();
     try{await File(draft.path).delete();}catch(_){}
+    await EditorSessionStore.instance.delete('pdf',draft.id);
   }
 }
