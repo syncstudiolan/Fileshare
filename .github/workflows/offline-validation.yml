@@ -77,18 +77,37 @@ jobs:
           python3 -c "import json; d=json.load(open('/tmp/directory-unknown-email.json')); assert d.get('error') == 'Email address is not registered', d"
       - name: Build compact ARM64 release APK
         run: flutter build apk --release --target-platform android-arm64
-      - name: Record release APK size
+      - name: Verify signing, installable package and ARM64-only native libraries
+        shell: bash
         run: |
-          stat -c 'ARM64 release APK: %s bytes' build/app/outputs/flutter-apk/app-release.apk
-          ls -lh build/app/outputs/flutter-apk/app-release.apk
+          set -euo pipefail
+          apk='build/app/outputs/flutter-apk/app-release.apk'
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          test -n "$signer"
+          "$signer" verify --verbose --print-certs "$apk"
+          python3 - "$apk" <<'PY'
+          import zipfile, sys, os
+          apk=sys.argv[1]
+          with zipfile.ZipFile(apk) as archive:
+              libraries=[n for n in archive.namelist() if n.startswith('lib/') and n.endswith('.so')]
+              abis=sorted({n.split('/')[1] for n in libraries})
+              print('Native ABIs:', abis)
+              assert abis == ['arm64-v8a'], f'Unexpected ABIs: {abis}'
+          size=os.path.getsize(apk)
+          print(f'APK size: {size/1048576:.1f} MiB')
+          assert size < 160*1048576, 'APK exceeds 160 MiB test limit'
+          PY
+          cp "$apk" build/app/outputs/flutter-apk/FileShare-ARM64-Signed-Test.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: file-share-arm64-release-test-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: file-share-arm64-signed-test-apk
+          path: build/app/outputs/flutter-apk/FileShare-ARM64-Signed-Test.apk
           if-no-files-found: error
       - name: Build special full-backend emulator-only debug APK
+        if: github.event_name == 'workflow_dispatch'
         run: flutter build apk --debug --dart-define=FILE_SHARE_BACKGROUND_VALIDATION=true
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: file-share-background-emulator-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
