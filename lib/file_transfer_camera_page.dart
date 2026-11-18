@@ -174,17 +174,23 @@ class _FileTransferCameraPageState extends State<FileTransferCameraPage>
           // Match the native phone camera: aspect-fill the available viewport.
           // Crop outer preview edges, never distort the image into a strip.
           ?LayoutBuilder(builder:(context,box){
-              final preview=controller.value.previewSize;
               final portrait=box.maxHeight>box.maxWidth;
-              final w=portrait
-                ?(preview?.height??720.0):(preview?.width??1280.0);
-              final h=portrait
-                ?(preview?.width??1280.0):(preview?.height??720.0);
-              return FittedBox(
-                fit:BoxFit.cover,
+              // CameraPreview itself uses the sensor aspect ratio and rotates
+              // it for portrait. Match that actual preview shape before
+              // applying an aspect-fill crop: never stretch camera pixels.
+              final sensor=controller.value.aspectRatio;
+              final ratio=portrait
+                ?(sensor>1.0?1.0/sensor:sensor)
+                :(sensor<1.0?1.0/sensor:sensor);
+              final viewportRatio=box.maxWidth/box.maxHeight;
+              final width=viewportRatio>ratio
+                ?box.maxWidth:box.maxHeight*ratio;
+              final height=width/ratio;
+              return OverflowBox(
                 alignment:Alignment.center,
-                clipBehavior:Clip.hardEdge,
-                child:SizedBox(width:w,height:h,
+                minWidth:0,minHeight:0,
+                maxWidth:double.infinity,maxHeight:double.infinity,
+                child:SizedBox(width:width,height:height,
                   child:CameraPreview(controller)));
             })
           :Center(child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
