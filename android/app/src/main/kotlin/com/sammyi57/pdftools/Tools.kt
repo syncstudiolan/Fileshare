@@ -308,24 +308,66 @@ data class ToolDraft(val tool: String, val files: List<DraftFile>, val opts: Jso
 data class DraftFile(val name: String, @SerialName("uri") val path: String, val size: Long? = null)
 
 object Drafts {
-  private val file get() = File(appContext.filesDir, "tool-draft.json") // same file the Expo app used
+  private val file get() = File(appContext.filesDir, "tool-draft.json")
+  private val archive get() = File(appContext.filesDir, "tool-drafts-history.json")
   var current by mutableStateOf(read())
     private set
+  var history by mutableStateOf(readArchive())
+    private set
 
-  private fun read(): ToolDraft? = try {
-    val d = json.decodeFromString<ToolDraft>(file.readText())
-    // Device picks live in the cache folder, which the OS may have cleared since.
-    val files = d.files.map { it.copy(path = pathOf(it.path)) }.filter { File(it.path).exists() }
-    if (files.isEmpty()) null else d.copy(files = files)
-  } catch (_: Exception) {
-    null
+  private fun valid(d: ToolDraft): ToolDraft? {
+    val files = d.files.map { it.copy(path = pathOf(it.path)) }
+      .filter { File(it.path).isFile }
+    return if (files.isEmpty()) null else d.copy(files = files)
   }
 
+  private fun read(): ToolDraft? = try {
+    valid(json.decodeFromString<ToolDraft>(file.readText()))
+  } catch (_: Exception) { null }
+
+  private fun readArchive(): List<ToolDraft> = try {
+    json.decodeFromString<List<ToolDraft>>(archive.readText())
+      .mapNotNull(::valid).take(60)
+  } catch (_: Exception) { emptyList() }
+
+  private fun persistArchive() {
+    runCatching { archive.writeText(json.encodeToString(history)) }
+  }
+
+  /** Each source+tool retains its own resumable settings independently. */
   fun set(d: ToolDraft?) {
     current = d
+    if (d != null && d.files.isNotEmpty()) {
+      val key = d.files.first().path
+      history = (listOf(d) + history.filterNot {
+        it.tool == d.tool && it.files.firstOrNull()?.path == key
+      }).take(60)
+      persistArchive()
+    }
     try {
       if (d == null) file.delete() else file.writeText(json.encodeToString(d))
-    } catch (_: Exception) {} // disk trouble: the draft just won't survive a restart
+    } catch (_: Exception) {}
+  }
+
+  fun resume(d: ToolDraft) { set(d) }
+
+  fun discardCurrent() {
+    val old = current
+    if (old != null) {
+      history = history.filterNot {
+        it.tool == old.tool && it.files.firstOrNull()?.path == old.files.firstOrNull()?.path
+      }
+      persistArchive()
+    }
+    set(null)
+  }
+
+  fun discard(d: ToolDraft) {
+    history = history.filterNot {
+      it.tool == d.tool && it.files.firstOrNull()?.path == d.files.firstOrNull()?.path
+    }
+    persistArchive()
+    if (current == d) set(null)
   }
 }
 
