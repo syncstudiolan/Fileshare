@@ -228,6 +228,18 @@ private fun Root() {
           composable<ViewerRoute> { entry -> entry.toRoute<ViewerRoute>().let { PdfViewerScreen(it.path, it.name) } }
         }
       }
+      // When the File Share card is importing a PDF, do not briefly show the
+      // standalone PDF Tools home. The first visible document screen should
+      // be the PDF viewer. The original File Share dashboard remains behind
+      // this separate Android activity for the first Back action.
+      if (EmbeddedPdfSession.fromFileShare && incoming != null) {
+        Box(
+          Modifier.fillMaxSize().background(c.bg),
+          contentAlignment = Alignment.Center,
+        ) {
+          Spinner(c.accent)
+        }
+      }
       // Over the navigator, never instead of it: the app is already up behind it, so accepting just lifts this away.
       AnimatedVisibility(!agreed, enter = fadeIn(), exit = fadeOut(tween(260)) + slideOutVertically(tween(320)) { it / 6 }) {
         BackHandler { } // back must not skip the gate
