@@ -1,3 +1,4 @@
+import 'pdf_signature_pad.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'pdf_document_scanner_page.dart';
@@ -447,8 +448,20 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     });
   }
   Future<void> addSignatureImage()async{
-    final image=await ImagePicker().pickImage(source:ImageSource.gallery);
-    if(image!=null)setState(()=>signaturePath=image.path);
+    final method=await showModalBottomSheet<String>(context:context,
+      builder:(ctx)=>SafeArea(child:Wrap(children:[
+        ListTile(leading:const Icon(Icons.draw),title:const Text('Draw signature'),
+          onTap:()=>Navigator.pop(ctx,'draw')),
+        ListTile(leading:const Icon(Icons.photo_outlined),
+          title:const Text('Import signature image'),
+          onTap:()=>Navigator.pop(ctx,'gallery')),
+      ])));
+    if(method==null||!mounted)return;
+    final path=method=='draw'
+      ?await Navigator.of(context).push<String>(
+          MaterialPageRoute(builder:(_)=>const PdfSignaturePad()))
+      :(await ImagePicker().pickImage(source:ImageSource.gallery))?.path;
+    if(path!=null&&mounted)setState(()=>signaturePath=path);
   }
   Future<void> addWorkflowStep()async{
     final id=await showModalBottomSheet<String>(context:context,
