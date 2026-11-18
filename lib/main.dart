@@ -2019,7 +2019,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final root=await getApplicationSupportDirectory();
       final folder=Directory('${root.path}${Platform.pathSeparator}camera_cart');
       await folder.create(recursive:true);
-      final name='Camera_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final originalExt=source.path.toLowerCase();
+      final ext=originalExt.endsWith('.png')?'png':
+        (originalExt.endsWith('.jpeg')?'jpeg':'jpg');
+      final name='Camera_${DateTime.now().millisecondsSinceEpoch}.$ext';
       final target=File('${folder.path}${Platform.pathSeparator}$name');
       await source.copy(target.path);
       final length=await target.length();
