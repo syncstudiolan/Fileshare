@@ -174,7 +174,8 @@ fun App() {
 private fun Root() {
   val controller = rememberNavController()
   val nav = remember { Nav(controller) }
-  var agreed by remember { mutableStateOf(Terms.accepted()) } // read before the first frame: no flash of the terms
+  // File Share already handles app-wide onboarding: embedded tools open directly.
+  var agreed by remember { mutableStateOf(true) }
   DisposableEffect(nav) {
     Viewer.open = { path, name -> nav.viewer(path, name) }
     onDispose { Viewer.open = null }
