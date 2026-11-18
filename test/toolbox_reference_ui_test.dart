@@ -10,12 +10,12 @@ void main(){
     expect(find.text('Search tools...'),findsOneWidget);
     expect(find.text('Image Editing'),findsOneWidget);
     expect(find.text('Signature Editing'),findsOneWidget);
-    expect(find.text('PDF Editing'),findsOneWidget);
+    expect(find.text('Advanced PDF Editing Tools'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'image');
     await tester.pump();
     expect(find.text('Image Editing'),findsOneWidget);
     expect(find.text('Signature Editing'),findsNothing);
-    expect(find.text('PDF Editing'),findsNothing);
+    expect(find.text('Advanced PDF Editing Tools'),findsNothing);
   });
 
   testWidgets('Image Editing opens without a photo and shows Camera and Browse',
@@ -35,12 +35,12 @@ void main(){
     expect(find.byTooltip('Redo'),findsOneWidget);
   });
 
-  testWidgets('Future Toolbox entries explain availability, never dead taps',
+  testWidgets('Android-only PDF Toolbox provides a clear desktop warning',
     (tester)async{
     await tester.pumpWidget(const MaterialApp(home:FileShareToolboxPage()));
-    await tester.tap(find.text('PDF Editing'));
+    await tester.tap(find.text('Advanced PDF Editing Tools'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('planned for a future release'),findsOneWidget);
+    expect(find.textContaining('supported on Android devices only'),findsOneWidget);
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
   });

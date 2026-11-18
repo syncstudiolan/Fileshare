@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
+import 'advanced_pdf_tools_page.dart';
 import 'main.dart' show FileTheme,fadePage;
 
 /// File Share's extensible Toolbox landing page. Future tool names remain
@@ -24,10 +25,8 @@ const _entries=[
     Icons.photo_filter_outlined,available:true,acceptsImages:true),
   _ToolEntry('Signature Editing','Crop, clean and enhance handwritten signatures',
     Icons.draw_outlined),
-  _ToolEntry('PDF Editing','Merge, split, convert and annotate documents',
-    Icons.picture_as_pdf_outlined),
-  _ToolEntry('Document Scanner','Scan paper and correct perspective',
-    Icons.document_scanner_outlined),
+  _ToolEntry('Advanced PDF Editing Tools','Android-only PDF processing, scanner, OCR and history',
+    Icons.picture_as_pdf_outlined,available:true),
 ];
 
 class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
@@ -37,6 +36,19 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
   @override void dispose(){_search.removeListener(_rebuild);_search.dispose();super.dispose();}
 
   void _open(_ToolEntry entry){
+    if(entry.name=='Advanced PDF Editing Tools'){
+      if(!Platform.isAndroid){
+        showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+          title:const Text('Only Available on Android'),
+          content:const Text('Advanced PDF Editing Tools are supported on Android devices only.'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('OK'))]));
+        return;
+      }
+      Navigator.of(context).push(fadePage<void>(AdvancedPdfToolsPage(
+        sourcePath:widget.sourcePath?.toLowerCase().endsWith('.pdf')==true?widget.sourcePath:null,
+        sourceName:widget.sourceName)));
+      return;
+    }
     if(!entry.available){
       showDialog<void>(context:context,builder:(context)=>AlertDialog(
         title:Text(entry.name),
