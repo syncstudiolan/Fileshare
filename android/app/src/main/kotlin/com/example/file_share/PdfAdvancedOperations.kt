@@ -38,7 +38,8 @@ import kotlin.math.max
  *
  * Processing mechanisms informed by MIT-licensed sammyZi/pdf-tools.
  */
-internal class PdfAdvancedOperations(private val context: Context) {
+internal class PdfAdvancedOperations(private val context: Context,
+    private val simple: (Map<*,*>)->String) {
     private fun file(ext:String="pdf")=File.createTempFile("pdf_adv_",".$ext",context.cacheDir)
     private fun text(a:Map<*,*>,key:String,default:String="")=a[key] as? String ?: default
     private fun num(a:Map<*,*>,key:String,default:Int=0)=(a[key] as? Number)?.toInt()?:default
@@ -456,9 +457,15 @@ internal class PdfAdvancedOperations(private val context: Context) {
                 val options=HashMap<Any?,Any?>(step)
                 options["path"]=f.absolutePath
                 options["tool"]=id
-                next.addAll(run(options).map{
-                    it.getValue("name") to File(it.getValue("path"))
-                })
+                val advanced=setOf("split","splitText","splitBookmarks",
+                    "splitHalf","splitSize","zip","nup","ocr","redact","fillSign")
+                if(id in advanced){
+                    next.addAll(run(options).map{
+                        it.getValue("name") to File(it.getValue("path"))
+                    })
+                }else{
+                    next.add(id to File(simple(options)))
+                }
             }
             for((_,f) in results)if(f!=input)f.delete()
             results=next
