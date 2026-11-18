@@ -21,6 +21,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocumentInformation
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.state.RenderingMode
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.File
@@ -300,7 +301,9 @@ internal class PdfAdvancedOperations(private val context: Context,
                     if(imagePath!=null){
                         val bitmap=BitmapFactory.decodeFile(imagePath)?:error("Signature image missing")
                         try {
-                            val embedded=JPEGFactory.createFromImage(doc,bitmap,.95f)
+                            val embedded=if(imagePath.endsWith(".png",ignoreCase=true))
+                                LosslessFactory.createFromImage(doc,bitmap)
+                            else JPEGFactory.createFromImage(doc,bitmap,.95f)
                             stream.drawImage(embedded,box.lowerLeftX+x*box.width,
                                 box.lowerLeftY+(1-y-h)*box.height,w*box.width,h*box.height)
                         }finally{bitmap.recycle()}
