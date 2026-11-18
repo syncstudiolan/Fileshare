@@ -80,12 +80,12 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   final top=rawCrop[1].clamp(0.0,1.0);
   final right=rawCrop[2].clamp(0.0,1.0);
   final bottom=rawCrop[3].clamp(0.0,1.0);
-  final x=(left*decoded.width).floor().clamp(0,decoded.width-1);
-  final y=(top*decoded.height).floor().clamp(0,decoded.height-1);
+  final x=(left*decoded.width).floor().clamp(0,decoded.width-1).toInt();
+  final y=(top*decoded.height).floor().clamp(0,decoded.height-1).toInt();
   final width=math.max(1,(right*decoded.width).ceil()-x)
-    .clamp(1,decoded.width-x);
+    .clamp(1,decoded.width-x).toInt();
   final height=math.max(1,(bottom*decoded.height).ceil()-y)
-    .clamp(1,decoded.height-y);
+    .clamp(1,decoded.height-y).toInt();
   var cropped=img.copyCrop(decoded,x:x,y:y,width:width,height:height);
   final filter=request['filter'] as String;
   // Flatten any transparency onto white, so ink remains a real signature.
@@ -96,7 +96,7 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
       final r=(p.r.toDouble()*alpha+255*(1-alpha)).round();
       final g=(p.g.toDouble()*alpha+255*(1-alpha)).round();
       final b=(p.b.toDouble()*alpha+255*(1-alpha)).round();
-      final grey=(.299*r+.587*g+.114*b).round().clamp(0,255);
+      final grey=(.299*r+.587*g+.114*b).round().clamp(0,255).toInt();
       var red=r,green=g,blue=b;
       switch(filter) {
         case 'Black & White':
@@ -109,7 +109,7 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
           red=255-strength;green=255-(strength*.72).round();
           blue=255-(strength*.12).round();
         case 'Dark Ink':
-          final ink=(grey*.62).round().clamp(0,255);
+          final ink=(grey*.62).round().clamp(0,255).toInt();
           red=ink;green=ink;blue=ink;
       }
       cropped.setPixelRgb(px,py,red,green,blue);
