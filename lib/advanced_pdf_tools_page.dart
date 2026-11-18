@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'pdf_document_scanner_page.dart';
 import 'dart:async';
 import 'dart:io';
@@ -324,27 +326,56 @@ class PdfWorkspacePage extends StatefulWidget{
 }
 class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   late PdfDraft draft=widget.draft;
-  int page=0,total=0;
-  Uint8List? preview;
-  bool busy=false;
   final input=TextEditingController();
-  RangeValues horizontalCrop=const RangeValues(0,1);
-  RangeValues verticalCrop=const RangeValues(0,1);
-  late String tool=widget.initialTool??'rotate';
-  final List<String> selectedPaths=[];
-  @override void initState(){super.initState();unawaited(load());}
-  @override void dispose(){input.dispose();super.dispose();}
+  int page=0,total=0,angle=90,nupCount=4,compressionQuality=60;
+  Uint8List? preview;
+  double aspect=0.72;
+  bool busy=false;
+  String tool='rotate',splitMode='ranges',splitHalfMode='file',axis='h';
+  String? signaturePath;
+  final selectedPaths=<String>[];
+  final redactionBoxes=<Map<String,dynamic>>[];
+  final signItems=<Map<String,dynamic>>[];
+  final workflowSteps=<Map<String,dynamic>>[];
+  final undoStack=<File>[],redoStack=<File>[];
+  final extraResults=<PdfDraft>[];
+  Offset? drawingStart;
+  Rect? liveRect;
+  RangeValues horizontalCrop=const RangeValues(0.0,1.0);
+  RangeValues verticalCrop=const RangeValues(0.0,1.0);
+  static const multiTools={'split','splitText','splitBookmarks','splitHalf',
+    'splitSize','zip','nup','ocr','redact','fillSign','workflow'};
+  @override void initState(){
+    super.initState();
+    tool=widget.initialTool??'rotate';
+    page=widget.draft.page;
+    unawaited(load());
+  }
+  @override void dispose(){
+    input.dispose();
+    for(final f in [...undoStack,...redoStack])unawaited(f.delete().catchError((Object _)=>f));
+    super.dispose();
+  }
+  void message(String value){
+    if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content:Text(value),duration:const Duration(seconds:4)));
+  }
   Future<void> load()async{
     try{
       final count=await AdvancedPdfEngine.pages(draft.path);
-      if(count<=0)throw StateError('No PDF pages');
+      if(count<=0)throw StateError('PDF has no pages');
       final current=page.clamp(0,count-1);
       final bytes=await AdvancedPdfEngine.pageImage(draft.path,current);
-      if(mounted)setState((){total=count;page=current;preview=bytes;});
-    }catch(e){message('Cannot preview PDF: $e');}
+      if(!mounted)return;
+      final decoded=await ui.instantiateImageCodec(bytes,targetWidth:900);
+      final frame=await decoded.getNextFrame();
+      final ratio=frame.image.width/frame.image.height;
+      frame.image.dispose();decoded.dispose();
+      if(mounted)setState((){
+        total=count;page=current;preview=bytes;aspect=ratio;
+      });
+    }catch(e){message('Preview unavailable: $e. You can use Remove Password if needed.');}
   }
-  void message(String v){if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content:Text(v)));}
   Future<void> turn(int delta)async{
     if(busy||page+delta<0||page+delta>=total)return;
     setState((){page+=delta;preview=null;});await load();
@@ -356,147 +387,441 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     if(mounted)setState((){});
   }
   Future<void> savePdf()async{
-    if(busy)return;
     try{
-      final bytes=await File(draft.path).readAsBytes();
       final saved=await FilePicker.platform.saveFile(
-        dialogTitle:'Save PDF',fileName:draft.name,
-        type:FileType.custom,allowedExtensions:['pdf'],bytes:bytes);
+        dialogTitle:'Save PDF',fileName:draft.name,type:FileType.custom,
+        allowedExtensions:['pdf'],bytes:await File(draft.path).readAsBytes());
       if(saved!=null)message('PDF saved');
     }catch(e){message('Save failed: $e');}
   }
   Future<void> sharePdf()async{
-    if(busy)return;
-    try{await SharePlus.instance.share(ShareParams(
-      files:[XFile(draft.path,name:draft.name,mimeType:'application/pdf')]));}
-    catch(e){message('Share failed: $e');}
+    try{
+      await SharePlus.instance.share(ShareParams(files:[
+        XFile(draft.path,name:draft.name,mimeType:'application/pdf')]));
+    }catch(e){message('Share failed: $e');}
   }
-  Future<void> sendToCart()async{
-    // No "Finish editing" requirement: last applied version is persisted.
-    await addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
+  Future<void> sendToCart()async=>
+    addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
+  Future<File> _snapshot()async{
+    final cache=await getTemporaryDirectory();
+    return File(draft.path).copy(
+      '${cache.path}${Platform.pathSeparator}pdf_undo_${DateTime.now().microsecondsSinceEpoch}.pdf');
   }
-  Future<void> edit(String operation,Map<String,dynamic> options)async{
-    if(busy)return;
+  Future<void> _remember()async{
+    undoStack.add(await _snapshot());
+    for(final f in redoStack)try{await f.delete();}catch(_){}
+    redoStack.clear();
+    if(undoStack.length>15){
+      final old=undoStack.removeAt(0);
+      try{await old.delete();}catch(_){}
+    }
+  }
+  Future<void> undoOrRedo({required bool undo})async{
+    final source=undo?undoStack:redoStack;
+    final target=undo?redoStack:undoStack;
+    if(busy||source.isEmpty)return;
     setState(()=>busy=true);
     try{
-      final out=await AdvancedPdfEngine.edit(draft.path,operation,options);
+      target.add(await _snapshot());
+      final previous=source.removeLast();
       draft=await PdfHistory.instance.save(id:draft.id,name:draft.name,
-        sourcePath:out,actions:[...draft.actions,operation],page:page);
-      await File(out).delete();
-      message('$operation applied. You can rename, continue editing or send to cart.');
+        sourcePath:previous.path,actions:[...draft.actions,undo?'Undo':'Redo'],
+        page:page);
+      await previous.delete();
       await load();
-    }catch(e){message('Operation failed: $e');}
+    }catch(e){message('History change failed: $e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
   Future<void> addMergeFiles()async{
-    final list=await FilePicker.platform.pickFiles(type:FileType.custom,
-      allowedExtensions:['pdf'],allowMultiple:true,withData:false);
-    selectedPaths
-      ..clear()
-      ..addAll(list?.files.map((f)=>f.path).whereType<String>()??[]);
-    message('${selectedPaths.length} PDF files selected to combine.');
+    final result=await FilePicker.platform.pickFiles(
+      type:FileType.custom,allowedExtensions:['pdf'],allowMultiple:true,
+      withData:false);
+    if(result==null)return;
+    setState((){
+      selectedPaths
+        ..clear()
+        ..addAll(result.files.map((x)=>x.path).whereType<String>());
+    });
+  }
+  Future<void> addSignatureImage()async{
+    final image=await ImagePicker().pickImage(source:ImageSource.gallery);
+    if(image!=null)setState(()=>signaturePath=image.path);
+  }
+  Future<void> addWorkflowStep()async{
+    final id=await showModalBottomSheet<String>(context:context,
+      builder:(context)=>SafeArea(child:ListView(shrinkWrap:true,children:[
+        for(final item in pdfFeatures.where((f)=>f.id!='scan'&&
+          f.id!='workflow'&&f.id!='password'&&f.id!='unlock'&&f.id!='zip'))
+          ListTile(title:Text(item.name),leading:Icon(item.icon),
+            onTap:()=>Navigator.pop(context,item.id)),
+      ])));
+    if(id==null)return;
+    setState(()=>workflowSteps.add({
+      'tool':id,...optionsFor(id),
+    }));
   }
   Map<String,dynamic> optionsFor(String id){
+    final pages=input.text.trim();
     switch(id){
-      case 'merge':case 'alternate':
-        return {'paths':[draft.path,...selectedPaths]};
-      case 'rotate':return {'degrees':90,'pages':input.text};
-      case 'split':case 'organize':return {'pages':input.text};
-      case 'crop':return {'pages':input.text,
-        'left':horizontalCrop.start,'right':horizontalCrop.end,
-        'top':verticalCrop.start,'bottom':verticalCrop.end};
-      case 'watermark':return {'text':input.text.isEmpty?'DRAFT':input.text};
-      case 'splitText':return {'text':input.text};
-      case 'password':case 'unlock':return {'password':input.text};
-      case 'metadata':return {'title':input.text};
-      case 'compress':return {'quality':60};
-      case 'flip':return {'axis':'h'};
+      case 'merge':case 'alternate':return {'paths':[draft.path,...selectedPaths]};
+      case 'rotate':return {'degrees':angle,'pages':pages};
+      case 'organize':return {'pages':pages};
+      case 'split':return {'mode':splitMode,'ranges':pages.isEmpty?'1-':pages};
+      case 'splitText':return {'phrase':pages};
+      case 'splitHalf':return {'mode':splitHalfMode};
+      case 'splitSize':return {'maxMB':pages.isEmpty?'5':pages};
+      case 'zip':return {'paths':[draft.path,...selectedPaths]};
+      case 'nup':return {'perSheet':nupCount,'lines':false};
+      case 'flip':return {'axis':axis};
+      case 'crop':return {'pages':pages,'left':horizontalCrop.start,
+        'right':horizontalCrop.end,'top':verticalCrop.start,
+        'bottom':verticalCrop.end};
+      case 'watermark':return {'text':pages.isEmpty?'DRAFT':pages};
+      case 'pageNumbers':return {};
+      case 'metadata':return {'title':pages,'author':'','subject':'','keywords':''};
+      case 'compress':return {'quality':compressionQuality};
+      case 'password':case 'unlock':return {'password':pages};
+      case 'fillSign':return {'items':signItems};
+      case 'redact':return {'boxes':redactionBoxes};
+      case 'ocr':return {};
+      case 'workflow':return {'steps':workflowSteps};
       default:return {};
     }
+  }
+  Future<void> apply()async{
+    if(busy)return;
+    if(tool=='scan'){message('Use Document Scanner from the PDF Tools dashboard.');return;}
+    if(tool=='fillSign'&&signItems.isEmpty){
+      message('Place text or a signature by tapping the PDF preview.');return;
+    }
+    if(tool=='redact'&&redactionBoxes.isEmpty){
+      message('Drag over an area to redact it.');return;
+    }
+    setState(()=>busy=true);
+    try{
+      final params=optionsFor(tool);
+      if(multiTools.contains(tool)){
+        final files=await AdvancedPdfEngine.multiple(draft.path,tool,params);
+        if(files.isEmpty)throw StateError('No output generated');
+        final fresh=<PdfDraft>[];
+        for(final (index,item) in files.indexed){
+          final result=File(item['path']!);
+          final label=item['name']??tool;
+          if(label.toLowerCase().endsWith('.zip') ||
+              result.path.toLowerCase().endsWith('.zip')){
+            final dir=await getApplicationSupportDirectory();
+            final dest=await result.copy('${dir.path}${Platform.pathSeparator}pdf_bundle_${DateTime.now().microsecondsSinceEpoch}.zip');
+            ImageEditingCart.instance.add(dest,label.endsWith('.zip')?label:'$label.zip');
+            await result.delete();
+            continue;
+          }
+          final same=files.length==1 && !{
+            'split','splitText','splitBookmarks','splitHalf','splitSize'
+          }.contains(tool);
+          if(same)await _remember();
+          final next=await PdfHistory.instance.save(
+            id:same?draft.id:'${DateTime.now().microsecondsSinceEpoch}_$index',
+            name:same?draft.name:'${draft.name.replaceFirst(RegExp(r'\.pdf$',caseSensitive:false),'')}_$label.pdf',
+            sourcePath:result.path,
+            actions:[...draft.actions,tool],page:same?page:0);
+          await result.delete();
+          fresh.add(next);
+          if(same)draft=next;
+        }
+        if(fresh.length==1 && fresh.first.id==draft.id){
+          await load();
+        }else{
+          extraResults.addAll(fresh);
+          if(mounted)await _showResults(fresh);
+        }
+        message('${files.length} result(s) generated. Your original PDF remains available.');
+      }else{
+        // Do not change the original on error; snapshot only after success.
+        final out=await AdvancedPdfEngine.edit(draft.path,tool,params);
+        await _remember();
+        draft=await PdfHistory.instance.save(id:draft.id,name:draft.name,
+          sourcePath:out,actions:[...draft.actions,tool],page:page);
+        await File(out).delete();
+        await load();
+        message('$tool applied. Add to Cart is available at any time.');
+      }
+    }catch(e){message('PDF operation failed: $e');}
+    finally{if(mounted)setState(()=>busy=false);}
+  }
+  Future<void> _showResults(List<PdfDraft> results)async{
+    await showModalBottomSheet<void>(context:context,isScrollControlled:true,
+      builder:(ctx)=>SafeArea(child:ListView(shrinkWrap:true,children:[
+        const ListTile(title:Text('Generated PDFs'),subtitle:Text(
+          'Open, rename or send any output to the File Share Cart')),
+        for(final entry in results)
+          ListTile(leading:const Icon(Icons.picture_as_pdf,color:Colors.red),
+            title:Text(entry.name),
+            trailing:IconButton(tooltip:'Send to Cart',onPressed:()=>
+              addPdfToCart(ctx,entry,editorOpen:false),
+              icon:const Icon(Icons.add_shopping_cart)),
+            onTap:(){
+              Navigator.pop(ctx);
+              Navigator.of(context).push(MaterialPageRoute<void>(
+                builder:(_)=>PdfWorkspacePage(draft:entry)));
+            }),
+      ])));
+  }
+  void _stageTap(TapUpDetails details,Size size){
+    if(tool!='fillSign')return;
+    final x=(details.localPosition.dx/size.width).clamp(0,1).toDouble();
+    final y=(details.localPosition.dy/size.height).clamp(0,1).toDouble();
+    if(signaturePath==null&&input.text.trim().isEmpty){
+      message('Enter text or choose a signature image first.');return;
+    }
+    setState(()=>signItems.add({
+      'page':page,'x':x,'y':y,'w':.3,'h':.10,
+      if(signaturePath!=null)'image':signaturePath,
+      if(signaturePath==null)'text':input.text,
+    }));
+  }
+  void _startRedact(DragStartDetails d,Size size){
+    if(tool!='redact')return;
+    setState(()=>drawingStart=Offset(
+      (d.localPosition.dx/size.width).clamp(0,1).toDouble(),
+      (d.localPosition.dy/size.height).clamp(0,1).toDouble()));
+  }
+  void _dragRedact(DragUpdateDetails d,Size size){
+    if(tool!='redact'||drawingStart==null)return;
+    final x=(d.localPosition.dx/size.width).clamp(0,1).toDouble();
+    final y=(d.localPosition.dy/size.height).clamp(0,1).toDouble();
+    setState(()=>liveRect=Rect.fromLTRB(
+      math.min(x,drawingStart!.dx),math.min(y,drawingStart!.dy),
+      math.max(x,drawingStart!.dx),math.max(y,drawingStart!.dy)));
+  }
+  void _endRedact(){
+    if(liveRect==null)return;
+    final b=liveRect!;
+    setState((){
+      if(b.width>.005&&b.height>.005)redactionBoxes.add({
+        'page':page,'x':b.left,'y':b.top,'w':b.width,'h':b.height});
+      liveRect=null;drawingStart=null;
+    });
+  }
+  Widget _previewArea(){
+    if(preview==null)return const Center(child:CircularProgressIndicator());
+    return Center(child:Padding(padding:const EdgeInsets.all(8),
+      child:AspectRatio(aspectRatio:aspect,child:LayoutBuilder(
+        builder:(context,box){
+          final canvas=Stack(fit:StackFit.expand,children:[
+            Image.memory(preview!,fit:BoxFit.fill,gaplessPlayback:true,
+              filterQuality:FilterQuality.medium),
+            if(tool=='redact')CustomPaint(painter:_PdfRedactionPainter(
+              redactionBoxes.where((b)=>b['page']==page).toList(),liveRect)),
+            if(tool=='fillSign')CustomPaint(painter:_PdfSignaturePainter(
+              signItems.where((b)=>b['page']==page).toList())),
+            if(tool=='crop')CustomPaint(painter:_PdfCropGuides(
+              horizontalCrop,verticalCrop)),
+          ]);
+          if(tool=='redact'||tool=='fillSign')return GestureDetector(
+            behavior:HitTestBehavior.opaque,
+            onTapUp:tool=='fillSign'?(d)=>_stageTap(d,box.biggest):null,
+            onPanStart:tool=='redact'?(d)=>_startRedact(d,box.biggest):null,
+            onPanUpdate:tool=='redact'?(d)=>_dragRedact(d,box.biggest):null,
+            onPanEnd:tool=='redact'?(_)=>_endRedact():null,
+            child:canvas);
+          return InteractiveViewer(minScale:.7,maxScale:5,child:canvas);
+        }))));
+  }
+  Widget _config(){
+    final dynamicTools={'scan','splitText','splitSize','rotate','watermark',
+      'password','unlock','metadata','organize','split','crop',
+      'fillSign','splitHalf','zip','workflow','redact','compress','nup','flip',
+      'alternate','merge'};
+    return Column(mainAxisSize:MainAxisSize.min,children:[
+      if(tool=='merge'||tool=='alternate'||tool=='zip')
+        OutlinedButton.icon(onPressed:addMergeFiles,
+          icon:const Icon(Icons.add),label:Text(
+            'Choose more PDFs (${selectedPaths.length} selected)')),
+      if(tool=='split')
+        SegmentedButton<String>(segments:const [
+          ButtonSegment(value:'ranges',label:Text('Page ranges')),
+          ButtonSegment(value:'every',label:Text('Every page')),
+        ],selected:{splitMode},onSelectionChanged:(values)=>
+          setState(()=>splitMode=values.first)),
+      if(tool=='splitHalf')DropdownButton<String>(value:splitHalfMode,
+        isExpanded:true,items:const [
+          DropdownMenuItem(value:'file',child:Text('Split file into two parts')),
+          DropdownMenuItem(value:'vertical',child:Text('Slice each page: left/right')),
+          DropdownMenuItem(value:'horizontal',child:Text('Slice each page: top/bottom')),
+        ],onChanged:(value)=>setState(()=>splitHalfMode=value??'file')),
+      if(tool=='rotate')DropdownButton<int>(isExpanded:true,value:angle,
+        items:[90,180,270].map((n)=>DropdownMenuItem(
+          value:n,child:Text('Rotate $n° clockwise'))).toList(),
+        onChanged:(n)=>setState(()=>angle=n??90)),
+      if(tool=='nup')DropdownButton<int>(isExpanded:true,value:nupCount,
+        items:[2,4,6,9,16].map((n)=>DropdownMenuItem(
+          value:n,child:Text('$n pages per sheet'))).toList(),
+        onChanged:(n)=>setState(()=>nupCount=n??4)),
+      if(tool=='flip')DropdownButton<String>(isExpanded:true,value:axis,
+        items:const [
+          DropdownMenuItem(value:'h',child:Text('Flip horizontally')),
+          DropdownMenuItem(value:'v',child:Text('Flip vertically')),
+        ],onChanged:(n)=>setState(()=>axis=n??'h')),
+      if(tool=='compress')Column(children:[
+        Text('Image quality $compressionQuality%'),
+        Slider(min:20,max:95,divisions:15,value:compressionQuality.toDouble(),
+          onChanged:(v)=>setState(()=>compressionQuality=v.round())),
+      ]),
+      if(tool=='crop')Column(children:[
+        const Align(alignment:Alignment.centerLeft,child:Text('Left / Right crop')),
+        RangeSlider(values:horizontalCrop,min:0,max:1,
+          onChanged:(v)=>setState(()=>horizontalCrop=v)),
+        const Align(alignment:Alignment.centerLeft,child:Text('Top / Bottom crop')),
+        RangeSlider(values:verticalCrop,min:0,max:1,
+          onChanged:(v)=>setState(()=>verticalCrop=v)),
+      ]),
+      if(tool=='fillSign')Row(children:[
+        TextButton.icon(onPressed:addSignatureImage,
+          icon:const Icon(Icons.draw),label:const Text('Signature photo')),
+        if(signItems.isNotEmpty)TextButton(
+          onPressed:()=>setState(()=>signItems.removeLast()),
+          child:Text('Undo placement (${signItems.length})')),
+      ]),
+      if(tool=='redact')Row(children:[
+        const Expanded(child:Text('Drag over confidential areas on the page')),
+        TextButton(onPressed:redactionBoxes.isEmpty?null:()=>
+          setState(()=>redactionBoxes.removeLast()),child:const Text('Undo mark')),
+      ]),
+      if(tool=='workflow')Column(children:[
+        OutlinedButton.icon(onPressed:addWorkflowStep,
+          icon:const Icon(Icons.add),label:const Text('Add workflow step')),
+        for(final (index,step) in workflowSteps.indexed)
+          ListTile(dense:true,title:Text('${index+1}. ${step['tool']}'),
+            trailing:IconButton(icon:const Icon(Icons.close),
+              onPressed:()=>setState(()=>workflowSteps.removeAt(index)))),
+      ]),
+      if(dynamicTools.contains(tool)&&!const {
+          'nup','flip','compress','splitHalf','workflow','redact',
+          'merge','alternate','zip','pageNumbers','ocr'
+        }.contains(tool) &&
+        !(tool=='split'&&splitMode=='every'))
+        TextField(controller:input,
+          obscureText:tool=='password'||tool=='unlock',
+          decoration:InputDecoration(
+            labelText:switch(tool){
+              'split'=>'Page ranges: 1-3,5,7-',
+              'splitText'=>'Text phrase that starts a new PDF',
+              'splitSize'=>'Maximum MB per PDF part',
+              'organize'=>'New page order: 3,1,2',
+              'rotate'=>'Pages (blank means all)',
+              'watermark'=>'Watermark text',
+              'password'||'unlock'=>'PDF Password',
+              'metadata'=>'PDF title',
+              'fillSign'=>'Type text; tap preview to position',
+              'crop'=>'Pages to crop (blank means all)',
+              _=>'Options (optional)',
+            },
+            border:const OutlineInputBorder())),
+      if(!const {'scan'}.contains(tool))
+        Row(children:[
+          Expanded(child:OutlinedButton.icon(onPressed:sendToCart,
+            icon:const Icon(Icons.add_shopping_cart),
+            label:const Text('Add to Cart'))),
+          const SizedBox(width:10),
+          Expanded(child:FilledButton.icon(onPressed:busy?null:apply,
+            icon:const Icon(Icons.check),label:const Text('Apply'))),
+        ]),
+    ]);
   }
   @override Widget build(BuildContext context){
     return Scaffold(
       appBar:AppBar(title:Text(draft.name,overflow:TextOverflow.ellipsis,
-        style:const TextStyle(fontSize:15)),actions:[
-        IconButton(tooltip:'Save PDF',onPressed:busy?null:savePdf,
-          icon:const Icon(Icons.download_outlined)),
-        IconButton(tooltip:'Share PDF',onPressed:busy?null:sharePdf,
-          icon:const Icon(Icons.share_outlined)),
-        IconButton(tooltip:'Rename PDF',onPressed:rename,
-          icon:const Icon(Icons.drive_file_rename_outline)),
-        IconButton(tooltip:'Send to File Share Cart',onPressed:sendToCart,
-          icon:const Icon(Icons.add_shopping_cart_outlined)),
-        PopupMenuButton<String>(onSelected:(v){
-          if(v=='cart')unawaited(sendToCart());
-          if(v=='rename')unawaited(rename());
-        },itemBuilder:(_)=>const [
-          PopupMenuItem(value:'cart',child:Text('Add to Cart')),
-          PopupMenuItem(value:'rename',child:Text('Rename PDF')),
+          style:const TextStyle(fontSize:15)),
+        actions:[
+          IconButton(tooltip:'Undo',onPressed:undoStack.isEmpty?null:
+            ()=>undoOrRedo(undo:true),icon:const Icon(Icons.undo,size:20)),
+          IconButton(tooltip:'Redo',onPressed:redoStack.isEmpty?null:
+            ()=>undoOrRedo(undo:false),icon:const Icon(Icons.redo,size:20)),
+          IconButton(tooltip:'Send to Cart',onPressed:sendToCart,
+            icon:const Icon(Icons.add_shopping_cart,size:21)),
+          PopupMenuButton<String>(onSelected:(v){
+            if(v=='rename')unawaited(rename());
+            if(v=='save')unawaited(savePdf());
+            if(v=='share')unawaited(sharePdf());
+          },itemBuilder:(_)=>const [
+            PopupMenuItem(value:'rename',child:Text('Rename PDF')),
+            PopupMenuItem(value:'save',child:Text('Save / Download PDF')),
+            PopupMenuItem(value:'share',child:Text('Share PDF')),
+          ]),
         ]),
-      ]),
       body:Container(decoration:BoxDecoration(gradient:FileTheme.background(context)),
         child:Column(children:[
           if(busy)const LinearProgressIndicator(),
-          Expanded(child:Center(child:preview==null?
-            const CircularProgressIndicator():
-            InteractiveViewer(minScale:1,maxScale:5,
-              child:Image.memory(preview!,gaplessPlayback:true,
-                fit:BoxFit.contain,filterQuality:FilterQuality.medium)))),
+          Expanded(child:_previewArea()),
           Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
-            IconButton(tooltip:'Previous page',onPressed:()=>turn(-1),
+            IconButton(onPressed:()=>turn(-1),tooltip:'Previous page',
               icon:const Icon(Icons.chevron_left)),
-            Text(total==0?'Loading':'Page ${page+1} / $total'),
-            IconButton(tooltip:'Next page',onPressed:()=>turn(1),
+            Text('Page ${total==0?0:page+1} / $total'),
+            IconButton(onPressed:()=>turn(1),tooltip:'Next page',
               icon:const Icon(Icons.chevron_right)),
           ]),
-          SizedBox(height:55,child:ListView(scrollDirection:Axis.horizontal,children:[
-            for(final t in pdfFeatures.where((e)=>e.active))
-              Padding(padding:const EdgeInsets.only(right:7),child:ChoiceChip(
-                avatar:Icon(t.icon,size:17),label:Text(t.name),
-                selected:tool==t.id,onSelected:(_)=>setState(()=>tool=t.id))),
+          SizedBox(height:58,child:ListView(scrollDirection:Axis.horizontal,children:[
+            for(final t in pdfFeatures.where((t)=>t.id!='scan'))
+              Padding(padding:const EdgeInsets.only(right:5),child:ChoiceChip(
+                label:Text(t.name),avatar:Icon(t.icon,size:17),
+                selected:tool==t.id,onSelected:(_)=>setState((){
+                  tool=t.id;input.clear();
+                }))),
           ])),
-          Padding(padding:const EdgeInsets.fromLTRB(12,3,12,12),
-            child:Column(mainAxisSize:MainAxisSize.min,children:[
-              if(tool=='merge'||tool=='alternate')
-                OutlinedButton.icon(onPressed:addMergeFiles,
-                  icon:const Icon(Icons.add),label:Text('Add PDFs (${selectedPaths.length})')),
-              if(tool=='crop') ...[
-                const Align(alignment:Alignment.centerLeft,child:Text('Horizontal crop area')),
-                RangeSlider(values:horizontalCrop,min:0,max:1,
-                  onChanged:(v)=>setState(()=>horizontalCrop=v)),
-                const Align(alignment:Alignment.centerLeft,child:Text('Vertical crop area')),
-                RangeSlider(values:verticalCrop,min:0,max:1,
-                  onChanged:(v)=>setState(()=>verticalCrop=v)),
-              ],
-              if(!const ['zip','pageNumbers','currentPage','alternate','merge'].contains(tool))
-                TextField(controller:input,obscureText:tool=='password'||tool=='unlock',
-                  decoration:InputDecoration(
-                    labelText:switch(tool){
-                      'split'=>'Page ranges (e.g. 1-3,5)',
-                      'organize'=>'Order of pages (e.g. 3,1,2)',
-                      'rotate'=>'Pages (blank = all)',
-                      'watermark'=>'Watermark text',
-                      'password'||'unlock'=>'PDF password',
-                      'metadata'=>'New title',
-                      'splitText'=>'Split at text phrase',
-                      _=>'Tool settings (optional)',
-                    },
-                    border:const OutlineInputBorder())),
-              const SizedBox(height:8),
-              Row(children:[
-                Expanded(child:OutlinedButton.icon(onPressed:sendToCart,
-                  icon:const Icon(Icons.add_shopping_cart),
-                  label:const Text('Add to Cart'))),
-                const SizedBox(width:10),
-                Expanded(child:FilledButton.icon(
-                  onPressed:busy?null:()=>edit(tool,optionsFor(tool)),
-                  icon:const Icon(Icons.check),
-                  label:const Text('Apply'))),
-              ]),
-            ])),
+          ConstrainedBox(constraints:const BoxConstraints(maxHeight:235),
+            child:SingleChildScrollView(padding:const EdgeInsets.fromLTRB(12,4,12,10),
+              child:_config())),
         ])),
     );
   }
+}
+class _PdfRedactionPainter extends CustomPainter{
+  _PdfRedactionPainter(this.boxes,this.live);
+  final List<Map<String,dynamic>> boxes;
+  final Rect? live;
+  @override void paint(Canvas canvas,Size size){
+    final p=Paint()..color=Colors.black.withValues(alpha:.55);
+    for(final b in boxes){
+      canvas.drawRect(Rect.fromLTWH(
+        (b['x'] as num).toDouble()*size.width,
+        (b['y'] as num).toDouble()*size.height,
+        (b['w'] as num).toDouble()*size.width,
+        (b['h'] as num).toDouble()*size.height),p);
+    }
+    if(live!=null)canvas.drawRect(Rect.fromLTRB(
+      live!.left*size.width,live!.top*size.height,
+      live!.right*size.width,live!.bottom*size.height),p);
+  }
+  @override bool shouldRepaint(covariant _PdfRedactionPainter old)=>true;
+}
+class _PdfSignaturePainter extends CustomPainter{
+  _PdfSignaturePainter(this.items);
+  final List<Map<String,dynamic>> items;
+  @override void paint(Canvas canvas,Size size){
+    final paint=Paint()..color=const Color(0xFF8A54DF)
+      ..style=PaintingStyle.stroke..strokeWidth=2;
+    for(final item in items){
+      final x=(item['x'] as num).toDouble()*size.width;
+      final y=(item['y'] as num).toDouble()*size.height;
+      canvas.drawRect(Rect.fromLTWH(x,y,
+        (item['w'] as num).toDouble()*size.width,
+        (item['h'] as num).toDouble()*size.height),paint);
+    }
+  }
+  @override bool shouldRepaint(covariant _PdfSignaturePainter old)=>true;
+}
+class _PdfCropGuides extends CustomPainter{
+  _PdfCropGuides(this.horizontal,this.vertical);
+  final RangeValues horizontal,vertical;
+  @override void paint(Canvas canvas,Size s){
+    final clip=Rect.fromLTRB(horizontal.start*s.width,
+      vertical.start*s.height,horizontal.end*s.width,
+      vertical.end*s.height);
+    canvas.drawRect(clip,Paint()..color=const Color(0xFF9869E5)
+      ..style=PaintingStyle.stroke..strokeWidth=3);
+  }
+  @override bool shouldRepaint(covariant _PdfCropGuides old)=>
+    horizontal!=old.horizontal||vertical!=old.vertical;
 }
 class PdfHistoryPage extends StatefulWidget{
   const PdfHistoryPage({super.key});
