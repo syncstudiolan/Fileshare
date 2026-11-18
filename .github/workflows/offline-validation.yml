@@ -16,40 +16,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Vendor upstream DocAligner model into our own repository (one-time)
-        if: github.event.pull_request.number == 6 && github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          BRANCH: ${{ github.head_ref }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin "$BRANCH"
-          git checkout -B "$BRANCH" "origin/$BRANCH"
-          python3 - <<'PY'
-          import hashlib, pathlib, urllib.request
-          out=pathlib.Path('android/app/src/main/assets/docaligner_lc100.onnx')
-          if out.is_file():
-              assert out.stat().st_size==4757043, 'Bundled model has unexpected size'
-          else:
-              url='https://raw.githubusercontent.com/sammyZi/pdf-tools/6a48d60ccbbaca4dd18840b9d85f00d44b51f311/app/src/main/assets/docaligner_lc100.onnx'
-              payload=urllib.request.urlopen(url,timeout=60).read()
-              assert len(payload)==4757043, 'Unexpected source model size'
-              sha=hashlib.sha1(b'blob '+str(len(payload)).encode()+bytes([0])+payload).hexdigest()
-              assert sha=='0215be79853f05ce3f389e5a554604e61249c3b0', 'Source integrity mismatch'
-              out.parent.mkdir(parents=True,exist_ok=True)
-              out.write_bytes(payload)
-          PY
-          if ! git ls-files --error-unmatch android/app/src/main/assets/docaligner_lc100.onnx >/dev/null 2>&1; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add android/app/src/main/assets/docaligner_lc100.onnx
-            git commit -m "Vendor pinned DocAligner model into File Share Android source"
-            git push origin "HEAD:$BRANCH"
-          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
