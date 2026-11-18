@@ -1,5 +1,7 @@
 package com.sammyi57.pdftools
 
+import com.example.file_share.R
+
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
