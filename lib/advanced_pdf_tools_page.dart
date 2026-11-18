@@ -503,17 +503,57 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     if(path!=null&&mounted)setState(()=>signaturePath=path);
   }
   Future<void> addWorkflowStep()async{
+    const excluded={'scan','workflow','password','unlock','zip',
+      'organize','redact','fillSign','metadata'};
     final id=await showModalBottomSheet<String>(context:context,
-      builder:(context)=>SafeArea(child:ListView(shrinkWrap:true,children:[
-        for(final item in pdfFeatures.where((f)=>f.id!='scan'&&
-          f.id!='workflow'&&f.id!='password'&&f.id!='unlock'&&f.id!='zip'))
+      builder:(ctx)=>SafeArea(child:ListView(shrinkWrap:true,children:[
+        for(final item in pdfFeatures.where((x)=>!excluded.contains(x.id)))
           ListTile(title:Text(item.name),leading:Icon(item.icon),
-            onTap:()=>Navigator.pop(context,item.id)),
+            onTap:()=>Navigator.pop(ctx,item.id)),
       ])));
-    if(id==null)return;
-    setState(()=>workflowSteps.add({
-      'tool':id,...optionsFor(id),
-    }));
+    if(id==null||!mounted)return;
+    final step=<String,dynamic>{'tool':id,...optionsFor(id)};
+    if(id=='crop'){
+      step['mode']='resize';step['size']='A4';
+    }
+    if(id=='watermark'||id=='splitText'||id=='splitSize'||id=='split'){
+      final controller=TextEditingController(
+        text: id=='watermark'?'DRAFT':
+          id=='splitSize'?'5':id=='split'?'1-':'');
+      final inputValue=await showDialog<String>(context:context,builder:(ctx)=>
+        AlertDialog(
+          title:Text('Configure ${pdfFeatures.firstWhere((x)=>x.id==id).name}'),
+          content:TextField(controller:controller,autofocus:true,
+            decoration:InputDecoration(hintText:switch(id){
+              'splitText'=>'Phrase that starts a new PDF',
+              'splitSize'=>'Maximum size in MB',
+              'split'=>'Page ranges: 1-3,4-6',
+              _=>'Watermark text',
+            })),
+          actions:[
+            TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),
+            FilledButton(onPressed:()=>Navigator.pop(ctx,controller.text),
+              child:const Text('Add step')),
+          ],
+        ));
+      controller.dispose();
+      if(inputValue==null)return;
+      if(id=='watermark')step['text']=inputValue;
+      if(id=='splitText')step['phrase']=inputValue;
+      if(id=='splitSize')step['maxMB']=inputValue;
+      if(id=='split'){
+        step['mode']='ranges';step['ranges']=inputValue;
+      }
+    }
+    setState(()=>workflowSteps.add(step));
+  }
+  void moveWorkflowStep(int index,int direction){
+    final target=index+direction;
+    if(target<0||target>=workflowSteps.length)return;
+    setState((){
+      final value=workflowSteps.removeAt(index);
+      workflowSteps.insert(target,value);
+    });
   }
   Map<String,dynamic> optionsFor(String id){
     final pages=input.text.trim();
@@ -806,8 +846,18 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
           icon:const Icon(Icons.add),label:const Text('Add workflow step')),
         for(final (index,step) in workflowSteps.indexed)
           ListTile(dense:true,title:Text('${index+1}. ${step['tool']}'),
-            trailing:IconButton(icon:const Icon(Icons.close),
-              onPressed:()=>setState(()=>workflowSteps.removeAt(index)))),
+            trailing:Row(mainAxisSize:MainAxisSize.min,children:[
+              IconButton(icon:const Icon(Icons.arrow_upward,size:18),
+                tooltip:'Move step up',onPressed:index==0?null:
+                  ()=>moveWorkflowStep(index,-1)),
+              IconButton(icon:const Icon(Icons.arrow_downward,size:18),
+                tooltip:'Move step down',
+                onPressed:index+1==workflowSteps.length?null:
+                  ()=>moveWorkflowStep(index,1)),
+              IconButton(icon:const Icon(Icons.close,size:18),
+                tooltip:'Remove step',
+                onPressed:()=>setState(()=>workflowSteps.removeAt(index))),
+            ])),
       ]),
       if(dynamicTools.contains(tool)&&!const {
           'nup','flip','compress','splitHalf','workflow','redact',
