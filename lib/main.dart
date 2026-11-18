@@ -1437,8 +1437,8 @@ class LiveTransferCard extends StatelessWidget {
     Widget action(String title, IconData icon, VoidCallback? onTap) =>
       IconButton(
         tooltip: title, onPressed: onTap,
-        iconSize: 21,
-        constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+        iconSize: 19,
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         icon: Icon(icon, color: onTap == null
@@ -1470,10 +1470,10 @@ class LiveTransferCard extends StatelessWidget {
     };
     return LayoutBuilder(builder: (context, constraints) {
       // Keep the thumbnail prominent without making the whole message tall.
-      final side = constraints.maxWidth >= 530 ? 148.0 :
-        constraints.maxWidth >= 330 ? 136.0 : 104.0;
+      final side = constraints.maxWidth >= 530 ? 124.0 :
+        constraints.maxWidth >= 330 ? 108.0 : 88.0;
       return Padding(
-        padding: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.only(top: 6),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
           InkWell(
             borderRadius: BorderRadius.circular(11),
@@ -1525,8 +1525,8 @@ class LiveTransferCard extends StatelessWidget {
       alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
         constraints: BoxConstraints(maxWidth: bodyWidth),
-        padding: const EdgeInsets.fromLTRB(11, 10, 11, 7),
-        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+        margin: const EdgeInsets.symmetric(vertical: 3),
         decoration: BoxDecoration(
           color: FileTheme.dark(context)
             ? (incoming ? const Color(0xFF482945) : const Color(0xFF382B57))
@@ -1670,7 +1670,7 @@ class CloudInboxCard extends StatelessWidget {
       IconButton(
         tooltip: name, onPressed: onPressed, iconSize: 21,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: FileTheme.pink));
     return Align(
@@ -1678,8 +1678,8 @@ class CloudInboxCard extends StatelessWidget {
       child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width>700
           ? 650 : MediaQuery.sizeOf(context).width*.95),
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.fromLTRB(11, 10, 11, 8),
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
         decoration: BoxDecoration(
           color: FileTheme.dark(context)
             ? const Color(0xFF482945) : const Color(0xFFFFDDED),
@@ -1698,14 +1698,14 @@ class CloudInboxCard extends StatelessWidget {
           ]),
           for (final file in items.take(5))
             Padding(
-              padding: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.only(top: 6),
               child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
-                SizedBox(width: 100, height: 100,
+                SizedBox(width: 88, height: 88,
                   child: CloudImageThumbnail(
                     key: ValueKey('qr-thumb-'+file.id),
                     file: file, onOpen: () => onPreview(file))),
                 const SizedBox(width: 11),
-                Expanded(child: SizedBox(height: 100, child: Column(
+                Expanded(child: SizedBox(height: 88, child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     InkWell(onTap: () => onPreview(file),
