@@ -14,6 +14,7 @@ import 'package:share_plus/share_plus.dart';
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
 import 'image_editing_storage.dart';
+import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
 
 /// File Share's native-feeling editing workspace. The main canvas, transition
@@ -132,6 +133,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       });
       unawaited(_cacheEraseImage(bytes));
       unawaited(_cacheEraseImage(bytes,original:true));
+      await _restoreSession();
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
   }
@@ -190,6 +192,65 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }catch(_){
       _message('Could not open this image. Try a JPG or PNG.');
     }finally{if(mounted)setState(()=>_imagePickerBusy=false);}
+  }
+
+  Future<void> _saveSession()async{
+    final id=_draftId;
+    if(id==null)return;
+    await EditorSessionStore.instance.save('image',id,{
+      'tool':_tool,'format':_format,
+      'cropMode':_cropMode,'crop':[_crop.left,_crop.top,_crop.right,_crop.bottom],
+      'cropRatio':_cropRatio,
+      'cropCorners':[for(final p in _cropCorners)[p.dx,p.dy]],
+      'eraseRadius':_eraseRadius,'softness':_softness,'eraseMode':_eraseMode,
+      'fineAngle':_fineAngle,'straightenAutoCrop':_straightenAutoCrop,
+      'quality':_quality,'targetKb':_targetKb,
+      'brightness':_brightness,'contrast':_contrast,
+      'saturation':_saturation,'exposure':_exposure,
+      'backgroundColor':_background.toARGB32(),
+      'zoom':_zoom,
+    });
+  }
+  Future<void> _restoreSession()async{
+    final id=_draftId;
+    if(id==null)return;
+    final state=await EditorSessionStore.instance.load('image',id);
+    if(state==null||!mounted)return;
+    double number(dynamic v,double fallback)=>
+      v is num?v.toDouble():fallback;
+    setState((){
+      final tool=state['tool'] as String?;
+      if(tool!=null&&_tools.contains(tool))_tool=tool;
+      _format=state['format'] as String? ??_format;
+      _cropMode=state['cropMode'] as String? ??_cropMode;
+      _cropRatio=state['cropRatio'] as String? ??_cropRatio;
+      final crop=state['crop'];
+      if(crop is List&&crop.length==4)_crop=Rect.fromLTRB(
+        number(crop[0],.06),number(crop[1],.06),
+        number(crop[2],.94),number(crop[3],.94));
+      final corners=state['cropCorners'];
+      if(corners is List&&corners.length==4){
+        _cropCorners=[for(final item in corners)
+          if(item is List&&item.length==2)
+            Offset(number(item[0],.5),number(item[1],.5))];
+        if(_cropCorners.length!=4)_cropCorners=[
+          _crop.topLeft,_crop.topRight,_crop.bottomRight,_crop.bottomLeft];
+      }
+      _eraseRadius=number(state['eraseRadius'],_eraseRadius);
+      _softness=number(state['softness'],_softness);
+      _eraseMode=state['eraseMode'] as String? ??_eraseMode;
+      _fineAngle=number(state['fineAngle'],0);
+      _straightenAutoCrop=state['straightenAutoCrop'] as bool? ??true;
+      _quality=(state['quality'] as num?)?.toInt()??_quality;
+      _targetKb=(state['targetKb'] as num?)?.toInt()??_targetKb;
+      _brightness=number(state['brightness'],_brightness);
+      _contrast=number(state['contrast'],_contrast);
+      _saturation=number(state['saturation'],_saturation);
+      _exposure=number(state['exposure'],_exposure);
+      if(state['backgroundColor'] is int){
+        _background=Color(state['backgroundColor'] as int);
+      }
+    });
   }
 
   Future<void> _saveDraft() async {
@@ -436,24 +497,44 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
 
   Future<void> _export(String action)async {
-    await _eraseQueue;
-    if(_pendingFilter!=null)await _finalizeFilter();
-    if(_fineAngle.abs()>=.001)await _commitStraighten();
-    if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-    final data=_bytes;
-    if(data==null||_busy)return;
+    final cart=action=='cart';
+    if(_bytes==null)return;
     try{
-      final type=data.length>=2 && data[0]==0xff && data[1]==0xd8
+      // Do not lose a live brush stroke if Send is pressed mid-edit.
+      if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
+      await _eraseQueue;
+      if(!_busy){
+        if(_pendingFilter!=null)await _finalizeFilter();
+        if(_fineAngle.abs()>=.001)await _commitStraighten();
+        if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
+        if(_tool=='Crop'&&(_cropMode=='Perspective Crop'||
+            _crop!=const Rect.fromLTWH(.06,.06,.88,.88))){
+          await _commitCrop();
+        }
+        if(_tool=='Adjust'&&(_brightness!=1||_contrast!=1||
+            _saturation!=1||_exposure!=0)){
+          _commitAdjust();
+          // The adjustment was queued by the existing UI callback.
+          // Store the last valid image if background processing is active.
+        }
+      }
+      if(cart){
+        await _saveDraft();
+        await _saveSession();
+      }
+      final data=_bytes;
+      if(data==null)return;
+      final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8
         ?'jpg':'png';
       final name='edited_${DateTime.now().millisecondsSinceEpoch}.$type';
-      if(action=='cart'){
+      if(cart){
         final directory=await getApplicationSupportDirectory();
-        final cart=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
-        await cart.create(recursive:true);
-        final path=File('${cart.path}${Platform.pathSeparator}$name');
-        await path.writeAsBytes(data,flush:true);
-        ImageEditingCart.instance.add(path,name);
-        _message('Image added to File Share Cart');
+        final folder=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
+        await folder.create(recursive:true);
+        final file=File('${folder.path}${Platform.pathSeparator}$name');
+        await file.writeAsBytes(data,flush:true);
+        ImageEditingCart.instance.add(file,name);
+        if(mounted)returnToFileShareCart(context);
       }else if(action=='share'){
         final directory=await getTemporaryDirectory();
         final file=File('${directory.path}${Platform.pathSeparator}$name');
@@ -739,7 +820,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     });
     unawaited(_apply('adjust',options));
   }
-  void _commitCrop(){
+  Future<void> _commitCrop()async{
     if(_busy)return;
     if(_cropMode=='Normal Crop'){
       final crop=_crop;
@@ -750,23 +831,23 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _instantCrop=crop;
         _ratio=ratio*crop.width/crop.height;
       });
-      unawaited(_apply('crop',{
+      await _apply('crop',{
         'x':crop.left,'y':crop.top,'w':crop.width,'h':crop.height,
       },description:'Normal crop').whenComplete((){
         if(mounted)setState((){
           _instantCrop=null;
           if(identical(_bytes,before))_ratio=ratio;
         });
-      }));
+      });
       return;
     }
     final points=_cropCorners;
-    unawaited(_apply('perspective',{
+    await _apply('perspective',{
       'tlx':points[0].dx,'tly':points[0].dy,
       'trx':points[1].dx,'try':points[1].dy,
       'brx':points[2].dx,'bry':points[2].dy,
       'blx':points[3].dx,'bly':points[3].dy,
-    },description:'Perspective freeform crop'));
+    },description:'Perspective freeform crop');
   }
 
   Future<void> _customColorDialog()async{
@@ -1171,7 +1252,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }else if(_tool=='Background'&&_pendingBackgroundColor!=null){
       await _finalizeBackgroundPreview();
     }else if(_tool=='Crop'){
-      _commitCrop();
+      await _commitCrop();
     }else if(_tool=='Adjust'){
       _commitAdjust();
     }else if(_tool=='Straighten'){
@@ -1318,7 +1399,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           onPressed:_bytes==null||_busy?null:()=>_export('save'),
           icon:const Icon(Icons.download_rounded,size:19)),
         IconButton(tooltip:'Send to File Share Cart',visualDensity:VisualDensity.compact,
-          onPressed:_bytes==null||_busy?null:()=>_export('cart'),
+          onPressed:_bytes==null?null:()=>_export('cart'),
           icon:const Icon(Icons.shopping_cart_outlined,size:19)),
         _menu(),
       ]),
