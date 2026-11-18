@@ -1,5 +1,7 @@
 package com.sammyi57.pdftools
 
+import com.example.file_share.R
+
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
