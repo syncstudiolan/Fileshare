@@ -1909,7 +1909,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       _nav('Toolbox', Icons.handyman_outlined, pinned: pinned),
       _nav('Devices', Icons.devices_rounded, pinned: pinned),
       _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
-      _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
       _nav('Settings', Icons.settings_outlined, pinned: pinned),
       _nav('Profile', Icons.person_outline_rounded, pinned: pinned),
       AnimatedBuilder(
@@ -2447,7 +2446,8 @@ class FeatureDesignPage extends StatelessWidget {
         Expanded(child: Center(child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 750),
           child: ListView(padding: const EdgeInsets.all(15), children: [
-            const DesignTag('UI DESIGN ONLY — NO ONLINE SERVICE'),
+            if (title != 'Settings')
+              const DesignTag('UI DESIGN ONLY — NO ONLINE SERVICE'),
             const SizedBox(height: 15),
             if (title == 'Home') _home(context),
             if (title == 'Files') _files(context),
@@ -2661,6 +2661,28 @@ class FeatureDesignPage extends StatelessWidget {
   ]);
 
   Widget _settings(BuildContext c) => Column(children: [
+    _section(c, 'Cloud Setup',
+      'Manage the personal Cloudflare Worker, account pairing and online Guest QR service from Settings.',
+      Column(children: [
+        ListenableBuilder(
+          listenable: PersonalCloud.instance,
+          builder: (context, _) => _line(c, Icons.cloud_outlined,
+            'Personal Cloudflare',
+            PersonalCloud.instance.signedIn
+              ? 'Connected · Cloud transfer and Guest QR settings'
+              : 'Not connected · Offline LAN remains available'),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(width: double.infinity,
+          child: FilledButton.icon(
+            icon: const Icon(Icons.cloud_sync_outlined),
+            label: const Text('Open Cloud Setup'),
+            onPressed: () => Navigator.of(c).push(fadePage(
+              CloudConnectPage(mode: mode, onMode: onMode))),
+          )),
+      ]),
+    ),
+    const SizedBox(height: 14),
     if (Platform.isWindows) ...[
       _section(c, 'Windows Background Receiver',
         'Closing the window hides File Share in the tray. The LAN engine keeps receiving while Windows is awake.',
