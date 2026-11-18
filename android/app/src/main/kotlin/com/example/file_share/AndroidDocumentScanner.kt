@@ -11,6 +11,7 @@ import org.opencv.core.Mat
 import org.opencv.core.MatOfPoint
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
+import org.opencv.core.Rect
 import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
@@ -111,7 +112,7 @@ internal class AndroidDocumentScanner(private val context:Context) {
         Imgproc.cvtColor(rgba,rgb,Imgproc.COLOR_RGBA2RGB)
         rgba.release()
         val raw=a["corners"] as? List<*>
-        if(raw!=null && raw.size==8){
+        if(a["cropMode"]!="Normal" && raw!=null && raw.size==8){
             val p=Array(4){i->
                 Point(((raw[i*2] as? Number)?.toDouble()?:0.0).coerceIn(0.0,1.0)*rgb.cols(),
                     ((raw[i*2+1] as? Number)?.toDouble()?:0.0).coerceIn(0.0,1.0)*rgb.rows())
@@ -128,6 +129,22 @@ internal class AndroidDocumentScanner(private val context:Context) {
             Imgproc.warpPerspective(rgb,warped,matrix,Size(w.toDouble(),h.toDouble()),
                 Imgproc.INTER_LINEAR,Core.BORDER_REPLICATE)
             matrix.release();src.release();dst.release();rgb.release();rgb=warped
+        }
+        if(a["cropMode"]=="Normal"){
+            val coords=(a["crop"] as? List<*>)?.mapNotNull{
+                (it as? Number)?.toDouble()} ?: emptyList()
+            if(coords.size==4){
+                val l=coords[0].coerceIn(0.0,1.0)
+                val t=coords[1].coerceIn(0.0,1.0)
+                val r=coords[2].coerceIn(l+.001,1.0)
+                val b=coords[3].coerceIn(t+.001,1.0)
+                val x=(l*rgb.cols()).toInt().coerceIn(0,rgb.cols()-1)
+                val y=(t*rgb.rows()).toInt().coerceIn(0,rgb.rows()-1)
+                val w=((r-l)*rgb.cols()).toInt().coerceIn(1,rgb.cols()-x)
+                val h=((b-t)*rgb.rows()).toInt().coerceIn(1,rgb.rows()-y)
+                val cropped=rgb.submat(Rect(x,y,w,h)).clone()
+                rgb.release();rgb=cropped
+            }
         }
         when(((a["rotate"] as? Number)?.toInt()?:0)%360){
             90->Core.rotate(rgb,rgb,Core.ROTATE_90_CLOCKWISE)
