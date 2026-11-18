@@ -39,9 +39,27 @@ class _LanFolderSharePageState extends State<LanFolderSharePage> {
       final result=await FilePicker.pickFiles(type:FileType.any, allowMultiple:true);
       for(final entry in result) {
         final path=entry.path;
-        if(path==null)continue;
-        final file=File(path);
-        if(!await file.exists())continue;
+        File? file;
+        if(path!=null && await File(path).exists()) {
+          file=File(path);
+        } else {
+          // Some Android/remote providers supply a SAF stream, not a path.
+          final root=await getApplicationSupportDirectory();
+          final dir=Directory('${root.path}${Platform.pathSeparator}folder_share_cart');
+          await dir.create(recursive:true);
+          final safe=LanEngine.safeFileName(entry.name);
+          final target=File('${dir.path}${Platform.pathSeparator}${LanEngine.newId()}_$safe');
+          final sink=target.openWrite();
+          try {
+            await for(final chunk in entry.readAsByteStream()) {sink.add(chunk);}
+            await sink.close();
+            file=target;
+          } catch (_) {
+            await sink.close();
+            if(await target.exists())await target.delete();
+            rethrow;
+          }
+        }
         _files.add(file);
         _names.add(entry.name);
       }
@@ -104,6 +122,20 @@ class _LanFolderSharePageState extends State<LanFolderSharePage> {
       if(!appLan.started)await appLan.start();
       final sources=List<File>.of(_files), names=List<String>.of(_names);
       await appLan.enqueue(sources,names:names);
+      // Queue has its own durable copies. Remove only app-owned staging,
+      // never an original file from the user's file manager.
+      final tmp=await getTemporaryDirectory();
+      final support=await getApplicationSupportDirectory();
+      for(final source in sources) {
+        final path=source.absolute.path;
+        final owned=path.startsWith(
+          '${tmp.path}${Platform.pathSeparator}lan_folders${Platform.pathSeparator}') ||
+          path.startsWith(
+          '${support.path}${Platform.pathSeparator}folder_share_cart${Platform.pathSeparator}');
+        if(owned) {
+          try {if(await source.exists())await source.delete();}catch(_){}
+        }
+      }
       _files.clear();_names.clear();
       if(!mounted)return;
       setState(()=>_status=appLan.peers.isEmpty
