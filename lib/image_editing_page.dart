@@ -34,6 +34,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
   String? _selectedFilter;
+  String? _pendingFilter;
   Uint8List? _filterBase;
   final TransformationController _transformController=TransformationController();
   double _zoom=1.0;
@@ -141,6 +142,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _name=name??'image.png';
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
         _undo.clear();_redo.clear();_steps.clear();
+        _pendingFilter=null;_selectedFilter=null;
         _crop=const Rect.fromLTWH(.06,.06,.88,.88);
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
@@ -351,6 +353,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   Future<void> _export(String action)async {
+    if(_pendingFilter!=null)await _finalizeFilter();
     final data=_bytes;
     if(data==null||_busy)return;
     try{
@@ -558,18 +561,22 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
   Future<void> _applyFilter(String type)async{
     if(_busy||_bytes==null)return;
-    final current=_bytes!;
-    _filterBase??=current;
+    // GPU preview updates instantly; defer full-resolution raster until Apply or export.
+    setState((){_selectedFilter=type;_pendingFilter=type;});
+  }
+  Future<void> _finalizeFilter()async{
+    final type=_pendingFilter;
+    if(type==null||_bytes==null||_busy)return;
+    if(type=='Normal'){setState(()=>_pendingFilter=null);return;}
+    final previous=_bytes!;
     setState(()=>_busy=true);
     try{
-      final next=type=='Normal'?_filterBase!:
-        await ImageEditingEngine.edit(_filterBase!,'filter',{'name':type});
-      await _commit(current,next,'Filter: $type');
-      if(mounted)setState(()=>_selectedFilter=type);
+      final next=await ImageEditingEngine.edit(previous,'filter',{'name':type});
+      await _commit(previous,next,'Filter: $type');
+      if(mounted)setState(()=>_pendingFilter=null);
     }catch(_){_message('This filter could not be applied.');}
     finally{if(mounted)setState(()=>_busy=false);}
   }
-
   Widget _filterThumbnail(String type){
     final bytes=_bytes;
     if(bytes==null)return const Icon(Icons.image_outlined);
@@ -759,10 +766,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         DecoratedBox(decoration:BoxDecoration(
           border:Border.all(color:FileTheme.violet.withValues(alpha:.18))),
           child:CustomPaint(painter:_CheckerPainter())),
-        _liveAdjustment(Image.memory(_bytes!,fit:BoxFit.fill,
-          gaplessPlayback:true,filterQuality:FilterQuality.medium)),
+        _liveAdjustment(_fastFilterPreview(Image.memory(_bytes!,fit:BoxFit.fill,
+          cacheWidth:(width*MediaQuery.devicePixelRatioOf(context)).round().clamp(1,1920),
+          gaplessPlayback:true,filterQuality:FilterQuality.medium))),
         if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
+        if(_busy && _tool=='Background')const Positioned(right:12,top:12,
+          child:CircleAvatar(backgroundColor:Color(0xAA765ADB),
+            child:Icon(Icons.auto_fix_high_rounded,color:Colors.white))),
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
@@ -784,6 +795,19 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     });
   }
 
+  Widget _fastFilterPreview(Widget child){
+    final type=_pendingFilter;
+    final matrix=switch(type){
+      'B&W'=><double>[.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,0,0,0,1,0],
+      'Vivid'=><double>[1.18,0,0,0,0,0,1.12,0,0,0,0,0,1.1,0,0,0,0,0,1,0],
+      'Warm'=><double>[1.13,0,0,0,4,0,1.04,0,0,2,0,0,.83,0,0,0,0,0,1,0],
+      'Cool'=><double>[.85,0,0,0,0,0,1.02,0,0,0,0,0,1.15,0,3,0,0,0,1,0],
+      'Vintage'=><double>[.393,.769,.189,0,0,.349,.686,.168,0,0,.272,.534,.131,0,0,0,0,0,1,0],
+      _=>null,
+    };
+    return matrix==null?child:ColorFiltered(
+      colorFilter:ColorFilter.matrix(matrix),child:child);
+  }
   String _toolTitle(String tool)=>switch(tool){
     'Background'=>'Background Removal',
     'Compress'=>'Compression',
@@ -802,9 +826,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   };
   void _selectTool(String tool){
     if(_busy)return;
-    if(_tool=='Filters'&&tool!='Filters'){
-      _filterBase=null;
-      _selectedFilter=null;
+    if(_tool=='Filters'&&tool!='Filters'&&_pendingFilter!=null){
+      unawaited(_finalizeFilter().then((_){
+        if(mounted)setState(()=>_tool=tool);
+      }));
+      return;
     }
     setState(()=>_tool=tool);
   }
@@ -950,7 +976,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
 
   Future<void> _applyCurrent() async {
     if(_busy || _bytes==null)return;
-    if(_tool=='Crop'){
+    if(_tool=='Filters'){
+      await _finalizeFilter();
+    }else if(_tool=='Crop'){
       _commitCrop();
     }else if(_tool=='Adjust'){
       _commitAdjust();
