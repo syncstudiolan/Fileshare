@@ -438,6 +438,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   Future<void> _export(String action)async {
     await _eraseQueue;
     if(_pendingFilter!=null)await _finalizeFilter();
+    if(_fineAngle.abs()>=.001)await _commitStraighten();
     if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
     final data=_bytes;
     if(data==null||_busy)return;
