@@ -361,7 +361,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
             ]),
           )),
         ]),
-      )),
+      ),
     );
   }
 }
