@@ -10,3 +10,8 @@
 -keepclassmembers class * implements com.google.firebase.components.ComponentRegistrar {
   public <init>();
 }
+
+# Android-only advanced PDF scanning and local OCR.
+# OpenCV's Java Native Interface expects stable Java method signatures.
+-keep class org.opencv.** { *; }
+-keep class com.google.mlkit.vision.text.** { *; }
