@@ -836,7 +836,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     );
   }
 
-  Widget _toolStrip()=>SizedBox(height:54,
+  Widget _toolStrip()=>SizedBox(height:62,
     child:ListView(scrollDirection:Axis.horizontal,
       padding:const EdgeInsets.symmetric(horizontal:12,vertical:4),
       children:[
@@ -962,42 +962,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     }
   }
 
-  Widget _actions({bool wide=false}){
-    final available=_bytes!=null && !_busy;
-    return SafeArea(top:false,child:Container(
-      padding:EdgeInsets.fromLTRB(wide?15:8,7,wide?15:8,9),
-      decoration:BoxDecoration(
-        color:Theme.of(context).colorScheme.surface.withValues(alpha:.8),
-        border:Border(top:BorderSide(
-          color:FileTheme.violet.withValues(alpha:.15)))),
-      child:Column(mainAxisSize:MainAxisSize.min,children:[
-        Row(children:[
-          IconButton(tooltip:'Close editor',
-            onPressed:()=>Navigator.of(context).maybePop(),
-            icon:const Icon(Icons.close_rounded)),
-          IconButton(tooltip:'Undo',onPressed:_undo.isEmpty||_busy?null:
-            ()=>_historyStep(true),icon:const Icon(Icons.undo_rounded)),
-          IconButton(tooltip:'Redo',onPressed:_redo.isEmpty||_busy?null:
-            ()=>_historyStep(false),icon:const Icon(Icons.redo_rounded)),
-          const Spacer(),
-          IconButton(tooltip:'Save image',onPressed:available?
-            ()=>_export('save'):null,
-            icon:const Icon(Icons.file_download_outlined)),
-          IconButton(tooltip:'Share image',onPressed:available?
-            ()=>_export('share'):null,icon:const Icon(Icons.share_outlined)),
-          FilledButton.icon(onPressed:available?_applyCurrent:null,
-            icon:const Icon(Icons.check_rounded),label:const Text('Apply')),
-        ]),
-        const SizedBox(height:5),
-        SizedBox(width:double.infinity,child:FilledButton.icon(
-          onPressed:available?()=>_export('cart'):null,
-          icon:const Icon(Icons.send_outlined),
-          label:const Text('Send to File Share Cart')),
-        ),
-      ]),
-    ));
-  }
-
   Widget _desktopHistory(){
     return ListenableBuilder(listenable:ImageEditingHistory.instance,
       builder:(context,_){
@@ -1048,50 +1012,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       });
   }
 
-  Widget _desktopWorkspace(){
-    return Row(children:[
-      Expanded(flex:8,child:Column(children:[
-        Expanded(child:_previewArea(wide:true)),
-        _actions(wide:true),
+  Widget _desktopWorkspace()=>Column(children:[
+    Expanded(child:Row(children:[
+      Expanded(flex:8,child:_previewArea(wide:true)),
+      SizedBox(width:365,child:ListView(children:[
+        _controls(),
+        const Divider(height:24),
+        _desktopHistory(),
       ])),
-      Container(width:365,
-        decoration:BoxDecoration(border:Border(left:BorderSide(
-          color:FileTheme.violet.withValues(alpha:.2)))),
-        child:Column(children:[
-          Expanded(child:ListView(padding:const EdgeInsets.all(14),children:[
-            Row(children:[
-              IconButton(tooltip:'Undo',onPressed:_undo.isEmpty?null:
-                ()=>_historyStep(true),icon:const Icon(Icons.undo)),
-              IconButton(tooltip:'Redo',onPressed:_redo.isEmpty?null:
-                ()=>_historyStep(false),icon:const Icon(Icons.redo)),
-              const Spacer(),_menu(),
-            ]),
-            for(final tool in _tools)
-              Padding(padding:const EdgeInsets.only(bottom:7),
-                child:_toolTab(tool,vertical:true)),
-            const Divider(height:24),
-            _controls(),
-            const Divider(height:24),
-            _desktopHistory(),
-          ])),
-        ]),
-      ),
-    ]);
-  }
+    ])),
+    _toolStrip(),
+  ]);
 
   Widget _mobileWorkspace(){
     // Do not consume the preview with controls before an image is selected.
     if(_bytes==null){
       return Column(children:[
         Expanded(child:_previewArea(wide:false)),
-        _actions(),
+        _toolStrip(),
       ]);
     }
     return Column(children:[
       Expanded(flex:7,child:_previewArea(wide:false)),
-      _toolStrip(),
       SizedBox(height:210,child:_controls()),
-      _actions(),
+      _toolStrip(),
     ]);
   }
 
@@ -1113,13 +1057,32 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
 
   @override
   Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('Image Editing'),actions:[
-      IconButton(tooltip:'Before / After',onPressed:_bytes==null?null:
-        ()=>setState(()=>_showOriginal=!_showOriginal),
-        icon:Icon(_showOriginal?Icons.visibility_off_outlined:
-          Icons.compare)),
-      _menu(),
-    ]),
+    appBar:AppBar(
+      title:const Text('Image Editing',style:TextStyle(fontSize:15)),
+      actions:[
+        IconButton(tooltip:'Cancel / Close',visualDensity:VisualDensity.compact,
+          onPressed:()=>Navigator.of(context).maybePop(),
+          icon:const Icon(Icons.close_rounded,size:19)),
+        IconButton(tooltip:'Undo',visualDensity:VisualDensity.compact,
+          onPressed:_undo.isEmpty||_busy?null:()=>_historyStep(true),
+          icon:const Icon(Icons.undo_rounded,size:19)),
+        IconButton(tooltip:'Redo',visualDensity:VisualDensity.compact,
+          onPressed:_redo.isEmpty||_busy?null:()=>_historyStep(false),
+          icon:const Icon(Icons.redo_rounded,size:19)),
+        IconButton(tooltip:'Apply',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:_applyCurrent,
+          icon:const Icon(Icons.check_rounded,size:19)),
+        IconButton(tooltip:'Share',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:()=>_export('share'),
+          icon:const Icon(Icons.share_outlined,size:19)),
+        IconButton(tooltip:'Download',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:()=>_export('save'),
+          icon:const Icon(Icons.download_rounded,size:19)),
+        IconButton(tooltip:'Send to File Share Cart',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:()=>_export('cart'),
+          icon:const Icon(Icons.shopping_cart_outlined,size:19)),
+        _menu(),
+      ]),
     body:Container(
       decoration:BoxDecoration(gradient:FileTheme.background(context)),
       child:LayoutBuilder(builder:(context,constraints)=>
