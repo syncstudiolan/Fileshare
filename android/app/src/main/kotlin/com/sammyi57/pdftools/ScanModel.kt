@@ -47,7 +47,7 @@ data class ScanPage(val id: String, val kind: String, val size: String, val shot
 data class PdfRef(@SerialName("uri") val path: String, val name: String)
 
 @Serializable
-data class SavedScan(val name: String, val pages: List<ScanPage>, val sig: String = "")
+data class SavedScan(val name: String, val pages: List<ScanPage>, val sig: String = "", val compressionTargetKb: Int? = null)
 
 @Serializable
 data class ScanDoc(
@@ -58,6 +58,7 @@ data class ScanDoc(
   val pages: List<ScanPage>,
   val pdf: PdfRef? = null,
   val saved: SavedScan? = null, // state at the last Save PDF, for "Discard changes"
+  val compressionTargetKb: Int? = null, // optional requested PDF export size, stays editable
 )
 
 val KIND_LABEL = linkedMapOf("whiteboard" to "Whiteboard", "book" to "Book", "doc" to "Document", "id" to "ID card", "card" to "Business card")
@@ -165,7 +166,9 @@ fun deleteDoc(id: String) {
 private fun ScanPage.edits() = listOf(id, kind, size, shots.map { listOf(pathOf(it.src), it.corners, it.rotation, it.filter, it.brightness, it.contrast, it.strokes) })
 
 /** True for a draft that was never saved, or a saved scan edited since. */
-fun ScanDoc.isDirty(): Boolean = saved == null || saved.name != name || saved.pages.map { it.edits() } != pages.map { it.edits() }
+fun ScanDoc.isDirty(): Boolean = saved == null || saved.name != name ||
+  saved.compressionTargetKb != compressionTargetKb ||
+  saved.pages.map { it.edits() } != pages.map { it.edits() }
 
 val ScanDoc.isRendered get() = pages.all { p -> p.shots.all { it.rendered } }
 
@@ -194,13 +197,21 @@ suspend fun exportPdf(doc: ScanDoc): ScanDoc = withContext(Dispatchers.IO) {
   // An invisible text layer over the words, so the scan can be searched and copied. Best effort: a page OCR can't
   // read (or any OCR failure) just leaves the PDF as plain pictures.
   if (ScanPrefs.searchable) runCatching { ocrPdf(tmp.readBytes()) }.getOrNull()?.let { tmp.writeBytes(it) }
+  // Keep the original photos + all crop/filter settings in doc.json. Only the
+  // exported PDF is recompressed. Targets are best effort, never guaranteed:
+  // PDFs with mostly text/vector content may not reach an arbitrary size.
+  doc.compressionTargetKb?.takeIf { it > 0 }?.let { targetKb ->
+    val input = tmp.readBytes()
+    val compressed = compressToSize(input, (targetKb / 1024.0).toString())
+    if (compressed.size < input.size) tmp.writeBytes(compressed)
+  }
   // Replace the earlier PDF wherever it is now: moves and renames in Files keep `pdf` pointing at it. Only ever that
   // exact file: if it's gone, the new PDF is saved fresh rather than replacing some other file with the same name.
   val old = doc.pdf?.let { File(pathOf(it.path)) }?.takeIf { it.isFile }
   val folder = old?.parent
   if (old != null) removeFile(old.path)
   val file = adoptTemp(tmp, doc.name, "pdf", folder)
-  val next = doc.copy(pdf = PdfRef(file.path, file.name), saved = SavedScan(doc.name, doc.pages))
+  val next = doc.copy(pdf = PdfRef(file.path, file.name), saved = SavedScan(doc.name, doc.pages, compressionTargetKb = doc.compressionTargetKb))
   saveDoc(next)
   cleanFiles(next)
   next
@@ -233,7 +244,8 @@ fun discardChanges(doc: ScanDoc): ScanDoc? {
     deleteDoc(doc.id)
     return null
   }
-  val next = doc.copy(name = doc.saved.name, pages = doc.saved.pages)
+  val next = doc.copy(name = doc.saved.name, pages = doc.saved.pages,
+    compressionTargetKb = doc.saved.compressionTargetKb)
   saveDoc(next)
   cleanFiles(next)
   return next
