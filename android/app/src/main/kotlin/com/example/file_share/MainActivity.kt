@@ -48,6 +48,23 @@ class FileShareApplication : Application() {
                 "pdf.countPages", "pdf.renderPage", "pdf.process", "pdf.fromImages", "pdf.fromOffice", "pdf.processMany", "pdf.detectDocument", "pdf.processScan", "pdf.detectFrame" -> {
                     pdf.handle(MethodCall(call.method.removePrefix("pdf."), call.arguments), result)
                 }
+                "openUpstreamPdfTools" -> try {
+                    val options = call.arguments as? Map<*, *>
+                    val path = options?.get("path") as? String
+                    val launch = Intent(this, com.sammyi57.pdftools.MainActivity::class.java)
+                    if (!path.isNullOrBlank()) {
+                        val input = File(path)
+                        require(input.isFile && input.canRead()) { "PDF file unavailable" }
+                        require(input.extension.equals("pdf", ignoreCase = true)) { "Expected a PDF file" }
+                        launch.action = Intent.ACTION_VIEW
+                        launch.setDataAndType(Uri.fromFile(input), "application/pdf")
+                    }
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(launch)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("PDF_TOOLS_OPEN_FAILED", e.message, null)
+                }
                 "takeSharedFiles" -> {
                     synchronized(shared) {
                         result.success(shared.toList())
