@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   preview_validation:
-    if: github.event_name == 'pull_request'
+    # Draft PR #6 is code-only by request: do not run builds or releases.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number != 6
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
