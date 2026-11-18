@@ -57,8 +57,10 @@ class PhotoEnhancerEngine {
     if(scale!=2&&scale!=4)throw ArgumentError.value(scale,'scale');
     final decoded=img.decodeImage(source);
     if(decoded==null)throw const FormatException('Unsupported image');
-    if(decoded.width*decoded.height>8000000){
-      throw StateError('Image too large for this device-safe AI pass (max 8 MP)');
+    final maxSourcePixels=scale==4?1000000:4000000;
+    if(decoded.width*decoded.height>maxSourcePixels){
+      throw StateError('Source too large for safe ${scale}x AI output. '
+        'Use Crop first (maximum ${scale==4?'1':'4'} MP input).');
     }
     final model=await _model();
     final runtime=OnnxRuntime();
@@ -69,7 +71,7 @@ class PhotoEnhancerEngine {
       var original=decoded;
       final stages=scale==4?2:1;
       for(var stage=0;stage<stages;stage++) {
-        if(original.width*original.height>8000000){
+        if(original.width*original.height>4000000){
           throw StateError('4x output exceeds device-safe processing limit');
         }
         original=await _stage(original,session,(p)=>
@@ -110,8 +112,8 @@ class PhotoEnhancerEngine {
         final tensor=Float32List(area*3);
         for(var y=0;y<ph;y++) {
           for(var x=0;x<pw;x++) {
-            final ix=(x0+x-overlap).clamp(0,input.width-1);
-            final iy=(y0+y-overlap).clamp(0,input.height-1);
+            final ix=(x0+x-overlap).clamp(0,input.width-1).toInt();
+            final iy=(y0+y-overlap).clamp(0,input.height-1).toInt();
             final p=input.getPixel(ix,iy), idx=y*pw+x;
             tensor[idx]=p.r/255;
             tensor[area+idx]=p.g/255;
@@ -130,10 +132,10 @@ class PhotoEnhancerEngine {
               for(var x=0;x<cw*2;x++){
                 final pixel=(y+overlap*2)*w+(x+overlap*2);
                 int channel(int c)=>
-                  (((flat[c*plane+pixel] as num).toDouble()*255).round()).clamp(0,255);
+                  (((flat[c*plane+pixel] as num).toDouble()*255).round()).clamp(0,255).toInt();
                 final sourceAlpha=input.getPixel(
-                  (x0+x~/2).clamp(0,input.width-1),
-                  (y0+y~/2).clamp(0,input.height-1)).a.toInt();
+                  (x0+x~/2).clamp(0,input.width-1).toInt(),
+                  (y0+y~/2).clamp(0,input.height-1).toInt()).a.toInt();
                 output.setPixelRgba(x0*2+x,y0*2+y,
                   channel(0),channel(1),channel(2),sourceAlpha);
               }
@@ -143,6 +145,8 @@ class PhotoEnhancerEngine {
           }
         }finally{if(inputTensor!=null)await inputTensor.dispose();}
         progress?.call((ty*nx+tx+1)/(nx*ny));
+        // Let Flutter render progress and handle input between inference tiles.
+        await Future<void>.delayed(Duration.zero);
       }
     }
     return output;
