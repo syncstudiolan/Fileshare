@@ -2049,6 +2049,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     try {
       if (!File(file.path).existsSync() ||
           (file.incoming && file.state != TransferState.delivered)) return;
+      if(Platform.isAndroid && file.name.toLowerCase().endsWith('.pdf')) {
+        await _native.invokeMethod<void>('openUpstreamPdfTools',{
+          'path':file.path,'action':'share',
+          'theme':Theme.of(context).brightness==Brightness.dark?'dark':'light',
+        });
+        return;
+      }
       await SharePlus.instance.share(ShareParams(
         files: [XFile(file.path)], text: file.name));
     } catch (e) { _snack('Sharing failed: ' + e.toString()); }
@@ -2155,6 +2162,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _shareCloud(CloudFile entry) async {
     try {
       final downloaded = await PersonalCloud.instance.download(entry);
+      if(Platform.isAndroid && entry.name.toLowerCase().endsWith('.pdf')){
+        await _native.invokeMethod<void>('openUpstreamPdfTools',{
+          'path':downloaded.path,'action':'share',
+          'theme':Theme.of(context).brightness==Brightness.dark?'dark':'light',
+        });
+        return;
+      }
       await SharePlus.instance.share(ShareParams(
         files: [XFile(downloaded.path)], text: entry.name));
     } catch (e) { _snack('QR Share failed: ' + e.toString()); }
