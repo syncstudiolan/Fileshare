@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
@@ -65,6 +66,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   Rect? _instantCrop;
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
+  List<Color> _recentColors=[];
   Color? _pendingBackgroundColor;
   Color _custom=const Color(0xFF7D5BE3);
 
@@ -80,6 +82,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       duration:const Duration(milliseconds:1200));
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
     unawaited(_load());
+    unawaited(_loadRecentColors());
   }
   @override void dispose(){
     _magicController.dispose();
@@ -136,6 +139,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       await _restoreSession();
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
+  }
+
+  Future<void> _loadRecentColors() async {
+    try {
+      final stored = await SharedPreferencesAsync().getStringList(
+        'file_share_recent_background_colors') ?? <String>[];
+      if(mounted)setState(() {
+        _recentColors=stored.map(int.tryParse).whereType<int>()
+          .map(Color.new).toList();
+      });
+    }catch(_){}
+  }
+  Future<void> _rememberColor(Color selected) async {
+    if(selected==Colors.transparent)return;
+    final value=selected.toARGB32();
+    setState(() {
+      _recentColors=[selected,
+        ..._recentColors.where((c)=>c.toARGB32()!=value)].take(10).toList();
+    });
+    try {
+      await SharedPreferencesAsync().setStringList(
+        'file_share_recent_background_colors',
+        _recentColors.map((x)=>x.toARGB32().toString()).toList());
+    }catch(_){}
   }
 
   Future<void> _chooseSource({required bool camera}) async {
@@ -336,7 +363,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     await _eraseQueue;
     final data=_bytes;
     if(data==null||_busy)return;
-    _magicController.repeat();
+    // Keep image canvas still: do not run a full-screen rendering animation.
     _processingAction='background';
     setState(()=>_busy=true);
     try{
@@ -439,6 +466,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _background=selected;
         _format='PNG';
       });
+      unawaited(_rememberColor(selected));
       return;
     }
     final previous=_bytes!;
@@ -456,6 +484,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _background=selected;
         _format='PNG';
       });
+      unawaited(_rememberColor(selected));
     }catch(_){
       _message('Could not replace this background. Try a different image.');
     }finally{if(mounted)setState(()=>_busy=false);}
@@ -528,11 +557,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         await _saveDraft();
         await _saveSession();
       }
-      final data=_bytes;
+      // Sharing uses the untouched imported photo. Edited pixels stay in History.
+      final data=(cart||action=='share')?(_originalBytes??_bytes):_bytes;
       if(data==null)return;
       final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8
         ?'jpg':'png';
-      final name='edited_${DateTime.now().millisecondsSinceEpoch}.$type';
+      final name='${cart||action=='share'?'original':'edited'}_${DateTime.now().millisecondsSinceEpoch}.$type';
       if(cart){
         final directory=await getApplicationSupportDirectory();
         final folder=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
@@ -1022,11 +1052,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         if(_tool=='Crop'&&_instantCrop==null)
           CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
-        if(_busy && _processingAction=='background')
-          Positioned.fill(child:IgnorePointer(child:AnimatedBuilder(
-            animation:_magicController,
-            builder:(context,_)=>CustomPaint(
-              painter:_FullMagicPainter(_magicController.value))))),
+
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
