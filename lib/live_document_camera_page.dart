@@ -134,7 +134,8 @@ class _LiveDocumentCameraPageState extends State<LiveDocumentCameraPage>
       final photo=await cam.takePicture();
       captures.add(photo.path);
       if(mounted)setState(()=>corners=null);
-      // Let the shutter settle before analyzing the next frame.
+      capturing=false;
+      // Resume live edge detection after taking each photo.
       if(mounted)await startStream();
     }catch(e){if(mounted)setState(()=>error='Capture failed: $e');}
     finally{
@@ -188,7 +189,11 @@ class _LiveDocumentCameraPageState extends State<LiveDocumentCameraPage>
             child:Container(color:Colors.black,
               child:ready?LayoutBuilder(builder:(ctx,size)=>
                 Stack(fit:StackFit.expand,children:[
-                  CameraPreview(cam),
+                  ClipRect(child:FittedBox(fit:BoxFit.cover,
+                    child:SizedBox(
+                      width:cam.value.previewSize?.height??size.maxWidth,
+                      height:cam.value.previewSize?.width??size.maxHeight,
+                      child:CameraPreview(cam)))),
                   if(corners!=null)CustomPaint(
                     painter:_LiveEdgesPainter(corners!)),
                   Positioned(left:12,top:12,child:DecoratedBox(
