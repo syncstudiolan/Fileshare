@@ -175,7 +175,8 @@ internal class PdfAdvancedOperations(private val context: Context,
             var item=doc.documentCatalog.documentOutline?.firstChild
             var visited=0
             while(item!=null && visited++<10000){
-                val p=runCatching{item.findDestinationPage(doc)}.getOrNull()
+                val node=item
+                val p=runCatching{node.findDestinationPage(doc)}.getOrNull()
                 if(p!=null){
                     val position=doc.pages.indexOf(p)
                     if(position>=0)marks.add((item.title?:"Chapter") to position)
