@@ -61,6 +61,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   double _fineAngle=0;
   bool _straightenAutoCrop=true;
   String? _processingAction;
+  Rect? _instantCrop;
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
   Color? _pendingBackgroundColor;
@@ -200,6 +201,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
 
   Future<void> _apply(String action, Map<String,Object?> options,
       {String? description}) async {
+    if(_busy)return;
+    await _eraseQueue;
     final bytes=_bytes;
     if(bytes==null||_busy)return;
     _processingAction=action;
@@ -230,10 +233,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         const Offset(.94,.94),const Offset(.06,.94)];
     });
     await _cacheEraseImage(next);
+    if(!step.startsWith('Manual ')&&!step.startsWith('Background')){
+      await _cacheEraseImage(next,original:true);
+    }
     await _saveDraft();
   }
 
   Future<void> _historyStep(bool undo) async {
+    await _eraseQueue;
     final source=undo?_undo:_redo;
     final current=_bytes;
     if(source.isEmpty||current==null||_busy)return;
@@ -257,6 +264,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   /// throws (as on the reported release device), run a verified portable
   /// ONNX model instead of surfacing a raw Java stack trace.
   Future<void> _removeBackground() async {
+    await _eraseQueue;
     final data=_bytes;
     if(data==null||_busy)return;
     _magicController.repeat();
@@ -428,6 +436,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
 
   Future<void> _export(String action)async {
+    await _eraseQueue;
     if(_pendingFilter!=null)await _finalizeFilter();
     if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
     final data=_bytes;
@@ -730,10 +739,24 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     unawaited(_apply('adjust',options));
   }
   void _commitCrop(){
+    if(_busy)return;
     if(_cropMode=='Normal Crop'){
+      final crop=_crop;
+      final before=_bytes;
+      final ratio=_ratio;
+      if(before==null)return;
+      setState((){
+        _instantCrop=crop;
+        _ratio=ratio*crop.width/crop.height;
+      });
       unawaited(_apply('crop',{
-        'x':_crop.left,'y':_crop.top,'w':_crop.width,'h':_crop.height,
-      },description:'Normal crop'));
+        'x':crop.left,'y':crop.top,'w':crop.width,'h':crop.height,
+      },description:'Normal crop').whenComplete((){
+        if(mounted)setState((){
+          _instantCrop=null;
+          if(identical(_bytes,before))_ratio=ratio;
+        });
+      }));
       return;
     }
     final points=_cropCorners;
@@ -894,7 +917,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           ColoredBox(color:_pendingBackgroundColor!),
         _liveAdjustment(_fastFilterPreview(
           Transform.rotate(angle:_fineAngle*math.pi/180,
-            child:(_tool=='Erase'&&_erasePreview!=null)
+            child:(_instantCrop!=null&&_erasePreview!=null)
+              ?CustomPaint(painter:_InstantCropPainter(
+                image:_erasePreview!,crop:_instantCrop!))
+              :(_tool=='Erase'&&_erasePreview!=null)
               ?CustomPaint(painter:_RealtimeEraserPainter(
                 image:_erasePreview!,restoration:_eraseRestoration,
                 pending:_pendingErase,active:_stroke,mode:_eraseMode,
@@ -905,7 +931,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
                   cacheWidth:(width*MediaQuery.devicePixelRatioOf(context))
                     .round().clamp(1,1920),
                   gaplessPlayback:true,filterQuality:FilterQuality.medium)))),
-        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
+        if(_tool=='Crop'&&_instantCrop==null)
+          CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
         if(_busy && _processingAction=='background')
           Positioned.fill(child:IgnorePointer(child:AnimatedBuilder(
@@ -1300,6 +1327,21 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         constraints.maxWidth>=900?_desktopWorkspace():_mobileWorkspace()),
     ),
   );
+}
+
+class _InstantCropPainter extends CustomPainter{
+  const _InstantCropPainter({required this.image,required this.crop});
+  final ui.Image image;
+  final Rect crop;
+  @override void paint(Canvas canvas,Size size){
+    final source=Rect.fromLTRB(crop.left*image.width,
+      crop.top*image.height,crop.right*image.width,
+      crop.bottom*image.height);
+    canvas.drawImageRect(image,source,Offset.zero&size,
+      Paint()..filterQuality=FilterQuality.medium);
+  }
+  @override bool shouldRepaint(covariant _InstantCropPainter old)=>
+    old.image!=image||old.crop!=crop;
 }
 
 class _LiveEraseStroke {
