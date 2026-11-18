@@ -25,3 +25,26 @@ https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
 
 No claims of perfect recovered detail, exact face identity, or guaranteed
 performance should be made from AI image restoration.
+
+## Optional GFPGAN face-restoration model
+
+- Model: GFPGAN v1.4 ONNX export, half-precision weights, Float32 RGB I/O, 512×512.
+- Original GFPGAN project and model: https://github.com/TencentARC/GFPGAN (Apache-2.0).
+- ONNX conversion: https://huggingface.co/sidkonduru/gfpgan-v1.4-onnx
+- Pinned revision: `3777aaa`, artifact `gfpgan14-fp16.onnx`.
+- Expected SHA-256: `6b12e9428c2a0983b2726604f09c4eec9e2e250370c79946a31b139f9befc1ea`.
+- File size: approximately 170 MB. Downloaded on first use, SHA-verified,
+  and processed locally. A manual face region is required; no automatic
+  detection, landmark alignment, identity preservation, or face swap is claimed.
+- Model may hallucinate details or alter apparent identity, and works best
+  on approximately aligned front-facing portraits.
+- Preserve the upstream Apache 2.0 license and attribution for redistributed
+  binaries. Review original training data provenance before commercial release.
+
+## Engineering and verification status
+
+Only source-level wiring and checks are committed in the Draft PR.
+Android/Windows Flutter builds, ONNX model downloads, actual tensor execution,
+performance measurement, side-by-side output comparison, low-memory device
+behavior, and face-region accuracy are **not verified**. No APK/EXE was
+built or deployed. A preflight Flutter test file exists but has not been run.
