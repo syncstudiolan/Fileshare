@@ -22,7 +22,24 @@ import org.apache.poi.hssf.usermodel.HSSFWorkbook
 internal class OfficePdfConverter(private val context:Context){
     private fun fromZip(path:String,entry:String):ByteArray?=
         ZipFile(path).use{zip->
-            zip.getEntry(entry)?.let {zip.getInputStream(it).use{data->data.readBytes()}}
+            zip.getEntry(entry)?.let {part->
+                require(part.size<16L*1024*1024 || part.size<0){
+                    "Office document XML is too large"
+                }
+                zip.getInputStream(part).use{input->
+                    val out=java.io.ByteArrayOutputStream()
+                    val buffer=ByteArray(32768)
+                    while(true){
+                        val n=input.read(buffer)
+                        if(n<0)break
+                        require(out.size()+n<=16*1024*1024){
+                            "Office document XML exceeded the size limit"
+                        }
+                        out.write(buffer,0,n)
+                    }
+                    out.toByteArray()
+                }
+            }
         }
     private fun xmlText(bytes:ByteArray, elements:Set<String>):String{
         val parser=Xml.newPullParser()
@@ -144,6 +161,7 @@ internal class OfficePdfConverter(private val context:Context){
     fun convert(path:String,name:String):String{
         val input=File(path)
         require(input.isFile){"Office file is missing"}
+        require(input.length()<=30L*1024*1024){"Office document exceeds 30 MB safety limit"}
         val extension=name.substringAfterLast('.',"").lowercase()
         val text=when(extension){
             "docx"->docx(path)
