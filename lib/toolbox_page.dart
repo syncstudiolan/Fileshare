@@ -54,7 +54,9 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
       }
       try {
         await const MethodChannel('file_share.native').invokeMethod<void>(
-          'openUpstreamPdfTools', {'path': widget.sourcePath,
+          'openUpstreamPdfTools', {'path': hasSource &&
+                EditingFileRouter.classify(name)==EditingFileKind.pdf
+                  ? widget.sourcePath : null,
             'theme': Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light'});
       } on PlatformException catch (error) {
         if (!mounted) return;
