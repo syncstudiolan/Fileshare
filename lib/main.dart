@@ -2414,6 +2414,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onPressed:_choosing?null:_openTransferCamera,
                     icon:const Icon(Icons.camera_alt_outlined,
                       color:FileTheme.violet)),
+                  IconButton(
+                    tooltip: 'Tools',
+                    onPressed:()=>_navigate('Toolbox'),
+                    icon:const Icon(Icons.handyman_outlined,
+                      color:FileTheme.violet)),
                   Expanded(child: Text(_staged.isEmpty
                       ? 'Choose files to send...'
                       : _staged.length.toString() + ' selection(s)',
