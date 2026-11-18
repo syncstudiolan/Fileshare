@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'pdf_history.dart';
+import 'editor_transfer_session.dart';
+import 'advanced_pdf_tools_page.dart' show addPdfToCart;
 
 class ScanSheet {
   ScanSheet({required this.path,this.corners,this.ratio=0.75,this.filter='Color',
@@ -35,13 +37,62 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
   String? problem;
   final picker=ImagePicker();
   bool _cameraOpened=false;
+  static const _scannerDraftId='active_scanner';
   @override void initState(){
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_){
       if(mounted&&!_cameraOpened){
         _cameraOpened=true;
-        unawaited(add(camera:true));
+        unawaited(_resumeOrStart());
       }
+    });
+  }
+  Future<void> _resumeOrStart()async{
+    final data=await EditorSessionStore.instance.load('scanner',_scannerDraftId);
+    if(data!=null){
+      final restored=<ScanSheet>[];
+      for(final item in (data['sheets'] as List? ?? [])){
+        if(item is! Map)continue;
+        final record=Map<String,dynamic>.from(item);
+        final path=record['path'] as String?;
+        if(path==null||!await File(path).exists())continue;
+        final sheet=ScanSheet(path:path,
+          ratio:(record['ratio'] as num?)?.toDouble()??.75,
+          filter:record['filter'] as String? ??'Color',
+          rotation:(record['rotation'] as num?)?.toInt()??0);
+        sheet.cropMode=record['cropMode'] as String? ??'Perspective';
+        final corners=record['corners'] as List?;
+        if(corners!=null&&corners.length==8){
+          sheet.corners=corners.map((v)=>(v as num).toDouble()).toList();
+        }
+        final rectangle=record['crop'] as List?;
+        if(rectangle!=null&&rectangle.length==4){
+          sheet.crop=Rect.fromLTRB(
+            (rectangle[0] as num).toDouble(),(rectangle[1] as num).toDouble(),
+            (rectangle[2] as num).toDouble(),(rectangle[3] as num).toDouble());
+        }
+        restored.add(sheet);
+      }
+      if(restored.isNotEmpty&&mounted){
+        setState((){
+          sheets.addAll(restored);
+          selected=((data['selected'] as num?)?.toInt()??0).clamp(0,sheets.length-1);
+          mode=data['mode'] as String? ??'Document';
+        });
+        return;
+      }
+    }
+    if(mounted)await add(camera:true);
+  }
+  Future<void> _saveScanSession()async{
+    await EditorSessionStore.instance.save('scanner',_scannerDraftId,{
+      'selected':selected,'mode':mode,
+      'sheets':[for(final shot in sheets){
+        'path':shot.path,'ratio':shot.ratio,
+        'filter':shot.filter,'rotation':shot.rotation,
+        'cropMode':shot.cropMode,'corners':shot.corners,
+        'crop':[shot.crop.left,shot.crop.top,shot.crop.right,shot.crop.bottom],
+      }],
     });
   }
   ScanSheet? get current=>sheets.isEmpty?null:sheets[selected.clamp(0,sheets.length-1)];
@@ -66,8 +117,15 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
       if(result!=null)mode=result.mode;
       if(captures.isEmpty)return;
       setState(()=>busy=true);
+      final root=await getApplicationSupportDirectory();
+      final folder=Directory('${root.path}${Platform.pathSeparator}scanner_session_photos');
+      await folder.create(recursive:true);
       for(final capture in captures){
-        final sheet=ScanSheet(path:capture.path,ratio:await aspect(capture.path));
+        final permanent=await File(capture.path).copy(
+          '${folder.path}${Platform.pathSeparator}capture_'
+          '${DateTime.now().microsecondsSinceEpoch}.jpg');
+        final sheet=ScanSheet(path:permanent.path,
+          ratio:await aspect(permanent.path));
         try{
           final found=await _native.invokeMethod<List<dynamic>>(
             'pdf.detectDocument',{'path':sheet.path});
@@ -78,6 +136,7 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
         sheets.add(sheet);
       }
       if(mounted)setState(()=>selected=sheets.length-1);
+      await _saveScanSession();
     }catch(e){if(mounted)setState(()=>problem='$e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -87,7 +146,7 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
     if(target==selected)return;
     setState((){final shot=sheets.removeAt(selected);sheets.insert(target,shot);selected=target;});
   }
-  Future<PdfDraft?> export()async{
+  Future<PdfDraft?> export({bool askName=true})async{
     if(sheets.isEmpty||busy)return null;
     setState(()=>busy=true);
     final intermediates=<File>[];
@@ -112,15 +171,25 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
         sourcePath:path,
         actions:['Document scanned','${sheets.length} pages','$mode mode']);
       await File(path).delete();
-      if(!mounted)return entry;
-      final renamed=await _renameAfterScan(entry);
-      return renamed;
+      if(!mounted||!askName)return entry;
+      return _renameAfterScan(entry);
     }catch(e){
       if(mounted)setState(()=>problem='PDF export failed: $e');
       return null;
     }finally{
       for(final file in intermediates)try{await file.delete();}catch(_){}
       if(mounted)setState(()=>busy=false);
+    }
+  }
+  Future<void> sendScanToCart()async{
+    if(sheets.isEmpty)return;
+    try{
+      await _saveScanSession();
+      final created=await export(askName:false);
+      if(created==null)return;
+      if(mounted)await addPdfToCart(context,created,editorOpen:false);
+    }catch(e){
+      if(mounted)setState(()=>problem='Could not send partial scan: $e');
     }
   }
   Future<PdfDraft> _renameAfterScan(PdfDraft draft)async{
@@ -283,12 +352,19 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
           ])),
         ],
         Padding(padding:const EdgeInsets.fromLTRB(15,6,15,14),
-          child:SizedBox(width:double.infinity,child:FilledButton.icon(
+          child:Row(children:[
+            Expanded(child:OutlinedButton.icon(
+              onPressed:busy||sheets.isEmpty?null:sendScanToCart,
+              icon:const Icon(Icons.add_shopping_cart),
+              label:const Text('Add to Cart'))),
+            const SizedBox(width:10),
+            Expanded(child:FilledButton.icon(
             onPressed:busy||sheets.isEmpty?null:()async{
               final entry=await export();
               if(entry!=null&&context.mounted)Navigator.pop(context,entry);
             },icon:const Icon(Icons.picture_as_pdf),
-            label:Text('Create PDF (${sheets.length} pages)')))),
+            label:Text('Create PDF (${sheets.length} pages)'))),
+          ])),
       ]),
     );
   }
