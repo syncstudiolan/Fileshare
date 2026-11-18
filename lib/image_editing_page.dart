@@ -499,6 +499,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
               label:const Text('Remove plain-color background')),
           ],
           const SizedBox(height:16),
+          OutlinedButton.icon(onPressed:()=>_selectTool('Erase'),
+            icon:const Icon(Icons.auto_fix_off_rounded),
+            label:const Text('Manual background Erase / Restore')),
+          const SizedBox(height:10),
           const Text('Replace background',style:TextStyle(fontWeight:FontWeight.bold)),
           const SizedBox(height:7),
           Wrap(spacing:8,runSpacing:8,children:[
@@ -1331,19 +1335,19 @@ class _RealtimeEraserPainter extends CustomPainter {
         path.lineTo(point.dx*size.width,point.dy*size.height);
       }
       if(operation=='Restore'&&restoration!=null){
-        canvas.save();
-        final clip=Paint()..style=PaintingStyle.stroke
+        final original=restoration!;
+        final p=Paint()..style=PaintingStyle.stroke
           ..strokeWidth=width..strokeCap=StrokeCap.round
-          ..strokeJoin=StrokeJoin.round;
-        final strokeMask=Path();
-        strokeMask.addPath(path,Offset.zero);
-        // The clip also works for a one-point touch using a circle.
-        canvas.clipPath(strokeMask,doAntiAlias:true);
-        canvas.drawImageRect(restoration!,
-          Rect.fromLTWH(0,0,restoration!.width.toDouble(),
-            restoration!.height.toDouble()),bounds,
-          Paint()..filterQuality=FilterQuality.medium);
-        canvas.restore();
+          ..strokeJoin=StrokeJoin.round
+          ..shader=ui.ImageShader(original,ui.TileMode.clamp,ui.TileMode.clamp,
+            Matrix4.diagonal3Values(size.width/original.width,
+              size.height/original.height,1).storage);
+        if(points.length==1){
+          canvas.drawCircle(Offset(points.first.dx*size.width,
+            points.first.dy*size.height),width/2,p..style=PaintingStyle.fill);
+        }else{
+          canvas.drawPath(path,p);
+        }
       }else{
         final p=Paint()..blendMode=BlendMode.clear
           ..color=Colors.black
@@ -1364,10 +1368,7 @@ class _RealtimeEraserPainter extends CustomPainter {
     stroke(active,mode,radius,softness);
     canvas.restore();
   }
-  @override bool shouldRepaint(covariant _RealtimeEraserPainter old)=>
-    old.image!=image||old.restoration!=restoration||
-    old.pending!=pending||old.active!=active||old.mode!=mode||
-    old.radius!=radius||old.softness!=softness;
+  @override bool shouldRepaint(covariant _RealtimeEraserPainter old)=>true;
 }
 class _FullMagicPainter extends CustomPainter {
   const _FullMagicPainter(this.progress);
