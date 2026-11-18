@@ -214,7 +214,22 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
       converted=await PdfSourceConversion.toPdf(path,original);
       final isPdf=EditingFileRouter.classify(original)==EditingFileKind.pdf;
       final display=isPdf?original:original.replaceFirst(
-        RegExp(r'\.[^.]+
+        RegExp(r'\.[^.]+$'),'.pdf');
+      final draft=await PdfHistory.instance.save(
+        id:DateTime.now().microsecondsSinceEpoch.toString(),
+        name:display,sourcePath:converted,
+        actions:[isPdf?'Imported PDF':'Converted from $original']);
+      if(mounted)await openDraft(draft,initialTool:initialTool);
+    }catch(e){
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Could not import document: $e')));
+    }finally{
+      if(converted!=null&&converted!=path){
+        try{await File(converted).delete();}catch(_){}
+      }
+      if(mounted)setState(()=>importing=false);
+    }
+  }
   Future<void> pickPdf({String? initialTool})async{
     final file=await FilePicker.pickFile(type:FileType.custom,
       allowedExtensions:['pdf']);
