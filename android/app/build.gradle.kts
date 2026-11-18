@@ -4,11 +4,14 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("dev.flutter.flutter-gradle-plugin")
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.2.20"
 }
 
 android {
     namespace = "com.example.file_share"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
+    compileSdkExtension = 19
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -55,6 +58,27 @@ kotlin {
 flutter { source = "../.." }
 
 dependencies {
+    // Upstream sammyZi/pdf-tools Compose/CameraX/viewer dependencies (Android only).
+    implementation(platform("androidx.compose:compose-bom:2026.06.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.animation:animation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.navigation:navigation-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    implementation("dev.chrisbanes.haze:haze:1.7.0")
+    implementation("androidx.camera:camera-core:1.6.0")
+    implementation("androidx.camera:camera-camera2:1.6.0")
+    implementation("androidx.camera:camera-lifecycle:1.6.0")
+    implementation("androidx.camera:camera-view:1.6.0")
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("androidx.pdf:pdf-compose:1.0.0-alpha18")
+    implementation("androidx.pdf:pdf-document-service:1.0.0-alpha18")
+    implementation("com.google.android.gms:play-services-auth:22.0.0")
     // Android-only PDF processing; not included in Windows/macOS bundles.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
