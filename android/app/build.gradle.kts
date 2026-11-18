@@ -66,7 +66,8 @@ val syncDocAlignerModel=tasks.register("syncDocAlignerModel") {
             }
             // Match the upstream Git blob identity, not just a size.
             val digest=java.security.MessageDigest.getInstance("SHA-1")
-            digest.update(("blob "+temporary.length()+"\\u0000").toByteArray())
+            digest.update(("blob "+temporary.length()).toByteArray())
+            digest.update(byteArrayOf(0))
             temporary.inputStream().use { file ->
                 val bytes=ByteArray(65536)
                 while(true){
