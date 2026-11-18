@@ -24,7 +24,8 @@ class EditingFileRouter {
     return EditingFileKind.unsupported;
   }
   static bool acceptsImageTool(String name)=>classify(name)==EditingFileKind.image;
-  static bool acceptsPdfTool(String name)=>classify(name)!=EditingFileKind.unsupported;
+  static bool acceptsPdfTool(String name)=>
+      classify(name)==EditingFileKind.pdf||classify(name)==EditingFileKind.image;
 }
 
 /// A single API for current and future editing tools. JSON is persisted locally
