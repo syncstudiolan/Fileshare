@@ -238,7 +238,27 @@ object Incoming {
   var uri by androidx.compose.runtime.mutableStateOf<Uri?>(null)
 }
 
-suspend fun importIncoming(uri: Uri): Picked? = withContext(Dispatchers.IO) { copyIn(uri, "document.pdf") }
+suspend fun importIncoming(uri: Uri): Picked? = withContext(Dispatchers.IO) {
+  if (uri.scheme != "file") return@withContext copyIn(uri, "document.pdf")
+  // A transfer card points to a real File Share-owned file. Preserve its name
+  // and make a persistent, independent copy for PDF editing/history; never
+  // modify the sent/received original or rely on disposable Android cache.
+  val source = uri.path?.let(::File) ?: return@withContext null
+  if (!source.isFile || !source.canRead() ||
+      !source.extension.equals("pdf", ignoreCase = true)) return@withContext null
+  val digest = java.security.MessageDigest.getInstance("SHA-256").digest(
+    source.canonicalPath.toByteArray(Charsets.UTF_8))
+    .take(12).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+  val name = cleanName(source.name).ifBlank { "document.pdf" }
+  val directory = File(appContext.filesDir, "pdf_imports").apply { mkdirs() }
+  val independent = File(directory, "${digest}_${name}")
+  if (!independent.isFile || independent.length() != source.length() ||
+      independent.lastModified() < source.lastModified()) {
+    source.copyTo(independent, overwrite = true)
+    independent.setLastModified(source.lastModified())
+  }
+  Picked(name, independent.absolutePath, independent.length())
+}
 
 /** The system document picker for PDFs. Empty when closed. */
 suspend fun pickPdfs(multi: Boolean): List<Picked> {
