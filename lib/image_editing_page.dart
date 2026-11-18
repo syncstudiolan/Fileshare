@@ -513,9 +513,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         }
         if(_tool=='Adjust'&&(_brightness!=1||_contrast!=1||
             _saturation!=1||_exposure!=0)){
-          _commitAdjust();
-          // The adjustment was queued by the existing UI callback.
-          // Store the last valid image if background processing is active.
+          await _commitAdjust();
         }
       }
       if(cart){
@@ -809,7 +807,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       description:'Straighten ${degrees.toStringAsFixed(1)}°');
     if(mounted)setState(()=>_fineAngle=0);
   }
-  void _commitAdjust(){
+  Future<void> _commitAdjust()async{
     if(_busy)return;
     final options=<String,Object?>{
       'brightness':_brightness,'contrast':_contrast,
@@ -818,7 +816,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     setState((){
       _brightness=1;_contrast=1;_saturation=1;_exposure=0;
     });
-    unawaited(_apply('adjust',options));
+    await _apply('adjust',options);
   }
   Future<void> _commitCrop()async{
     if(_busy)return;
@@ -1254,7 +1252,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }else if(_tool=='Crop'){
       await _commitCrop();
     }else if(_tool=='Adjust'){
-      _commitAdjust();
+      await _commitAdjust();
     }else if(_tool=='Straighten'){
       await _commitStraighten();
     }else if(_tool=='Compress'){
