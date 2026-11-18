@@ -137,10 +137,30 @@ class ImageEditingEngine {
           math.min(output.width, output.height)).round().clamp(1, 240).toInt();
         final softness = decimal('softness', .4).clamp(0.01, 1.0);
         final erase=action=='erase';
-        for(final point in points){
-          if(point is! Map)continue;
-          final x=((point['x'] as num).toDouble()*output.width).round();
-          final y=((point['y'] as num).toDouble()*output.height).round();
+        // Sample the path on the worker isolate; sparse touch events must not
+        // become a row of separate dots. Pixel work never blocks Flutter UI.
+        final samples=<({int x,int y})>[];
+        for(final raw in points){
+          if(raw is! Map)continue;
+          final px=(((raw['x'] as num).toDouble()).clamp(0.0,1.0)
+            *output.width).round();
+          final py=(((raw['y'] as num).toDouble()).clamp(0.0,1.0)
+            *output.height).round();
+          final previous=samples.isEmpty?null:samples.last;
+          if(previous!=null){
+            final gap=math.sqrt(math.pow(px-previous.x,2)+
+              math.pow(py-previous.y,2)).toDouble();
+            final steps=(gap/math.max(1.0,radius*.35)).ceil().clamp(1,128);
+            for(var k=1;k<steps;k++){
+              final t=k/steps;
+              samples.add((x:(previous.x+(px-previous.x)*t).round(),
+                y:(previous.y+(py-previous.y)*t).round()));
+            }
+          }
+          samples.add((x:px,y:py));
+        }
+        for(final point in samples){
+          final x=point.x,y=point.y;
           for(var py=math.max(0,y-radius);py<=math.min(output.height-1,y+radius);py++){
             for(var px=math.max(0,x-radius);px<=math.min(output.width-1,x+radius);px++){
               final distance=math.sqrt((px-x)*(px-x)+(py-y)*(py-y));
