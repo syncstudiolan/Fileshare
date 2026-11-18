@@ -234,6 +234,7 @@ private fun copyIn(uri: Uri, fallback: String): Picked? {
 
 /** A PDF another app handed to us ("Open with", Share): set by MainActivity, shown in the viewer once the app is up. */
 object Incoming {
+  var shareOnce = false
   var uri by androidx.compose.runtime.mutableStateOf<Uri?>(null)
 }
 
