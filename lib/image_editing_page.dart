@@ -1074,6 +1074,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(value=='history')Navigator.of(context).push(
         fadePage<void>(const ImageEditingHistoryPage()));
       if(value=='share' && _bytes!=null)unawaited(_export('share'));
+      if(value=='save' && _bytes!=null)unawaited(_export('save'));
+      if(value=='close')Navigator.of(context).maybePop();
+      if(value=='apply' && _bytes!=null)unawaited(_applyCurrent());
+      if(value=='compare' && _bytes!=null)setState(()=>_showOriginal=!_showOriginal);
     },
     itemBuilder:(_)=>const [
       PopupMenuItem(value:'history',child:Row(children:[
@@ -1081,13 +1085,24 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       PopupMenuItem(value:'share',child:Row(children:[
         Icon(Icons.ios_share_outlined),SizedBox(width:12),
         Text('Share / Export')])),
+      PopupMenuItem(value:'save',child:Row(children:[
+        Icon(Icons.download_outlined),SizedBox(width:12),Text('Save image')])),
+      PopupMenuItem(value:'apply',child:Row(children:[
+        Icon(Icons.check),SizedBox(width:12),Text('Apply changes')])),
+      PopupMenuItem(value:'compare',child:Row(children:[
+        Icon(Icons.compare),SizedBox(width:12),Text('Before / After')])),
+      PopupMenuItem(value:'close',child:Row(children:[
+        Icon(Icons.close),SizedBox(width:12),Text('Close editor')])),
     ]);
 
   @override
   Widget build(BuildContext context)=>Scaffold(
     appBar:AppBar(
-      title:const Text('Image Editing',style:TextStyle(fontSize:15)),
+      titleSpacing:0,
+      actionsIconTheme:const IconThemeData(size:19),
+      title:const Text('Image Editing',style:TextStyle(fontSize:14)),
       actions:[
+        if(MediaQuery.sizeOf(context).width>=580)
         IconButton(tooltip:'Cancel / Close',visualDensity:VisualDensity.compact,
           onPressed:()=>Navigator.of(context).maybePop(),
           icon:const Icon(Icons.close_rounded,size:19)),
@@ -1100,9 +1115,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         IconButton(tooltip:'Apply',visualDensity:VisualDensity.compact,
           onPressed:_bytes==null||_busy?null:_applyCurrent,
           icon:const Icon(Icons.check_rounded,size:19)),
+        if(MediaQuery.sizeOf(context).width>=580)
         IconButton(tooltip:'Share',visualDensity:VisualDensity.compact,
           onPressed:_bytes==null||_busy?null:()=>_export('share'),
           icon:const Icon(Icons.share_outlined,size:19)),
+        if(MediaQuery.sizeOf(context).width>=580)
         IconButton(tooltip:'Download',visualDensity:VisualDensity.compact,
           onPressed:_bytes==null||_busy?null:()=>_export('save'),
           icon:const Icon(Icons.download_rounded,size:19)),
