@@ -203,7 +203,7 @@ fun FilesTab() {
                 items.forEachIndexed { i, f ->
                   ListRow(
                     stem(f.name), first = i == 0, lead = { DocGlyph(kindOf(f.name)) }, marquee = true,
-                    subtitle = "${fmtSize(f.size)} · ${fmtTime(f.modified)}", onClick = { openFile(f.path, f.name) }, onLongClick = { menu = Menu.OfFile(f) },
+                    subtitle = "${fmtSize(f.size)} · ${fmtTime(f.modified)}", onClick = { scanProjectForPdf(f.path)?.let { nav.scan(it.id) } ?: openFile(f.path, f.name) }, onLongClick = { menu = Menu.OfFile(f) },
                   ) {
                     // Only files still waiting to upload get a cloud: "Synced" is the normal state.
                     if (Backup.waiting(f.path, f.name)) Icon(I.cloudUploadOutline, 17.dp, c.accent)
@@ -233,7 +233,7 @@ fun FilesTab() {
         when (m) {
           is Menu.OfFile -> {
             val f = m.f
-            scans[f.name]?.let { id -> MenuRow(I.fileDocumentEditOutline, "Edit scan", onClick = pick { nav.scan(id) }) }
+            scanProjectForPdf(f.path)?.let { doc -> MenuRow(I.fileDocumentEditOutline, "Edit original scan", onClick = pick { nav.scan(doc.id) }) }
             if (kindOf(f.name) == DocKind.Pdf) MenuRow(
               I.fileDocumentEditOutline, "Edit PDF pages", onClick = pick {
                 PdfImportBridge.pending = Picked(f.name, f.path, f.size)
