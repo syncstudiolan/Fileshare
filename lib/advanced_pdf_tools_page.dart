@@ -561,20 +561,3 @@ class _PdfHistoryPageState extends State<PdfHistoryPage>{
     }),
   );
 }
-,caseSensitive:false),''));
-  try{
-    return await showDialog<String>(context:context,builder:(ctx)=>AlertDialog(
-      title:const Text('Rename PDF'),
-      content:TextField(controller:controller,autofocus:true,maxLength:100,
-        decoration:const InputDecoration(labelText:'PDF filename',suffixText:'.pdf')),
-      actions:[
-        TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),
-        FilledButton(onPressed:()=>Navigator.pop(ctx,pdfDisplayName(controller.text)),
-          child:const Text('Rename')),
-      ],
-    ));
-  }finally{controller.dispose();}
-}
-
-/// Add-to-cart is always available. Open editor asks about scope; closed
-/// history/library entries go directly to the cart without a dialog.
