@@ -1298,6 +1298,107 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   );
 }
 
+class _LiveEraseStroke {
+  const _LiveEraseStroke(this.points,this.mode,this.radius,this.softness);
+  final List<Offset> points;
+  final String mode;
+  final double radius,softness;
+}
+
+/// Low-resolution cached bitmap stays on the GPU. Each touch updates only
+/// the stroke mask; the full-resolution pixel operation is queued separately.
+class _RealtimeEraserPainter extends CustomPainter {
+  const _RealtimeEraserPainter({required this.image,required this.restoration,
+    required this.pending,required this.active,required this.mode,
+    required this.radius,required this.softness});
+  final ui.Image image;
+  final ui.Image? restoration;
+  final List<_LiveEraseStroke> pending;
+  final List<Offset> active;
+  final String mode;
+  final double radius,softness;
+
+  @override void paint(Canvas canvas,Size size){
+    final bounds=Offset.zero & size;
+    final imageRect=Rect.fromLTWH(0,0,image.width.toDouble(),image.height.toDouble());
+    canvas.saveLayer(bounds,Paint());
+    canvas.drawImageRect(image,imageRect,bounds,Paint()..filterQuality=FilterQuality.medium);
+    void stroke(List<Offset> points,String operation,double r,double feather){
+      if(points.isEmpty)return;
+      final width=r*math.min(size.width,size.height)*2;
+      final path=Path()..moveTo(points.first.dx*size.width,points.first.dy*size.height);
+      for(final point in points.skip(1)){
+        path.lineTo(point.dx*size.width,point.dy*size.height);
+      }
+      if(operation=='Restore'&&restoration!=null){
+        canvas.save();
+        final clip=Paint()..style=PaintingStyle.stroke
+          ..strokeWidth=width..strokeCap=StrokeCap.round
+          ..strokeJoin=StrokeJoin.round;
+        final strokeMask=Path();
+        strokeMask.addPath(path,Offset.zero);
+        // The clip also works for a one-point touch using a circle.
+        canvas.clipPath(strokeMask,doAntiAlias:true);
+        canvas.drawImageRect(restoration!,
+          Rect.fromLTWH(0,0,restoration!.width.toDouble(),
+            restoration!.height.toDouble()),bounds,
+          Paint()..filterQuality=FilterQuality.medium);
+        canvas.restore();
+      }else{
+        final p=Paint()..blendMode=BlendMode.clear
+          ..color=Colors.black
+          ..strokeWidth=width..strokeCap=StrokeCap.round
+          ..strokeJoin=StrokeJoin.round..style=PaintingStyle.stroke
+          ..maskFilter=ui.MaskFilter.blur(ui.BlurStyle.normal,
+            math.max(.1,width*feather*.15));
+        if(points.length==1){
+          canvas.drawCircle(Offset(points.first.dx*size.width,
+            points.first.dy*size.height),width/2,p..style=PaintingStyle.fill);
+        }else{
+          canvas.drawPath(path,p);
+        }
+      }
+    }
+    for(final item in pending)stroke(
+      item.points,item.mode,item.radius,item.softness);
+    stroke(active,mode,radius,softness);
+    canvas.restore();
+  }
+  @override bool shouldRepaint(covariant _RealtimeEraserPainter old)=>
+    old.image!=image||old.restoration!=restoration||
+    old.pending!=pending||old.active!=active||old.mode!=mode||
+    old.radius!=radius||old.softness!=softness;
+}
+class _FullMagicPainter extends CustomPainter {
+  const _FullMagicPainter(this.progress);
+  final double progress;
+  @override void paint(Canvas canvas,Size size){
+    final sweep=progress*1.4-.2;
+    final x=sweep*size.width;
+    final area=Rect.fromLTWH(x-size.width*.26,0,
+      size.width*.52,size.height);
+    canvas.drawRect(area,Paint()..shader=ui.Gradient.linear(
+      Offset(area.left,0),Offset(area.right,0),[
+        const Color(0x008E69FF),const Color(0x667D5BE3),
+        const Color(0x22F8DFFF),const Color(0x008E69FF)]));
+    for(var i=0;i<22;i++){
+      final t=i*1.618;
+      final px=(progress*size.width*1.3 + i*size.width/22)%(size.width+40)-20;
+      final py=(.5+.46*math.sin(t+progress*math.pi*2))*size.height;
+      final brightness=(.5+.5*math.sin(progress*math.pi*4+i)).clamp(0.0,1.0);
+      final radius=1.2+brightness*3.8;
+      final p=Paint()..color=Colors.white.withValues(alpha:.25+.65*brightness);
+      canvas.drawCircle(Offset(px,py),radius,p);
+      canvas.drawLine(Offset(px-radius*2.5,py),
+        Offset(px+radius*2.5,py),p..strokeWidth=1.3);
+      canvas.drawLine(Offset(px,py-radius*2.5),
+        Offset(px,py+radius*2.5),p);
+    }
+  }
+  @override bool shouldRepaint(covariant _FullMagicPainter old)=>
+    old.progress!=progress;
+}
+
 class _CheckerPainter extends CustomPainter {
   @override void paint(Canvas canvas,Size size){
     const cell=14.0;
