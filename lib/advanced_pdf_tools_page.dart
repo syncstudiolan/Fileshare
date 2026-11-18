@@ -200,10 +200,10 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
     }finally{if(mounted)setState(()=>importing=false);}
   }
   Future<void> pickPdf({String? initialTool})async{
-    final files=await FilePicker().pickFiles(type:FileType.custom,
-      allowedExtensions:['pdf'],withData:false);
-    final path=files?.files.singleOrNull?.path;
-    if(path!=null)await importPath(path,files!.files.first.name,initialTool:initialTool);
+    final file=await FilePicker.pickFile(type:FileType.custom,
+      allowedExtensions:['pdf']);
+    if(file?.path!=null)await importPath(file!.path!,file.name,
+      initialTool:initialTool);
   }
   Future<void> openDraft(PdfDraft draft,{String? initialTool})async{
     if(!mounted)return;
@@ -395,7 +395,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   }
   Future<void> savePdf()async{
     try{
-      final saved=await FilePicker().saveFile(
+      final saved=await FilePicker.saveFile(
         dialogTitle:'Save PDF',fileName:draft.name,type:FileType.custom,
         allowedExtensions:['pdf'],bytes:await File(draft.path).readAsBytes());
       if(saved!=null)message('PDF saved');
@@ -476,14 +476,13 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     finally{if(mounted)setState(()=>busy=false);}
   }
   Future<void> addMergeFiles()async{
-    final result=await FilePicker().pickFiles(
-      type:FileType.custom,allowedExtensions:['pdf'],allowMultiple:true,
-      withData:false);
-    if(result==null)return;
+    final result=await FilePicker.pickFiles(type:FileType.custom,
+      allowedExtensions:['pdf']);
+    if(result.isEmpty)return;
     setState((){
       selectedPaths
         ..clear()
-        ..addAll(result.files.map((x)=>x.path).whereType<String>());
+        ..addAll(result.map((x)=>x.path).whereType<String>());
     });
   }
   Future<void> addSignatureImage()async{
