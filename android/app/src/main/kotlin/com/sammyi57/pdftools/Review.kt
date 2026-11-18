@@ -100,6 +100,7 @@ fun Review(
   setDoc: ((ScanDoc) -> ScanDoc) -> Unit,
   onClose: () -> Unit,
   onSave: suspend () -> Unit,
+  onCart: (Int) -> Unit,
   onAddMore: () -> Unit,
   onRetake: (ScanPage) -> Unit,
 ) {
@@ -152,6 +153,8 @@ fun Review(
             Icon(I.pencilOutline, 15.dp, ScanUi.dim)
           }
           val ready = doc.isRendered && !saving
+          IconBtn(I.plusBoxMultipleOutline, 23.dp, ScanUi.text, "Add to File Share Cart",
+            enabled = ready) { onCart(index) }
           Row(
             Modifier.padding(end = 4.dp).tap(enabled = ready, shape = CircleShape, scaleTo = 0.94f) { scope.launch { saving = true; try { onSave() } finally { saving = false } } }
               .graphicsLayer { alpha = if (ready) 1f else 0.6f }.background(ScanUi.accent, CircleShape).padding(horizontal = 14.dp, vertical = 9.dp),
