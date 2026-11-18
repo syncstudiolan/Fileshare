@@ -1,0 +1,43 @@
+name: Android Image Toolbox Preview APK
+
+on:
+  push:
+    branches:
+      - draft/image-toolbox-reference-ui-mlkit-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Check out preview branch
+        uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android runner
+        run: flutter create --project-name file_share --platforms=android .
+      - name: Apply ML Kit Android keep rules
+        run: python3 tool/ensure_mlkit_proguard.py
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Build Android installable preview APK
+        run: flutter build apk --debug --target-platform android-arm64
+      - name: Upload APK for Android phone preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileShare-ImageToolbox-Android-Preview-APK
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
