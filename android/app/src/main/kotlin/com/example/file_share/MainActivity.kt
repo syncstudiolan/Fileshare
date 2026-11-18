@@ -63,6 +63,24 @@ class FileShareApplication : Application() {
                 } catch (e: Exception) {
                     result.error("PDF_TOOLS_OPEN_FAILED", e.message, null)
                 }
+                "convertDocxToPdf" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("DOCX_PATH_MISSING", "Select a DOCX file", null)
+                    } else {
+                        // Avoid synchronous ZIP/XML/PDF work on the Flutter platform UI thread.
+                        Thread {
+                            try {
+                                val converted = DocxPreviewPdf.convert(File(path), cacheDir)
+                                runOnUiThread { result.success(converted.absolutePath) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("DOCX_CONVERSION_FAILED", e.message, null)
+                                }
+                            }
+                        }.start()
+                    }
+                }
                 "takeSharedFiles" -> {
                     synchronized(shared) {
                         result.success(shared.toList())
