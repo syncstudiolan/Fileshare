@@ -147,6 +147,44 @@ void main() {
     expect(tester.takeException(),isNull);
   });
 
+  testWidgets('Compact LAN sent card only shows double tick after ACK delivery',
+      (tester) async {
+    Future<void> noOp(LanFile _) async {}
+    final file=LanFile(id:'sent1',batch:'batch1',name:'image.jpg',
+      path:'/missing/image.jpg',peer:'Office Desktop',
+      incoming:false,size:2048,created:DateTime.utc(2026,11,18),
+      state:TransferState.queued);
+    Widget card()=>MaterialApp(home:Scaffold(body:ListView(children:[
+      LiveTransferCard(items:[file],onSave:noOp,onDelete:noOp,
+        onShare:noOp,onTools:noOp),
+    ])));
+    await tester.pumpWidget(card());
+    expect(find.text('image.jpg'),findsOneWidget);
+    expect(find.text('To Office Desktop · Offline LAN'),findsOneWidget);
+    expect(find.byIcon(Icons.schedule_rounded),findsOneWidget);
+    expect(find.byIcon(Icons.done_all_rounded),findsNothing);
+    file.state=TransferState.delivered;
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(card());
+    expect(find.byIcon(Icons.done_all_rounded),findsOneWidget);
+    expect(find.byIcon(Icons.schedule_rounded),findsNothing);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('Compact Guest QR transfer displays source once',
+      (tester) async {
+    final f=CloudFile(id:'qr1',session:'qr-group',
+      name:'passport.jpg',size:20000,
+      created:DateTime.utc(2026,11,18,10,0));
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:ListView(children:[
+      CloudInboxCard(items:[f],onSave:noopCloud,onDelete:noopCloud,
+        onShare:noopCloud,onPreview:noopCloud,onTools:noopCloud),
+    ]))));
+    expect(find.text('passport.jpg'),findsOneWidget);
+    expect(find.text('From Guest browser · Guest QR · Online'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
   test('Official directory is configured for both Flutter targets', () {
     // Both Android and Windows import the same AccountDirectory singleton.
     expect(AccountDirectory.instance.enabled, isTrue);
