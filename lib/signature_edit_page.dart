@@ -154,8 +154,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   }
 
   void _gestureStart(DragStartDetails d,Size size){
-    final x=(d.localPosition.dx/size.width).clamp(0.0,1.0);
-    final y=(d.localPosition.dy/size.height).clamp(0.0,1.0);
+    final x=(d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble();
+    final y=(d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble();
     final corners=[
       Offset(_crop.left,_crop.top),Offset(_crop.right,_crop.top),
       Offset(_crop.right,_crop.bottom),Offset(_crop.left,_crop.bottom)];
@@ -167,8 +167,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   }
 
   void _gestureUpdate(DragUpdateDetails d,Size size){
-    final x=(d.localPosition.dx/size.width).clamp(0.0,1.0);
-    final y=(d.localPosition.dy/size.height).clamp(0.0,1.0);
+    final x=(d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble();
+    final y=(d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble();
     final p=Offset(x,y),last=_lastDrag??p;
     _lastDrag=p;
     const gap=.04;
@@ -177,15 +177,15 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     if(_corner==-1){
       final dx=(x-last.dx).clamp(-1.0,1.0);
       final dy=(y-last.dy).clamp(-1.0,1.0);
-      l=(l+dx).clamp(0.0,1-(r-l));
-      t=(t+dy).clamp(0.0,1-(b-t));
+      l=(l+dx).clamp(0.0,1-(r-l)).toDouble();
+      t=(t+dy).clamp(0.0,1-(b-t)).toDouble();
       r=l+(c.right-c.left);
       b=t+(c.bottom-c.top);
     } else {
-      if(_corner==0||_corner==3)l=x.clamp(0.0,r-gap);
-      if(_corner==1||_corner==2)r=x.clamp(l+gap,1.0);
-      if(_corner==0||_corner==1)t=y.clamp(0.0,b-gap);
-      if(_corner==2||_corner==3)b=y.clamp(t+gap,1.0);
+      if(_corner==0||_corner==3)l=x.clamp(0.0,r-gap).toDouble();
+      if(_corner==1||_corner==2)r=x.clamp(l+gap,1.0).toDouble();
+      if(_corner==0||_corner==1)t=y.clamp(0.0,b-gap).toDouble();
+      if(_corner==2||_corner==3)b=y.clamp(t+gap,1.0).toDouble();
     }
     setState(()=>_crop=SignatureCrop(l,t,r,b));
   }
