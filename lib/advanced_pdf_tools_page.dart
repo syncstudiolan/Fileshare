@@ -578,4 +578,3 @@ class _PdfHistoryPageState extends State<PdfHistoryPage>{
 
 /// Add-to-cart is always available. Open editor asks about scope; closed
 /// history/library entries go directly to the cart without a dialog.
-enum PdfCartScope { current, choose, all }
