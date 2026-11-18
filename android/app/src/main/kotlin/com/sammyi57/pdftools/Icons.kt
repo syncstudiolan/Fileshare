@@ -62,7 +62,7 @@ fun Icon(glyph: Int, size: Dp = 22.dp, color: Color = c.ink, modifier: Modifier 
     I.imageOutline -> Icons.Filled.Image
     I.eyeOffOutline -> Icons.Filled.VisibilityOff
     I.eyeOutline -> Icons.Filled.Visibility
-    I.fileDocumentEditOutline -> Icons.Filled.EditDocument
+    I.fileDocumentEditOutline -> Icons.Filled.EditNote
     I.fileDocumentOutline -> Icons.Filled.Description
     I.fileImageOutline -> Icons.Filled.InsertPhoto
     I.filePdfBox -> Icons.Filled.PictureAsPdf
