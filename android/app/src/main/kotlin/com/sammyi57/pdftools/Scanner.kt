@@ -89,6 +89,10 @@ fun Scanner(id: String?) {
   var saving by remember { mutableStateOf(false) }
   var recentOpen by remember { mutableStateOf(false) }
   var failure by remember { mutableStateOf("") }
+  var namingBeforeSave by remember { mutableStateOf(false) }
+  var cartFile by remember { mutableStateOf<PdfRef?>(null) }
+  var cartPage by remember { mutableStateOf(1) }
+  var cartPages by remember { mutableStateOf(1) }
   val rendering = remember { HashSet<String>() }
   val persisted = remember { mutableStateOf(id != null) }
   val left = remember { mutableStateOf(false) } // repeated taps must pop the scanner only once
@@ -159,12 +163,41 @@ fun Scanner(id: String?) {
         )
       } else {
         Review(
-          doc, { fn -> doc = fn(doc) }, onClose = leave, onSave = save,
+          doc, { fn -> doc = fn(doc) }, onClose = leave,
+          onSave = { namingBeforeSave = true },
+          onCart = { index ->
+            scope.launch {
+              try {
+                val saved = exportPdf(doc)
+                doc = saved
+                val ref = saved.pdf ?: error("PDF was not saved")
+                cartPage = index + 1
+                cartPages = com.tom_roush.pdfbox.pdmodel.PDDocument.load(java.io.File(ref.path)).use { it.numberOfPages }
+                cartFile = ref
+              } catch (e: Exception) {
+                failure = e.message ?: "Cannot prepare PDF for Cart"
+              }
+            }
+          },
           onAddMore = { retake = null; capture = true },
           onRetake = { retake = it; capture = true },
         )
       }
     }
+  }
+
+  if (namingBeforeSave) PromptDialog(
+    "Save PDF — choose name", doc.name,
+    "Keep the suggested name or type a new name",
+    "PDF name", "Save PDF",
+    onClose = { namingBeforeSave = false },
+  ) { picked ->
+    val valid = cleanName(picked).removeSuffix(".pdf")
+    doc = doc.copy(name = valid)
+    scope.launch { save() }
+  }
+  cartFile?.let { pdf ->
+    PdfSendPicker(pdf.path, pdf.name, cartPage, cartPages, true) { cartFile = null }
   }
 
   if (recentOpen) RecentScans({ recentOpen = false }) { picked -> doc = picked; capture = false; recentOpen = false; draft = null }
