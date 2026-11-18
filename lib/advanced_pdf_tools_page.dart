@@ -404,8 +404,44 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
         XFile(draft.path,name:draft.name,mimeType:'application/pdf')]));
     }catch(e){message('Share failed: $e');}
   }
-  Future<void> sendToCart()async=>
-    addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
+  Future<void> sendToCart()async{
+    // Pending on-screen annotations must not be lost when the user sends
+    // before Apply. Produce an isolated export; do not alter edit history.
+    final pendingSign=tool=='fillSign'&&signItems.isNotEmpty;
+    final pendingRedact=tool=='redact'&&redactionBoxes.isNotEmpty;
+    final pendingCrop=tool=='crop'&&cropMode=='crop'&&
+      (horizontalCrop.start>0||horizontalCrop.end<1||
+       verticalCrop.start>0||verticalCrop.end<1);
+    if(busy){
+      message('Processing is running; sending the last saved draft.');
+      await addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
+      return;
+    }
+    if(!pendingSign&&!pendingRedact&&!pendingCrop){
+      await addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
+      return;
+    }
+    File? temporary;
+    try{
+      if(pendingSign||pendingRedact){
+        final files=await AdvancedPdfEngine.multiple(
+          draft.path,tool,optionsFor(tool));
+        if(files.isEmpty)throw StateError('The pending edit produced no PDF');
+        temporary=File(files.first['path']!);
+      }else{
+        temporary=File(await AdvancedPdfEngine.edit(
+          draft.path,'crop',optionsFor('crop')));
+      }
+      final previewDraft=PdfDraft(id:draft.id,name:draft.name,
+        path:temporary.path,updated:DateTime.now(),
+        actions:[...draft.actions,'Unapplied preview'],page:page);
+      if(mounted)await addPdfToCart(context,previewDraft,
+        editorOpen:true,page:page,pageCount:total);
+    }catch(e){message('Cannot send these pending edits: $e');}
+    finally{
+      if(temporary!=null)try{await temporary.delete();}catch(_){}
+    }
+  }
   Future<File> _snapshot()async{
     final cache=await getTemporaryDirectory();
     return File(draft.path).copy(
