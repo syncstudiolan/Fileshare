@@ -28,6 +28,20 @@ void main(){
     expect(image.height,30);
   });
 
+  test('Four-corner perspective crop produces a real rectified image',()async{
+    final bytes=await ImageEditingEngine.edit(example(),'perspective',{
+      'tlx':.10,'tly':.08,
+      'trx':.90,'try':.14,
+      'brx':.84,'bry':.92,
+      'blx':.04,'bly':.82,
+    });
+    final corrected=img.decodeImage(bytes)!;
+    expect(corrected.width,greaterThan(40));
+    expect(corrected.width,lessThan(80));
+    expect(corrected.height,greaterThan(20));
+    expect(corrected.height,lessThan(50));
+  });
+
   test('Background mask removes pixels without losing subject',()async{
     final original=example();
     final mask=Uint8List.fromList(List<int>.generate(80*50,

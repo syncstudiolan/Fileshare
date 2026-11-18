@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -25,11 +26,19 @@ class ImageEditingPage extends StatefulWidget {
   State<ImageEditingPage> createState()=>_ImageEditingPageState();
 }
 
-class _ImageEditingPageState extends State<ImageEditingPage> {
+class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerProviderStateMixin {
   Uint8List? _bytes;
   Uint8List? _originalBytes;
+  Uint8List? _cutoutBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
+  late final AnimationController _magicController;
+  bool _imagePickerBusy=false;
+  String? _selectedFilter;
+  String? _pendingFilter;
+  Uint8List? _filterBase;
+  final TransformationController _transformController=TransformationController();
+  double _zoom=1.0;
   String _tool='Background';
   String _format='PNG';
   String? _draftId;
@@ -39,9 +48,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   double _ratio=1, _brightness=1, _contrast=1,_saturation=1,_exposure=0;
   double _eraseRadius=.035,_softness=.45, _tolerance=42;
   Rect _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+  List<Offset> _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+    const Offset(.94,.94),const Offset(.06,.94)];
+  int? _activeCropHandle;
+  String _cropMode='Normal Crop';
   final List<Offset> _stroke=[];
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
+  Color? _pendingBackgroundColor;
   Color _custom=const Color(0xFF7D5BE3);
 
   static const _tools=['Background','Compress','Crop','Filters','Erase','Adjust'];
@@ -52,14 +66,31 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   @override
   void initState(){
     super.initState();
+    _magicController=AnimationController(vsync:this,
+      duration:const Duration(milliseconds:1200));
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
     unawaited(_load());
+  }
+  @override void dispose(){
+    _magicController.dispose();
+    _transformController.dispose();
+    super.dispose();
+  }
+  void _changeZoom(double factor){
+    _zoom=(_zoom*factor).clamp(1.0,6.0).toDouble();
+    _transformController.value=Matrix4.diagonal3Values(_zoom,_zoom,1);
+    if(mounted)setState((){});
+  }
+  void _resetZoom(){
+    _zoom=1.0;
+    _transformController.value=Matrix4.identity();
+    if(mounted)setState((){});
   }
   Future<void> _load() async {
     try {
       await ImageEditingHistory.instance.load();
       final path=widget.draft?.filePath??widget.sourcePath;
-      if(path==null)throw StateError('Choose an image before editing');
+      if(path==null)return; // Empty canvas: Camera and Browse stay visible.
       final bytes=await File(path).readAsBytes();
       final dimensions=await ImageEditingEngine.dimensions(bytes);
       _draftId=widget.draft?.id??
@@ -69,9 +100,64 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(mounted)setState((){
         _bytes=Uint8List.fromList(bytes);
         _originalBytes=Uint8List.fromList(bytes);
+        _cutoutBytes=null;
       });
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
+  }
+
+  Future<void> _chooseSource({required bool camera}) async {
+    if(_busy || _imagePickerBusy)return;
+    setState(()=>_imagePickerBusy=true);
+    try{
+      String? path;
+      String? name;
+      if(camera){
+        if(!Platform.isAndroid && !Platform.isIOS){
+          _message('Camera capture is available on Android. Use Browse on Windows.');
+          return;
+        }
+        final taken=await ImagePicker().pickImage(source:ImageSource.camera,
+          imageQuality:100);
+        if(taken==null)return;
+        path=taken.path;
+        name=taken.name;
+      }else{
+        final selection=await FilePicker.pickFiles(type:FileType.image);
+        if(selection.isEmpty)return;
+        final picked=selection.first;
+        path=picked.path;
+        name=picked.name;
+        if(path==null){
+          final folder=await getApplicationSupportDirectory();
+          final target=File('${folder.path}${Platform.pathSeparator}'
+            'editing_import_${DateTime.now().microsecondsSinceEpoch}.bin');
+          await target.writeAsBytes(await picked.readAsBytes(),flush:true);
+          path=target.path;
+        }
+      }
+      if(path==null)throw StateError('No file selected');
+      final bytes=await File(path).readAsBytes();
+      final dimensions=await ImageEditingEngine.dimensions(bytes);
+      if(!mounted)return;
+      setState((){
+        _bytes=Uint8List.fromList(bytes);
+        _originalBytes=Uint8List.fromList(bytes);
+        _ratio=dimensions[0]/dimensions[1];
+        _name=name??'image.png';
+        _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+        _undo.clear();_redo.clear();_steps.clear();
+        _pendingFilter=null;_selectedFilter=null;_pendingBackgroundColor=null;
+        _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+        const Offset(.94,.94),const Offset(.06,.94)];
+        _error=null;
+        _showOriginal=false;
+      });
+      await _saveDraft();
+    }catch(_){
+      _message('Could not open this image. Try a JPG or PNG.');
+    }finally{if(mounted)setState(()=>_imagePickerBusy=false);}
   }
 
   Future<void> _saveDraft() async {
@@ -99,12 +185,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_undo.length>15)_undo.removeAt(0);
     _redo.clear();
     _steps.add(step);
+    if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
+      _cutoutBytes=null; // A crop or other transform changed image geometry.
+    }
     final dimensions=await ImageEditingEngine.dimensions(next);
     if(!mounted)return;
     setState((){
       _bytes=next;
       _ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+        const Offset(.94,.94),const Offset(.06,.94)];
     });
     await _saveDraft();
   }
@@ -122,56 +213,83 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       _ratio=size[0]/size[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
+        const Offset(.94,.94),const Offset(.06,.94)];
     });
     await _saveDraft();
   }
 
+  /// Prefer ML Kit for portraits. If the installed Android ML Kit/R8 stack
+  /// throws (as on the reported release device), run a verified portable
+  /// ONNX model instead of surfacing a raw Java stack trace.
   Future<void> _removeBackground() async {
     final data=_bytes;
     if(data==null||_busy)return;
+    _magicController.repeat();
     setState(()=>_busy=true);
     try{
-      Uint8List mask;
-      int width,height;
+      late Uint8List mask;
+      late int width,height;
+      var engine='U²-NetP AI';
       if(Platform.isAndroid){
-        final dir=await getTemporaryDirectory();
-        final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
-        await temporary.writeAsBytes(data);
-        final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
-        try {
-          final result=await segmenter.processImage(InputImage.fromFilePath(temporary.path));
-          if(result==null)throw StateError('ML Kit did not detect a foreground subject');
-          width=result.width;height=result.height;
-          mask=Uint8List.fromList(result.confidences.map(
-            (v)=>(v.clamp(0.0,1.0)*255).round()).toList());
-        }finally{
-          await segmenter.close();
-          if(await temporary.exists())await temporary.delete();
+        try{
+          final dir=await getTemporaryDirectory();
+          final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
+          await temporary.writeAsBytes(data,flush:true);
+          final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
+          try{
+            final result=await segmenter.processImage(
+              InputImage.fromFilePath(temporary.path));
+            if(result==null || result.width<=0 || result.height<=0 ||
+               result.confidences.length!=result.width*result.height){
+              throw const FormatException('ML Kit subject mask is invalid');
+            }
+            width=result.width;height=result.height;
+            mask=Uint8List.fromList(result.confidences.map(
+              (confidence)=>(confidence.clamp(0.0,1.0)*255).round()).toList());
+            engine='Google ML Kit';
+          }finally{
+            await segmenter.close();
+            if(await temporary.exists())await temporary.delete();
+          }
+        }catch(_){
+          // A failed Android platform call is not a user-facing crash.
+          // The model is downloaded once, hash-verified, then used offline.
+          width=WindowsBackgroundAi.modelSize;
+          height=WindowsBackgroundAi.modelSize;
+          mask=await WindowsBackgroundAi.segmentationMask(data);
         }
       }else if(Platform.isWindows){
-        // Portable U²-NetP runs locally on Windows after one verified model
-        // download. No Cloudflare requests or hosted photo processing.
         width=WindowsBackgroundAi.modelSize;
         height=WindowsBackgroundAi.modelSize;
         mask=await WindowsBackgroundAi.segmentationMask(data);
       }else{
         final dimensions=await ImageEditingEngine.dimensions(data);
         width=dimensions[0];height=dimensions[1];
-        mask=await ImageEditingEngine.simpleBackgroundMask(data,tolerance:_tolerance);
+        mask=await ImageEditingEngine.simpleBackgroundMask(
+          data,tolerance:_tolerance);
+        engine='Plain background remover';
       }
-      final result=await ImageEditingEngine.edit(data,'background',{
+      final edited=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':width,'maskHeight':height,
       });
-      await _commit(data,result,Platform.isAndroid
-        ?'Google ML Kit background removal':'U2NetP background removal');
-      _format='PNG';
-    }catch(e){_message('Background removal failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+      await _commit(data,edited,'Background removal — $engine');
+      _cutoutBytes=edited; // Preserve transparency for switching colors.
+      if(mounted)setState(()=>_format='PNG');
+      _message('Background removed with $engine');
+    }catch(_){
+      _message('AI background removal could not finish. Check internet for '
+        'the first AI model download, or try Remove Plain Background.');
+    }finally{
+      _magicController.stop();
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _removePlainBackground()async{
     final data=_bytes;
     if(data==null||_busy)return;
+    _magicController.repeat();
     setState(()=>_busy=true);
     try {
       final dimensions=await ImageEditingEngine.dimensions(data);
@@ -181,23 +299,68 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         'mask':mask,'maskWidth':dimensions[0],'maskHeight':dimensions[1],
       });
       await _commit(data,result,'Remove plain-color background');
+      _cutoutBytes=result;
       _format='PNG';
     }catch(e){_message('Plain background removal failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+    finally{
+      _magicController.stop();
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _replaceBackground({Uint8List? picture,Color? color})async {
+    if(_busy||_bytes==null)return;
     final selected=color??_background;
-    if(color!=null)setState(()=>_background=color);
-    if(selected==Colors.transparent && picture==null){
-      _message('Transparent background retained');
+    // A preset or Gallery background must work even if the user has not
+    // explicitly pressed Remove Background beforehand.
+    if(_cutoutBytes==null){
+      await _removeBackground();
+      if(_cutoutBytes==null)return;
+    }
+    if(picture==null){
+      // Changing a swatch is just GPU compositing; no large-image encode.
+      setState((){
+        _pendingBackgroundColor=selected;
+        _background=selected;
+        _format='PNG';
+      });
       return;
     }
-    await _apply('flatten',{
-      'color':selected.toARGB32(),
-      if(picture!=null)'backgroundBytes':picture,
-    },description:'Replace background');
+    final previous=_bytes!;
+    setState(()=>_busy=true);
+    try{
+      final next=selected==Colors.transparent && picture==null
+        ?_cutoutBytes!
+        :await ImageEditingEngine.edit(_cutoutBytes!,'flatten',{
+          'color':selected.toARGB32(),
+          if(picture!=null)'backgroundBytes':picture,
+        });
+      await _commit(previous,next,'Background replacement');
+      if(mounted)setState((){
+        _pendingBackgroundColor=null;
+        _background=selected;
+        _format='PNG';
+      });
+    }catch(_){
+      _message('Could not replace this background. Try a different image.');
+    }finally{if(mounted)setState(()=>_busy=false);}
   }
+  Future<void> _finalizeBackgroundPreview()async{
+    final selected=_pendingBackgroundColor,cutout=_cutoutBytes;
+    if(selected==null||cutout==null||_busy||_bytes==null)return;
+    final previous=_bytes!;
+    setState(()=>_busy=true);
+    try{
+      final next=selected==Colors.transparent?cutout:
+        await ImageEditingEngine.edit(cutout,'flatten',{
+          'color':selected.toARGB32(),
+        });
+      await _commit(previous,next,'Background replacement');
+      if(mounted)setState(()=>_pendingBackgroundColor=null);
+    }catch(_){_message('Could not apply this background.');}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
   Future<void> _pickBackground()async{
     try{
       final picked=await FilePicker.pickFiles(type:FileType.image);
@@ -227,6 +390,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   Future<void> _export(String action)async {
+    if(_pendingFilter!=null)await _finalizeFilter();
+    if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
     final data=_bytes;
     if(data==null||_busy)return;
     try{
@@ -286,7 +451,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           FilledButton.icon(onPressed:_busy?null:_removeBackground,
             icon:const Icon(Icons.auto_fix_high),
             label:const Text('AI Remove Background')),
-          if(!Platform.isAndroid) ...[
+          if(true) ...[
             const SizedBox(height:8),
             _slider('Plain background tolerance',_tolerance,5,120,
               (v)=>setState(()=>_tolerance=v),(){}),
@@ -306,12 +471,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
                   child:color==_background?const Icon(Icons.check,size:18):null)),
           ]),
           const SizedBox(height:8),
-          Row(children:[
-            OutlinedButton.icon(onPressed:_pickBackground,
+          Wrap(spacing:8,runSpacing:8,children:[
+            OutlinedButton.icon(onPressed:_busy?null:_pickBackground,
               icon:const Icon(Icons.photo_library_outlined),
               label:const Text('Gallery background')),
             const SizedBox(width:8),
-            OutlinedButton.icon(onPressed:()=>_customColorDialog(),
+            OutlinedButton.icon(onPressed:_busy?null:()=>_customColorDialog(),
               icon:const Icon(Icons.palette_outlined),label:const Text('Custom')),
           ]),
         ]);
@@ -342,7 +507,25 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         ]);
       case 'Crop':
         return Column(children:[
-          const Text('Drag the crop rectangle or its corner to resize'),
+          const Text('Drag corners or side handles in Normal Crop. Align document corners in Perspective Crop.'),
+          const SizedBox(height:8),
+          SegmentedButton<String>(
+            segments:const [
+              ButtonSegment(value:'Normal Crop',label:Text('Normal Crop')),
+              ButtonSegment(value:'Perspective Crop',label:Text('Perspective Crop')),
+            ],
+            selected:{_cropMode},
+            onSelectionChanged:(value)=>setState((){
+              _cropMode=value.first;
+              if(_cropMode=='Normal Crop'){
+                final left=_cropCorners.map((p)=>p.dx).reduce(math.min);
+                final right=_cropCorners.map((p)=>p.dx).reduce(math.max);
+                final top=_cropCorners.map((p)=>p.dy).reduce(math.min);
+                final bottom=_cropCorners.map((p)=>p.dy).reduce(math.max);
+                _crop=Rect.fromLTRB(left,top,right,bottom);
+                _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,_crop.bottomLeft];
+              }
+            })),
           const SizedBox(height:12),
           Wrap(spacing:8,children:[
             for(final label in ['Free','1:1','4:3','16:9','A4'])
@@ -361,10 +544,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           ]),
         ]);
       case 'Filters':
-        return Wrap(spacing:8,runSpacing:8,children:[
-          for(final type in ['Normal','Vivid','Warm','Cool','B&W','Vintage','Soft'])
-            ActionChip(label:Text(type),onPressed:()=>_apply('filter',{
-              'name':type},description:'Filter: $type')),
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Live filter previews',style:TextStyle(fontSize:12)),
+          const SizedBox(height:12),
+          SizedBox(height:112,
+            child:ListView(scrollDirection:Axis.horizontal,children:[
+              for(final type in const ['Normal','Vivid','Warm','Cool','B&W','Vintage','Soft'])
+                Padding(padding:const EdgeInsets.only(right:10),
+                  child:InkWell(
+                    onTap:_busy?null:()=>_applyFilter(type),
+                    borderRadius:BorderRadius.circular(14),
+                    child:Column(children:[
+                      Container(width:76,height:76,clipBehavior:Clip.antiAlias,
+                        decoration:BoxDecoration(
+                          borderRadius:BorderRadius.circular(12),
+                          border:Border.all(
+                            color:_selectedFilter==type?FileTheme.violet:
+                              FileTheme.violet.withValues(alpha:.2),width:2)),
+                        child:_filterThumbnail(type)),
+                      const SizedBox(height:5),
+                      Text(type,style:TextStyle(fontSize:11,
+                        color:FileTheme.foreground(context))),
+                    ]),
+                  )),
+            ])),
         ]);
       case 'Erase':
         return Column(children:[
@@ -394,6 +597,43 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       default:return const SizedBox.shrink();
     }
   }
+  Future<void> _applyFilter(String type)async{
+    if(_busy||_bytes==null)return;
+    // GPU preview updates instantly; defer full-resolution raster until Apply or export.
+    setState((){_selectedFilter=type;_pendingFilter=type;});
+  }
+  Future<void> _finalizeFilter()async{
+    final type=_pendingFilter;
+    if(type==null||_bytes==null||_busy)return;
+    if(type=='Normal'){setState(()=>_pendingFilter=null);return;}
+    final previous=_bytes!;
+    setState(()=>_busy=true);
+    try{
+      final next=await ImageEditingEngine.edit(previous,'filter',{'name':type});
+      await _commit(previous,next,'Filter: $type');
+      if(mounted)setState(()=>_pendingFilter=null);
+    }catch(_){_message('This filter could not be applied.');}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+  Widget _filterThumbnail(String type){
+    final bytes=_bytes;
+    if(bytes==null)return const Icon(Icons.image_outlined);
+    final child=Image.memory(bytes,fit:BoxFit.cover,cacheWidth:140,
+      gaplessPlayback:true);
+    final matrix=switch(type){
+      'B&W'=><double>[.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,
+        .2126,.7152,.0722,0,0,0,0,0,1,0],
+      'Vivid'=><double>[1.18,0,0,0,0,0,1.12,0,0,0,0,0,1.1,0,0,0,0,0,1,0],
+      'Warm'=><double>[1.13,0,0,0,4,0,1.04,0,0,2,0,0,.83,0,0,0,0,0,1,0],
+      'Cool'=><double>[.85,0,0,0,0,0,1.02,0,0,0,0,0,1.15,0,3,0,0,0,1,0],
+      'Vintage'=><double>[.393,.769,.189,0,0,.349,.686,.168,0,0,
+        .272,.534,.131,0,0,0,0,0,1,0],
+      _=>null,
+    };
+    return matrix==null?child:ColorFiltered(
+      colorFilter:ColorFilter.matrix(matrix),child:child);
+  }
+
   String _cropRatio='Free',_eraseMode='Erase';
   void _setCropRatio(String ratio){
     setState((){
@@ -405,6 +645,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       final w=math.min(.9,.8*value/_ratio);
       final h=math.min(.9,w*_ratio/value);
       _crop=Rect.fromLTWH((1-w)/2,(1-h)/2,w,h);
+      _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,
+        _crop.bottomLeft];
     });
   }
   void _commitAdjust(){
@@ -418,9 +660,21 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     });
     unawaited(_apply('adjust',options));
   }
-  void _commitCrop()=>unawaited(_apply('crop',{
-    'x':_crop.left,'y':_crop.top,'w':_crop.width,'h':_crop.height,
-  }));
+  void _commitCrop(){
+    if(_cropMode=='Normal Crop'){
+      unawaited(_apply('crop',{
+        'x':_crop.left,'y':_crop.top,'w':_crop.width,'h':_crop.height,
+      },description:'Normal crop'));
+      return;
+    }
+    final points=_cropCorners;
+    unawaited(_apply('perspective',{
+      'tlx':points[0].dx,'tly':points[0].dy,
+      'trx':points[1].dx,'try':points[1].dy,
+      'brx':points[2].dx,'bry':points[2].dy,
+      'blx':points[3].dx,'bly':points[3].dy,
+    },description:'Perspective freeform crop'));
+  }
 
   Future<void> _customColorDialog()async{
     var red=_custom.r*255,green=_custom.g*255,
@@ -452,10 +706,28 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   void _startGesture(DragStartDetails d,Size size){
-    final point=Offset(d.localPosition.dx/size.width,
-      d.localPosition.dy/size.height);
+    final point=Offset(d.localPosition.dx/size.width,d.localPosition.dy/size.height);
     if(_tool=='Crop'){
-      _cropResize=(point-_crop.bottomRight).distance<.15;
+      _activeCropHandle=null;
+      final corners=_cropCorners;
+      final handles=<Offset>[
+        ...corners,
+        if(_cropMode=='Normal Crop') ...[
+          Offset((corners[0].dx+corners[1].dx)/2,corners[0].dy),
+          Offset(corners[1].dx,(corners[1].dy+corners[2].dy)/2),
+          Offset((corners[2].dx+corners[3].dx)/2,corners[2].dy),
+          Offset(corners[3].dx,(corners[3].dy+corners[0].dy)/2),
+        ],
+      ];
+      final touch=math.max(22.0,math.min(size.width,size.height)*.025);
+      var best=double.infinity;
+      for(var i=0;i<handles.length;i++){
+        final hp=Offset(handles[i].dx*size.width,handles[i].dy*size.height);
+        final distance=(hp-d.localPosition).distance;
+        if(distance<=touch && distance<best){
+          best=distance;_activeCropHandle=i;
+        }
+      }
     }else if(_tool=='Erase'){
       _stroke..clear()..add(point);
     }
@@ -464,14 +736,29 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_tool=='Crop'){
       final dx=d.delta.dx/size.width,dy=d.delta.dy/size.height;
       setState((){
-        if(_cropResize){
-          _crop=Rect.fromLTRB(_crop.left,_crop.top,
-            (_crop.right+dx).clamp(_crop.left+.05,1).toDouble(),
-            (_crop.bottom+dy).clamp(_crop.top+.05,1).toDouble());
+        final index=_activeCropHandle;
+        if(_cropMode=='Normal Crop'&&index!=null){
+          const minimum=.025;
+          var left=_crop.left,right=_crop.right,top=_crop.top,bottom=_crop.bottom;
+          if(index==0||index==3||index==7)left=(left+dx).clamp(0.0,right-minimum).toDouble();
+          if(index==1||index==2||index==5)right=(right+dx).clamp(left+minimum,1.0).toDouble();
+          if(index==0||index==1||index==4)top=(top+dy).clamp(0.0,bottom-minimum).toDouble();
+          if(index==2||index==3||index==6)bottom=(bottom+dy).clamp(top+minimum,1.0).toDouble();
+          _crop=Rect.fromLTRB(left,top,right,bottom);
+          _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,_crop.bottomLeft];
+        }else if(index!=null){
+          final old=_cropCorners[index];
+          _cropCorners[index]=Offset((old.dx+dx).clamp(0.0,1.0).toDouble(),
+            (old.dy+dy).clamp(0.0,1.0).toDouble());
         }else{
-          final l=(_crop.left+dx).clamp(0,1-_crop.width).toDouble();
-          final t=(_crop.top+dy).clamp(0,1-_crop.height).toDouble();
-          _crop=Rect.fromLTWH(l,t,_crop.width,_crop.height);
+          final left=_cropCorners.map((p)=>p.dx).reduce(math.min);
+          final right=_cropCorners.map((p)=>p.dx).reduce(math.max);
+          final top=_cropCorners.map((p)=>p.dy).reduce(math.min);
+          final bottom=_cropCorners.map((p)=>p.dy).reduce(math.max);
+          final tx=dx.clamp(-left,1-right).toDouble();
+          final ty=dy.clamp(-top,1-bottom).toDouble();
+          _cropCorners=[for(final p in _cropCorners)p+Offset(tx,ty)];
+          if(_cropMode=='Normal Crop')_crop=_crop.shift(Offset(tx,ty));
         }
       });
     }else if(_tool=='Erase'){
@@ -517,9 +804,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         DecoratedBox(decoration:BoxDecoration(
           border:Border.all(color:FileTheme.violet.withValues(alpha:.18))),
           child:CustomPaint(painter:_CheckerPainter())),
-        _liveAdjustment(Image.memory(_bytes!,fit:BoxFit.fill,
-          gaplessPlayback:true,filterQuality:FilterQuality.medium)),
-        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_crop)),
+        if(_pendingBackgroundColor!=null && _pendingBackgroundColor!=Colors.transparent)
+          ColoredBox(color:_pendingBackgroundColor!),
+        _liveAdjustment(_fastFilterPreview(Image.memory(
+          _pendingBackgroundColor!=null && _cutoutBytes!=null?_cutoutBytes!:_bytes!,fit:BoxFit.fill,
+          cacheWidth:(width*MediaQuery.devicePixelRatioOf(context)).round().clamp(1,1920),
+          gaplessPlayback:true,filterQuality:FilterQuality.medium))),
+        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
+          showSideHandles:_cropMode=='Normal Crop')),
+        if(_busy && _tool=='Background')Positioned(right:12,top:12,
+          child:AnimatedBuilder(animation:_magicController,
+            builder:(context,child)=>Transform.rotate(
+              angle:_magicController.value*math.pi*2,child:child),
+            child:const CircleAvatar(backgroundColor:Color(0xCC765ADB),
+              child:Icon(Icons.auto_fix_high_rounded,color:Colors.white)))),
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
@@ -532,6 +830,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         );
       }else{
         canvas=InteractiveViewer(
+          transformationController:_transformController,
           minScale:1,maxScale:6,panEnabled:true,
           scaleEnabled:true,child:canvas,
         );
@@ -540,81 +839,351 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     });
   }
 
-  Widget _menu()=>PopupMenuButton<String>(tooltip:'Image Editing menu',
-    icon:const Icon(Icons.more_vert),
-    onSelected:(value){
-      if(value=='history')Navigator.of(context).push(fadePage<void>(
-        const ImageEditingHistoryPage()));
-      if(value=='share')unawaited(_export('share'));
-    },itemBuilder:(_)=>const [
-      PopupMenuItem(value:'history',child:Text('Image History')),
-      PopupMenuItem(value:'share',child:Text('Share / Export')),
-    ]);
+  Widget _fastFilterPreview(Widget child){
+    final type=_pendingFilter;
+    final matrix=switch(type){
+      'B&W'=><double>[.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,0,0,0,1,0],
+      'Vivid'=><double>[1.18,0,0,0,0,0,1.12,0,0,0,0,0,1.1,0,0,0,0,0,1,0],
+      'Warm'=><double>[1.13,0,0,0,4,0,1.04,0,0,2,0,0,.83,0,0,0,0,0,1,0],
+      'Cool'=><double>[.85,0,0,0,0,0,1.02,0,0,0,0,0,1.15,0,3,0,0,0,1,0],
+      'Vintage'=><double>[.393,.769,.189,0,0,.349,.686,.168,0,0,.272,.534,.131,0,0,0,0,0,1,0],
+      _=>null,
+    };
+    return matrix==null?child:ColorFiltered(
+      colorFilter:ColorFilter.matrix(matrix),child:child);
+  }
+  String _toolTitle(String tool)=>switch(tool){
+    'Background'=>'Background Removal',
+    'Compress'=>'Compression',
+    'Crop'=>'Freeform Crop',
+    'Erase'=>'Manual Erase',
+    'Adjust'=>'Adjustments',
+    _=>tool,
+  };
+  IconData _toolIcon(String tool)=>switch(tool){
+    'Background'=>Icons.person_outline_rounded,
+    'Compress'=>Icons.compress_rounded,
+    'Crop'=>Icons.crop_rotate_rounded,
+    'Filters'=>Icons.filter_vintage_outlined,
+    'Erase'=>Icons.auto_fix_off,
+    _=>Icons.tune_rounded,
+  };
+  void _selectTool(String tool){
+    if(_busy)return;
+    if(_tool=='Background'&&tool!='Background'&&_pendingBackgroundColor!=null){
+      unawaited(_finalizeBackgroundPreview().then((_){
+        if(mounted)setState(()=>_tool=tool);
+      }));
+      return;
+    }
+    if(_tool=='Filters'&&tool!='Filters'&&_pendingFilter!=null){
+      unawaited(_finalizeFilter().then((_){
+        if(mounted)setState(()=>_tool=tool);
+      }));
+      return;
+    }
+    setState(()=>_tool=tool);
+  }
 
-  Widget _toolbar()=>Wrap(spacing:7,runSpacing:6,children:[
-    for(final t in _tools)
-      ChoiceChip(label:Text(t),selected:_tool==t,
-        onSelected:(_)=>setState(()=>_tool=t)),
-  ]);
+  Widget _toolTab(String tool,{bool vertical=false}){
+    final selected=_tool==tool;
+    final title=_toolTitle(tool);
+    return Material(color:selected?FileTheme.violet:
+      Theme.of(context).colorScheme.surface.withValues(alpha:.8),
+      borderRadius:BorderRadius.circular(14),
+      child:InkWell(borderRadius:BorderRadius.circular(14),
+        onTap:()=>_selectTool(tool),
+        child:Container(
+          padding:EdgeInsets.symmetric(horizontal:vertical?14:12,
+            vertical:vertical?13:10),
+          decoration:BoxDecoration(borderRadius:BorderRadius.circular(14),
+            border:Border.all(color:selected?FileTheme.violet:
+              FileTheme.violet.withValues(alpha:.22))),
+          child:Row(mainAxisSize:MainAxisSize.min,children:[
+            Icon(_toolIcon(tool),size:19,
+              color:selected?Colors.white:FileTheme.violet),
+            const SizedBox(width:9),
+            Text(title,maxLines:1,overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontWeight:FontWeight.w600,fontSize:13,
+                color:selected?Colors.white:FileTheme.foreground(context))),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _toolStrip()=>SizedBox(height:62,
+    child:ListView(scrollDirection:Axis.horizontal,
+      padding:const EdgeInsets.symmetric(horizontal:12,vertical:4),
+      children:[
+        for(final tool in _tools)
+          Padding(padding:const EdgeInsets.only(right:7),
+            child:_toolTab(tool)),
+      ]));
 
   Widget _controls()=>SingleChildScrollView(
-    padding:const EdgeInsets.all(14),
+    key:ValueKey('panel-'+_tool),
+    padding:const EdgeInsets.fromLTRB(16,12,16,14),
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text('$_tool',style:Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height:12),
-      AnimatedSwitcher(
-        duration:const Duration(milliseconds:250),
+      Text(_toolTitle(_tool),style:Theme.of(context).textTheme.titleMedium
+        ?.copyWith(fontWeight:FontWeight.w800)),
+      const SizedBox(height:8),
+      AnimatedSwitcher(duration:const Duration(milliseconds:220),
         switchInCurve:Curves.easeOutCubic,
-        switchOutCurve:Curves.easeInCubic,
-        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls()),
-      ),
+        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls())),
     ]));
 
-  Widget _actions()=>SafeArea(top:false,child:Padding(
-    padding:const EdgeInsets.all(8),
-    child:Wrap(alignment:WrapAlignment.center,spacing:10,runSpacing:8,children:[
-      OutlinedButton.icon(onPressed:_undo.isEmpty?null:()=>_historyStep(true),
-        icon:const Icon(Icons.undo),label:const Text('Undo')),
-      OutlinedButton.icon(onPressed:_redo.isEmpty?null:()=>_historyStep(false),
-        icon:const Icon(Icons.redo),label:const Text('Redo')),
-      OutlinedButton.icon(onPressed:_busy?null:()=>_export('save'),
-        icon:const Icon(Icons.download),label:const Text('Save')),
-      OutlinedButton.icon(onPressed:_busy?null:()=>_export('share'),
-        icon:const Icon(Icons.share),label:const Text('Share')),
-      FilledButton.icon(onPressed:_busy?null:()=>_export('cart'),
-        icon:const Icon(Icons.send),label:const Text('Send to Cart')),
-    ]),
-  ));
+  Widget _emptyCanvas({required bool wide}){
+    return Center(child:SingleChildScrollView(
+      child:ConstrainedBox(
+      constraints:const BoxConstraints(maxWidth:460),
+      child:Padding(padding:const EdgeInsets.all(24),
+        child:Column(mainAxisSize:MainAxisSize.min,children:[
+          Container(padding:const EdgeInsets.all(28),
+            decoration:BoxDecoration(
+              color:FileTheme.violet.withValues(alpha:.13),
+              shape:BoxShape.circle),
+            child:const Icon(Icons.add_photo_alternate_outlined,
+              color:FileTheme.violet,size:55)),
+          const SizedBox(height:18),
+          Text('Choose an image',style:Theme.of(context).textTheme.titleLarge
+            ?.copyWith(fontWeight:FontWeight.w800)),
+          const SizedBox(height:7),
+          Text('Your live editing preview will appear here.',
+            style:TextStyle(color:FileTheme.muted(context)),
+            textAlign:TextAlign.center),
+          if(_error!=null)...[
+            const SizedBox(height:8),
+            Text('This file could not be opened. Choose another image.',
+              textAlign:TextAlign.center,
+              style:TextStyle(color:Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height:20),
+          Wrap(alignment:WrapAlignment.center,
+            spacing:12,runSpacing:12,children:[
+              OutlinedButton.icon(
+                onPressed:_imagePickerBusy?null:()=>_chooseSource(camera:true),
+                icon:const Icon(Icons.photo_camera_outlined),
+                label:const Text('Camera')),
+              FilledButton.icon(
+                onPressed:_imagePickerBusy?null:()=>_chooseSource(camera:false),
+                icon:const Icon(Icons.folder_open_outlined),
+                label:const Text('Browse images')),
+            ]),
+          if(_imagePickerBusy)...[
+            const SizedBox(height:14),
+            const LinearProgressIndicator(),
+          ],
+        ]),
+      ),
+    )));
+  }
+
+  Widget _previewArea({required bool wide}){
+    final isDark=Theme.of(context).brightness==Brightness.dark;
+    return Container(
+      margin:EdgeInsets.all(wide?14:10),
+      clipBehavior:Clip.antiAlias,
+      decoration:BoxDecoration(
+        color:isDark?const Color(0xFF141223):const Color(0xFFF7F4FF),
+        borderRadius:BorderRadius.circular(wide?22:18),
+        border:Border.all(color:FileTheme.violet.withValues(alpha:.15))),
+      child:Column(children:[
+        if(_busy)const LinearProgressIndicator(minHeight:3),
+        Expanded(child:_bytes==null?_emptyCanvas(wide:wide):
+          Padding(padding:EdgeInsets.all(wide?14:8),
+            child:RepaintBoundary(child:_preview()))),
+        Container(height:52,
+          padding:const EdgeInsets.symmetric(horizontal:9),
+          decoration:BoxDecoration(
+            color:Theme.of(context).colorScheme.surface.withValues(alpha:.75),
+            border:Border(top:BorderSide(
+              color:FileTheme.violet.withValues(alpha:.12)))),
+          child:Row(children:[
+            IconButton(tooltip:'Fit image',onPressed:_resetZoom,
+              icon:const Icon(Icons.fit_screen_outlined)),
+            IconButton(tooltip:'Zoom out',
+              onPressed:_bytes==null?null:()=>_changeZoom(.8),
+              icon:const Icon(Icons.zoom_out_outlined)),
+            Text('${(_zoom*100).round()}%',
+              style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700)),
+            IconButton(tooltip:'Zoom in',
+              onPressed:_bytes==null?null:()=>_changeZoom(1.25),
+              icon:const Icon(Icons.zoom_in_outlined)),
+            const Spacer(),
+            IconButton(tooltip:'Browse another image',
+              onPressed:()=>_chooseSource(camera:false),
+              icon:const Icon(Icons.add_photo_alternate_outlined)),
+            IconButton(tooltip:'Image History',
+              onPressed:()=>Navigator.of(context).push(
+                fadePage<void>(const ImageEditingHistoryPage())),
+              icon:const Icon(Icons.history)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _applyCurrent() async {
+    if(_busy || _bytes==null)return;
+    if(_tool=='Filters'){
+      await _finalizeFilter();
+    }else if(_tool=='Background'&&_pendingBackgroundColor!=null){
+      await _finalizeBackgroundPreview();
+    }else if(_tool=='Crop'){
+      _commitCrop();
+    }else if(_tool=='Adjust'){
+      _commitAdjust();
+    }else if(_tool=='Compress'){
+      await _compress();
+    }else{
+      await _saveDraft();
+      _message('Current image saved in Image History');
+    }
+  }
+
+  Widget _desktopHistory(){
+    return ListenableBuilder(listenable:ImageEditingHistory.instance,
+      builder:(context,_){
+        final drafts=ImageEditingHistory.instance.drafts.take(5).toList();
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Row(children:[
+            const Icon(Icons.history,color:FileTheme.violet),
+            const SizedBox(width:9),
+            const Expanded(child:Text('Image History',style:
+              TextStyle(fontWeight:FontWeight.w800,fontSize:17))),
+            TextButton(onPressed:()=>Navigator.of(context).push(
+              fadePage<void>(const ImageEditingHistoryPage())),
+              child:const Text('View all')),
+          ]),
+          const SizedBox(height:9),
+          if(drafts.isEmpty)Padding(
+            padding:const EdgeInsets.symmetric(vertical:15),
+            child:Text('Edited images appear here automatically.',
+              style:TextStyle(color:FileTheme.muted(context)))),
+          for(final entry in drafts)
+            Padding(padding:const EdgeInsets.only(bottom:9),
+              child:Material(
+                color:Theme.of(context).colorScheme.surface,
+                borderRadius:BorderRadius.circular(14),
+                child:InkWell(
+                  onTap:()=>Navigator.of(context).push(fadePage<void>(
+                    ImageEditingPage(draft:entry))),
+                  borderRadius:BorderRadius.circular(14),
+                  child:Padding(padding:const EdgeInsets.all(8),
+                    child:Row(children:[
+                      ClipRRect(borderRadius:BorderRadius.circular(9),
+                        child:Image.file(File(entry.filePath),width:55,height:55,
+                          fit:BoxFit.cover,cacheWidth:110)),
+                      const SizedBox(width:9),
+                      Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+                        children:[
+                          Text(entry.name,maxLines:1,overflow:TextOverflow.ellipsis,
+                            style:const TextStyle(fontWeight:FontWeight.w700)),
+                          Text('${entry.steps.length} edit steps',
+                            style:TextStyle(fontSize:11,
+                              color:FileTheme.muted(context))),
+                        ])),
+                      const Icon(Icons.chevron_right_rounded,color:FileTheme.violet),
+                    ])),
+                ),
+              )),
+        ]);
+      });
+  }
+
+  Widget _desktopWorkspace()=>Column(children:[
+    Expanded(child:Row(children:[
+      Expanded(flex:8,child:_previewArea(wide:true)),
+      SizedBox(width:365,child:ListView(children:[
+        _controls(),
+        const Divider(height:24),
+        _desktopHistory(),
+      ])),
+    ])),
+    _toolStrip(),
+  ]);
+
+  Widget _mobileWorkspace(){
+    // Do not consume the preview with controls before an image is selected.
+    if(_bytes==null){
+      return Column(children:[
+        Expanded(child:_previewArea(wide:false)),
+        _toolStrip(),
+      ]);
+    }
+    return Column(children:[
+      Expanded(flex:7,child:_previewArea(wide:false)),
+      SizedBox(height:210,child:_controls()),
+      _toolStrip(),
+    ]);
+  }
+
+  Widget _menu()=>PopupMenuButton<String>(
+    tooltip:'More Image Editing options',
+    icon:const Icon(Icons.more_vert_rounded),
+    onSelected:(value){
+      if(value=='history')Navigator.of(context).push(
+        fadePage<void>(const ImageEditingHistoryPage()));
+      if(value=='share' && _bytes!=null)unawaited(_export('share'));
+      if(value=='save' && _bytes!=null)unawaited(_export('save'));
+      if(value=='close')Navigator.of(context).maybePop();
+      if(value=='apply' && _bytes!=null)unawaited(_applyCurrent());
+      if(value=='compare' && _bytes!=null)setState(()=>_showOriginal=!_showOriginal);
+    },
+    itemBuilder:(_)=>const [
+      PopupMenuItem(value:'history',child:Row(children:[
+        Icon(Icons.history),SizedBox(width:12),Text('Image History')])),
+      PopupMenuItem(value:'share',child:Row(children:[
+        Icon(Icons.ios_share_outlined),SizedBox(width:12),
+        Text('Share / Export')])),
+      PopupMenuItem(value:'save',child:Row(children:[
+        Icon(Icons.download_outlined),SizedBox(width:12),Text('Save image')])),
+      PopupMenuItem(value:'apply',child:Row(children:[
+        Icon(Icons.check),SizedBox(width:12),Text('Apply changes')])),
+      PopupMenuItem(value:'compare',child:Row(children:[
+        Icon(Icons.compare),SizedBox(width:12),Text('Before / After')])),
+      PopupMenuItem(value:'close',child:Row(children:[
+        Icon(Icons.close),SizedBox(width:12),Text('Close editor')])),
+    ]);
 
   @override
   Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('Image Editing'),actions:[
-      IconButton(tooltip:'Before / After',
-        onPressed:()=>setState(()=>_showOriginal=!_showOriginal),
-        icon:Icon(_showOriginal?Icons.visibility_off:Icons.compare)),
-      _menu(),
-    ]),
+    appBar:AppBar(
+      titleSpacing:0,
+      actionsIconTheme:const IconThemeData(size:19),
+      title:const Text('Image Editing',style:TextStyle(fontSize:14)),
+      actions:[
+        if(MediaQuery.sizeOf(context).width>=580)
+        IconButton(tooltip:'Cancel / Close',visualDensity:VisualDensity.compact,
+          onPressed:()=>Navigator.of(context).maybePop(),
+          icon:const Icon(Icons.close_rounded,size:19)),
+        IconButton(tooltip:'Undo',visualDensity:VisualDensity.compact,
+          onPressed:_undo.isEmpty||_busy?null:()=>_historyStep(true),
+          icon:const Icon(Icons.undo_rounded,size:19)),
+        IconButton(tooltip:'Redo',visualDensity:VisualDensity.compact,
+          onPressed:_redo.isEmpty||_busy?null:()=>_historyStep(false),
+          icon:const Icon(Icons.redo_rounded,size:19)),
+        IconButton(tooltip:'Apply',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:_applyCurrent,
+          icon:const Icon(Icons.check_rounded,size:19)),
+        if(MediaQuery.sizeOf(context).width>=580)
+        IconButton(tooltip:'Share',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:()=>_export('share'),
+          icon:const Icon(Icons.share_outlined,size:19)),
+        if(MediaQuery.sizeOf(context).width>=580)
+        IconButton(tooltip:'Download',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:()=>_export('save'),
+          icon:const Icon(Icons.download_rounded,size:19)),
+        IconButton(tooltip:'Send to File Share Cart',visualDensity:VisualDensity.compact,
+          onPressed:_bytes==null||_busy?null:()=>_export('cart'),
+          icon:const Icon(Icons.shopping_cart_outlined,size:19)),
+        _menu(),
+      ]),
     body:Container(
       decoration:BoxDecoration(gradient:FileTheme.background(context)),
-      child:_bytes==null
-        ?Center(child:_error!=null?Text(_error!):
-          const CircularProgressIndicator())
-        :LayoutBuilder(builder:(context,constraints){
-          final wide=constraints.maxWidth>=850;
-          final canvas=Column(children:[
-            Padding(padding:const EdgeInsets.all(10),child:_toolbar()),
-            if(_busy)const LinearProgressIndicator(minHeight:3),
-            Expanded(child:Padding(padding:const EdgeInsets.all(12),
-              child:RepaintBoundary(child:_preview()))),
-            if(!wide)SizedBox(height:230,child:_controls()),
-            _actions(),
-          ]);
-          return wide?Row(children:[
-            Expanded(flex:3,child:canvas),
-            VerticalDivider(width:1,color:FileTheme.violet.withValues(alpha:.2)),
-            SizedBox(width:315,child:_controls()),
-          ]):canvas;
-        }),
+      child:LayoutBuilder(builder:(context,constraints)=>
+        constraints.maxWidth>=900?_desktopWorkspace():_mobileWorkspace()),
     ),
   );
 }
@@ -634,32 +1203,52 @@ class _CheckerPainter extends CustomPainter {
   @override bool shouldRepaint(covariant CustomPainter old)=>false;
 }
 class _CropPainter extends CustomPainter {
-  _CropPainter(this.region);
-  final Rect region;
+  _CropPainter(this.corners,{this.showSideHandles=false});
+  final List<Offset> corners;
+  final bool showSideHandles;
+  Offset _point(Offset p,Size size)=>
+    Offset(p.dx*size.width,p.dy*size.height);
   @override void paint(Canvas canvas,Size size){
-    final r=Rect.fromLTRB(region.left*size.width,region.top*size.height,
-      region.right*size.width,region.bottom*size.height);
-    final shadow=Paint()..color=Colors.black54;
-    canvas.drawRect(Rect.fromLTWH(0,0,size.width,r.top),shadow);
-    canvas.drawRect(Rect.fromLTRB(0,r.bottom,size.width,size.height),shadow);
-    canvas.drawRect(Rect.fromLTRB(0,r.top,r.left,r.bottom),shadow);
-    canvas.drawRect(Rect.fromLTRB(r.right,r.top,size.width,r.bottom),shadow);
-    final pen=Paint()..color=Colors.white..style=PaintingStyle.stroke
-      ..strokeWidth=2;
-    canvas.drawRect(r,pen);
+    if(corners.length!=4)return;
+    final points=[for(final p in corners)_point(p,size)];
+    final outside=Path()..addRect(Offset.zero & size);
+    final polygon=Path()..moveTo(points[0].dx,points[0].dy);
+    for(var i=1;i<4;i++)polygon.lineTo(points[i].dx,points[i].dy);
+    polygon.close();
+    canvas.drawPath(Path.combine(PathOperation.difference,outside,polygon),
+      Paint()..color=Colors.black54);
+    final border=Paint()..color=Colors.white
+      ..style=PaintingStyle.stroke..strokeWidth=2;
+    canvas.drawPath(polygon,border);
     for(var i=1;i<3;i++){
-      canvas.drawLine(Offset(r.left+r.width*i/3,r.top),
-        Offset(r.left+r.width*i/3,r.bottom),pen);
-      canvas.drawLine(Offset(r.left,r.top+r.height*i/3),
-        Offset(r.right,r.top+r.height*i/3),pen);
+      final f=i/3.0;
+      Offset interpolate(Offset a,Offset b)=>Offset.lerp(a,b,f)!;
+      canvas.drawLine(interpolate(points[0],points[3]),
+        interpolate(points[1],points[2]),border);
+      canvas.drawLine(interpolate(points[0],points[1]),
+        interpolate(points[3],points[2]),border);
     }
     final handle=Paint()..color=FileTheme.violet;
-    for(final point in [r.topLeft,r.topRight,r.bottomLeft,r.bottomRight]){
-      canvas.drawCircle(point,7,handle);
-      canvas.drawCircle(point,4,Paint()..color=Colors.white);
+    for(final p in points){
+      canvas.drawCircle(p,9,Paint()..color=Colors.white);
+      canvas.drawCircle(p,6,handle);
+    }
+    if(showSideHandles){
+      for(var i=0;i<4;i++){
+        final p=Offset.lerp(points[i],points[(i+1)%4],.5)!;
+        final rect=Rect.fromCenter(center:p,width:i.isEven?30:13,height:i.isEven?13:30);
+        canvas.drawRRect(RRect.fromRectAndRadius(rect,const Radius.circular(6)),Paint()..color=Colors.white);
+        canvas.drawRRect(RRect.fromRectAndRadius(rect.deflate(2),const Radius.circular(4)),handle);
+      }
     }
   }
-  @override bool shouldRepaint(covariant _CropPainter old)=>old.region!=region;
+  @override bool shouldRepaint(covariant _CropPainter old){
+    if(old.showSideHandles!=showSideHandles||old.corners.length!=corners.length)return true;
+    for(var i=0;i<corners.length;i++){
+      if(old.corners[i]!=corners[i])return true;
+    }
+    return false;
+  }
 }
 
 class ImageEditingHistoryPage extends StatefulWidget {
@@ -684,54 +1273,131 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     if(mounted)ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content:Text('Added to File Share Cart')));
   }
+  Future<void> _historyAction(ImageEditingDraft entry,String action)async{
+    try{
+      switch(action){
+        case 'edit':
+          await Navigator.of(context).push(fadePage<void>(
+            ImageEditingPage(draft:entry)));
+        case 'share':
+          await SharePlus.instance.share(ShareParams(
+            files:[XFile(entry.filePath)]));
+        case 'cart':
+          await _cart(entry);
+        case 'download':
+          final bytes=await File(entry.filePath).readAsBytes();
+          final jpeg=bytes.length>1&&bytes[0]==0xff&&bytes[1]==0xd8;
+          await FilePicker.saveFile(fileName:'edited_${entry.id}.${jpeg?'jpg':'png'}',
+            bytes:bytes,mimeType:jpeg?'image/jpeg':'image/png');
+        case 'delete':
+          final confirmed=await showDialog<bool>(context:context,
+            builder:(ctx)=>AlertDialog(
+              title:const Text('Delete this image draft?'),
+              content:const Text('This removes the local editing history copy. '
+                'Your original file is not affected.'),
+              actions:[
+                TextButton(onPressed:()=>Navigator.pop(ctx,false),
+                  child:const Text('Cancel')),
+                FilledButton(onPressed:()=>Navigator.pop(ctx,true),
+                  child:const Text('Delete')),
+              ]));
+          if(confirmed==true){
+            await ImageEditingHistory.instance.delete(entry);
+          }
+      }
+    }catch(_){
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content:Text('Image action failed. Please retry.')));
+    }
+  }
+
   @override Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('Image History')),
-    body:ListenableBuilder(listenable:ImageEditingHistory.instance,
-      builder:(context,_) {
-        final items=ImageEditingHistory.instance.drafts;
-        if(items.isEmpty)return const Center(child:Text('No image drafts yet'));
-        return ListView.builder(itemCount:items.length,
-          itemBuilder:(context,index){
-            final entry=items[index];
-            return Card(margin:const EdgeInsets.symmetric(horizontal:10,vertical:6),
-              child:Padding(padding:const EdgeInsets.all(10),child:Column(children:[
-                Row(children:[
-                  ClipRRect(borderRadius:BorderRadius.circular(12),
-                    child:Image.file(File(entry.filePath),width:85,height:85,
-                      fit:BoxFit.cover,cacheWidth:170)),
-                  const SizedBox(width:12),
-                  Expanded(child:Column(
-                    crossAxisAlignment:CrossAxisAlignment.start,children:[
-                      Text(entry.name,maxLines:2,overflow:TextOverflow.ellipsis),
-                      Text(entry.updated.toLocal().toString().substring(0,16),
-                        style:TextStyle(color:FileTheme.muted(context))),
-                      Text('${entry.steps.length} edits',
-                        style:TextStyle(color:FileTheme.muted(context))),
-                    ])),
-                ]),
-                Wrap(spacing:3,runSpacing:3,children:[
-                  TextButton.icon(onPressed:()=>Navigator.push(context,
-                    MaterialPageRoute<void>(builder:(_)=>ImageEditingPage(draft:entry))),
-                    icon:const Icon(Icons.edit),label:const Text('Re-edit')),
-                  TextButton.icon(onPressed:()=>SharePlus.instance.share(
-                    ShareParams(files:[XFile(entry.filePath)])),
-                    icon:const Icon(Icons.share),label:const Text('Share')),
-                  TextButton.icon(onPressed:()=>_cart(entry),
-                    icon:const Icon(Icons.send),label:const Text('Cart')),
-                  TextButton.icon(onPressed:()async{
-                    final data=await File(entry.filePath).readAsBytes();
-                    final isJpg=data.length>1 && data[0]==0xff && data[1]==0xd8;
-                    await FilePicker.saveFile(
-                      fileName:'edited_${entry.id}.${isJpg?'jpg':'png'}',
-                      bytes:data,mimeType:isJpg?'image/jpeg':'image/png');
-                  },icon:const Icon(Icons.download),label:const Text('Download')),
-                  TextButton.icon(onPressed:()async{
-                    await ImageEditingHistory.instance.delete(entry);
-                  },icon:const Icon(Icons.delete_outline),label:const Text('Delete')),
-                ]),
-              ])));
-          });
-      }),
+    appBar:AppBar(title:const Row(children:[
+      Icon(Icons.history,color:FileTheme.violet),
+      SizedBox(width:10),Text('Image History'),
+    ])),
+    body:Container(
+      decoration:BoxDecoration(gradient:FileTheme.background(context)),
+      child:ListenableBuilder(listenable:ImageEditingHistory.instance,
+        builder:(context,_){
+          final items=ImageEditingHistory.instance.drafts;
+          if(items.isEmpty)return Center(child:Column(
+            mainAxisSize:MainAxisSize.min,children:[
+              const Icon(Icons.photo_library_outlined,
+                size:60,color:FileTheme.violet),
+              const SizedBox(height:12),
+              Text('No saved images yet',
+                style:Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height:6),
+              const Text('Your edits are saved locally as you work.'),
+            ]));
+          return Center(child:ConstrainedBox(
+            constraints:const BoxConstraints(maxWidth:850),
+            child:ListView.separated(
+              padding:const EdgeInsets.all(15),
+              itemCount:items.length,
+              separatorBuilder:(_,__)=>const SizedBox(height:12),
+              itemBuilder:(context,index){
+                final entry=items[index];
+                return Material(
+                  color:Theme.of(context).colorScheme.surface,
+                  borderRadius:BorderRadius.circular(18),
+                  child:Container(
+                    padding:const EdgeInsets.all(12),
+                    decoration:BoxDecoration(
+                      borderRadius:BorderRadius.circular(18),
+                      border:Border.all(color:FileTheme.violet.withValues(alpha:.2))),
+                    child:Row(children:[
+                      ClipRRect(borderRadius:BorderRadius.circular(12),
+                        child:Image.file(File(entry.filePath),
+                          width:98,height:86,fit:BoxFit.cover,cacheWidth:196,
+                          errorBuilder:(_,__,___)=>const Icon(
+                            Icons.broken_image_outlined,size:40))),
+                      const SizedBox(width:12),
+                      Expanded(child:Column(
+                        crossAxisAlignment:CrossAxisAlignment.start,
+                        children:[
+                          Text(entry.name,maxLines:2,
+                            overflow:TextOverflow.ellipsis,
+                            style:const TextStyle(
+                              fontWeight:FontWeight.w800,fontSize:14)),
+                          const SizedBox(height:5),
+                          Text(entry.updated.toLocal().toString().substring(0,16),
+                            style:TextStyle(fontSize:12,
+                              color:FileTheme.muted(context))),
+                          const SizedBox(height:5),
+                          Text('${entry.steps.length} edit steps',
+                            style:const TextStyle(fontSize:11,
+                              color:FileTheme.violet)),
+                        ])),
+                      PopupMenuButton<String>(
+                        tooltip:'Image history actions',
+                        onSelected:(action)=>unawaited(
+                          _historyAction(entry,action)),
+                        itemBuilder:(_)=>const [
+                          PopupMenuItem(value:'edit',child:ListTile(
+                            dense:true,leading:Icon(Icons.edit_outlined),
+                            title:Text('Re-edit'))),
+                          PopupMenuItem(value:'share',child:ListTile(
+                            dense:true,leading:Icon(Icons.share_outlined),
+                            title:Text('Share'))),
+                          PopupMenuItem(value:'cart',child:ListTile(
+                            dense:true,leading:Icon(Icons.send_outlined),
+                            title:Text('Send to File Share'))),
+                          PopupMenuItem(value:'download',child:ListTile(
+                            dense:true,leading:Icon(Icons.download_outlined),
+                            title:Text('Download'))),
+                          PopupMenuItem(value:'delete',child:ListTile(
+                            dense:true,leading:Icon(Icons.delete_outline),
+                            title:Text('Delete'))),
+                        ]),
+                    ]),
+                  ),
+                );
+              }),
+          ));
+        }),
+    ),
   );
 }
 

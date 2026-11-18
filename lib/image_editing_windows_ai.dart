@@ -6,8 +6,8 @@ import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
-/// Portable U²-NetP subject segmentation for Windows; unlike ML Kit it is
-/// not Android-only. A one-time 4.6 MB model download is verified by SHA256
+/// Portable U²-NetP on-device segmentation for Windows and Android fallback.
+/// ML Kit remains preferred for Android portrait images. A one-time 4.6 MB model download is verified by SHA256
 /// before it is loaded, then all inference is on the user's local device.
 class WindowsBackgroundAi {
   static const modelUrl=
@@ -51,7 +51,9 @@ class WindowsBackgroundAi {
   }
 
   static Future<Uint8List> segmentationMask(Uint8List sourceBytes)async{
-    if(!Platform.isWindows)throw UnsupportedError('Windows segmentation only');
+    if(!Platform.isWindows && !Platform.isAndroid){
+      throw UnsupportedError('ONNX subject segmentation requires Android or Windows');
+    }
     final decoded=img.decodeImage(sourceBytes);
     if(decoded==null)throw const FormatException('Unsupported image format');
     final resized=img.copyResize(decoded,width:modelSize,height:modelSize);
