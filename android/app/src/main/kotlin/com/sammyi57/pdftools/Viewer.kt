@@ -147,6 +147,10 @@ fun PdfViewerScreen(path: String, name: String) {
     matches.getOrNull(at)?.let { runCatching { state.scrollToPosition(PdfPoint(it.first.pageNum, it.first.left, it.first.top)) } }
   }
   BackHandler(searching) { searching = false; query = "" }
+  // Android hardware Back mirrors the toolbar Back for File Share sessions.
+  // The first PDF viewer exits to the unified dashboard; a nested editor
+  // returns here first, preserving any autosaved editing draft.
+  BackHandler(!searching && EmbeddedPdfSession.fromFileShare) { nav.back() }
   val searchFocus = remember { FocusRequester() }
   LaunchedEffect(searching) { if (searching) { delay(150); runCatching { searchFocus.requestFocus() } } } // keyboard up as search opens
 
