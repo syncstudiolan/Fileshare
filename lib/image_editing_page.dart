@@ -359,7 +359,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(!step.startsWith('Manual ')&&!step.startsWith('Background')&&_tool=='Erase'){
       unawaited(_cacheEraseImage(next,original:true));
     }
-    unawaited(_saveDraft());
+    // IO failures should not interrupt GPU interaction or surface as an
+    // unhandled asynchronous exception; the next save may still succeed.
+    unawaited(_saveDraft().catchError((Object _) {}));
   }
 
   Future<void> _historyStep(bool undo) async {
