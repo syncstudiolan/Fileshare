@@ -135,8 +135,11 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
       }
     }
     if(candidate.width<=24&&candidate.height<=24)break;
-    final newWidth=math.max(24,(candidate.width*.80).round());
-    final newHeight=math.max(24,(candidate.height*.80).round());
+    // Preserve very narrow strokes; never upscale a 1–23 px dimension.
+    final newWidth=candidate.width<=24?candidate.width:
+      math.max(24,(candidate.width*.80).round());
+    final newHeight=candidate.height<=24?candidate.height:
+      math.max(24,(candidate.height*.80).round());
     if(newWidth==candidate.width&&newHeight==candidate.height)break;
     candidate=img.copyResize(candidate,width:newWidth,height:newHeight,
       interpolation:img.Interpolation.average);
