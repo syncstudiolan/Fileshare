@@ -1276,16 +1276,18 @@ class FileCardOpenRouter {
       return false;
     }
     try{
+      final theme=Theme.of(context).brightness==Brightness.dark?'dark':'light';
       var pdfPath=path;
       if(isDocx(name)){
         pdfPath=await const MethodChannel('file_share.native')
           .invokeMethod<String>('convertDocxToPdf',{'path':path})??'';
         if(pdfPath.isEmpty)throw StateError('DOCX conversion returned no PDF');
       }
+      if(!context.mounted)return true;
       await const MethodChannel('file_share.native').invokeMethod<void>(
         'openUpstreamPdfTools',{
           'path':pdfPath,
-          'theme':Theme.of(context).brightness==Brightness.dark?'dark':'light',
+          'theme':theme,
         });
     }catch(e){
       if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
@@ -1304,11 +1306,7 @@ class FullScreenFilePreview extends StatelessWidget {
   final LanFile file;
   final Future<void> Function(LanFile) onSave, onDelete, onShare, onTools;
 
-  bool get isPicture {
-    final name=file.name.toLowerCase();
-    return name.endsWith('.jpg')||name.endsWith('.jpeg')||
-      name.endsWith('.png')||name.endsWith('.webp')||name.endsWith('.gif');
-  }
+  bool get isPicture => FileCardOpenRouter.isImage(file.name);
 
   @override
   Widget build(BuildContext context) => Scaffold(
