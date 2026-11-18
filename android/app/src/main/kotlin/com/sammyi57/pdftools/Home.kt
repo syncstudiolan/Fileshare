@@ -109,6 +109,7 @@ fun Home() {
       }
       if (files.isNotEmpty()) Stagger(1) {
         RecentPanel(files.take(12), { nav.show(Tab.Files) },
+          onOpen = { file -> scanProjectForPdf(file.path)?.let { nav.scan(it.id) } ?: openFile(file.path, file.name) },
           onShare = { file ->
             if (file.name.endsWith(".pdf", ignoreCase = true)) sendTarget = file to false
             else share(file.path, file.name)
@@ -130,7 +131,7 @@ fun Home() {
         found.take(5).forEachIndexed { i, f ->
           ListRow(
             stem(f.name), first = i == 0, lead = { DocGlyph(kindOf(f.name)) }, marquee = true,
-            subtitle = "${fmtSize(f.size)} · ${fmtDate(f.modified)}", onClick = { openFile(f.path, f.name) },
+            subtitle = "${fmtSize(f.size)} · ${fmtDate(f.modified)}", onClick = { scanProjectForPdf(f.path)?.let { nav.scan(it.id) } ?: openFile(f.path, f.name) },
           ) {
               IconBtn(I.plusBoxMultipleOutline, 18.dp, c.accent, "Add to Cart") {
                 sendTarget = f to true
@@ -291,6 +292,7 @@ private fun Stat(label: String, value: String) {
 @Composable
 private fun RecentPanel(
   recent: List<Saved>, onAll: () -> Unit,
+  onOpen: (Saved) -> Unit,
   onShare: (Saved) -> Unit, onCart: (Saved) -> Unit,
 ) {
   val shape = RoundedCornerShape(Radius.card)
@@ -303,7 +305,7 @@ private fun RecentPanel(
     }
     recent.forEach { f ->
       Row(
-        Modifier.fillMaxWidth().tap(scaleTo = 0.98f, label = "Open ${stem(f.name)}") { openFile(f.path, f.name) }.padding(vertical = 6.dp),
+        Modifier.fillMaxWidth().tap(scaleTo = 0.98f, label = "Open ${stem(f.name)}") { onOpen(f) }.padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Column(Modifier.weight(1f)) {
