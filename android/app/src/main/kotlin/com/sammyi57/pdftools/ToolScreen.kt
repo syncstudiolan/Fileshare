@@ -129,6 +129,15 @@ fun ToolScreen(id: String, resume: Boolean) {
   var locked by remember { mutableStateOf<List<Picked>>(emptyList()) }
   var naming by remember { mutableStateOf<Pair<List<Output>, String>?>(null) }
   var parts by remember { mutableStateOf<List<Named>?>(null) } // a multi-file preview
+  var sendResult by remember { mutableStateOf<Pair<Saved, Boolean>?>(null) }
+  var sendResultPageCount by remember { mutableStateOf(0) }
+  LaunchedEffect(sendResult) {
+    val selected = sendResult?.first ?: return@LaunchedEffect
+    sendResultPageCount = withContext(Dispatchers.IO) {
+      runCatching { com.tom_roush.pdfbox.pdmodel.PDDocument.load(java.io.File(selected.path))
+        .use { it.numberOfPages } }.getOrDefault(0)
+    }
+  }
   val multi = tool.input == Input.Pdfs
   val ready = files.size >= (if (multi) tool.min ?: 2 else 1)
   val hasEditor = tool.id in EDITOR_TITLES
@@ -278,7 +287,17 @@ fun ToolScreen(id: String, resume: Boolean) {
               stem(r.name), first = i == 0, lead = { DocGlyph(kindOf(r.name)) }, marquee = true, onClick = { openFile(r.path, r.name) },
               subtitle = if (results.size == 1 && files.size == 1 && files[0].size != null) "${fmtSize(files[0].size)} → ${fmtSize(r.size)}" else fmtSize(r.size),
             ) {
-              T("Share", Type.label, modifier = Modifier.tap(shape = CircleShape, scaleTo = 0.92f) { share(r.path, r.name) }.border(1.dp, c.lineStrong, CircleShape).padding(horizontal = 14.dp, vertical = 7.dp))
+              if (r.name.endsWith(".pdf", ignoreCase = true)) {
+                IconBtn(I.plusBoxMultipleOutline, 20.dp, c.accent, "Add to Cart") {
+                  sendResult = r to true
+                }
+                T("Share", Type.label, modifier = Modifier.tap(shape = CircleShape, scaleTo = 0.92f) {
+                  sendResult = r to false
+                }.border(1.dp, c.lineStrong, CircleShape).padding(horizontal = 14.dp, vertical = 7.dp))
+              } else {
+                T("Share", Type.label, modifier = Modifier.tap { share(r.path, r.name) }
+                  .padding(horizontal = 14.dp, vertical = 7.dp))
+              }
             }
           }
         }
@@ -295,6 +314,12 @@ fun ToolScreen(id: String, resume: Boolean) {
     }
   }
 
+  sendResult?.let { selected ->
+    if (sendResultPageCount > 0) PdfSendPicker(selected.first.path,
+      selected.first.name, 1, sendResultPageCount, selected.second) {
+        sendResult = null
+      }
+  }
   if (appFiles) AppFilesPicker(multi, files.map { it.path }, { appFiles = false }) { picked -> addFiles(if (multi) picked.filter { p -> files.none { it.path == p.path } } else picked) }
   locked.firstOrNull()?.let { f ->
     PasswordDialog(f, { path -> append(listOf(f.copy(path = path))); locked = locked.drop(1) }) { locked = locked.drop(1) }
