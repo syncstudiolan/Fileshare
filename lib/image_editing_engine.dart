@@ -53,6 +53,41 @@ class ImageEditingEngine {
           toImage:img.Image(width:width,height:height,numChannels:4));
       case 'rotate':
         output = img.copyRotate(output, angle: decimal('degrees', 90));
+      case 'straighten':
+        final degrees=decimal('degrees',0).clamp(-45.0,45.0);
+        if(degrees.abs()<0.001)break;
+        final originalW=output.width.toDouble();
+        final originalH=output.height.toDouble();
+        output=img.copyRotate(output,angle:degrees,
+          interpolation:img.Interpolation.linear);
+        if(options['autoCrop']!=false){
+          final radians=degrees.abs()*math.pi/180;
+          final sin=math.sin(radians),cos=math.cos(radians);
+          final shortSide=math.min(originalW,originalH);
+          final longSide=math.max(originalW,originalH);
+          double croppedW,croppedH;
+          if(shortSide<=2*sin*cos*longSide){
+            final x=shortSide/2;
+            if(originalW>=originalH){
+              croppedW=x/sin;croppedH=x/cos;
+            }else{
+              croppedW=x/cos;croppedH=x/sin;
+            }
+          }else{
+            final denom=cos*cos-sin*sin;
+            if(denom.abs()<1e-6){
+              croppedW=originalW*.70;croppedH=originalH*.70;
+            }else{
+              croppedW=(originalW*cos-originalH*sin)/denom;
+              croppedH=(originalH*cos-originalW*sin)/denom;
+            }
+          }
+          final w=croppedW.round().clamp(1,output.width);
+          final h=croppedH.round().clamp(1,output.height);
+          output=img.copyCrop(output,
+            x:(output.width-w)~/2,y:(output.height-h)~/2,
+            width:w,height:h);
+        }
       case 'flip':
         output = img.flipHorizontal(output);
       case 'adjust':
