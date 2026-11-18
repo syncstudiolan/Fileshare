@@ -144,7 +144,7 @@ private fun runWorkflow(files: List<Named>, steps: List<WorkflowStep>): List<Out
 
 val TOOLS: List<Tool> = listOf(
   Tool(
-    "scan", 0, "Scan Document", "Use your camera to scan any document and export it as a PDF, processed on your phone.",
+    "scan", 1, "Camera", "Open the original document scanner. Crop, filter, rotate, add pages and resume editable scans from History.",
     "Create PDF", "Building PDF", Input.Images,
   ) { _, _ -> fail("Open the scanner from the Scan button.") }, // the scanner builds its own PDF
   Tool(
