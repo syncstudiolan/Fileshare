@@ -29,13 +29,12 @@ class ImageEditingPage extends StatefulWidget {
   State<ImageEditingPage> createState()=>_ImageEditingPageState();
 }
 
-class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerProviderStateMixin {
+class _ImageEditingPageState extends State<ImageEditingPage> {
   Uint8List? _bytes;
   Uint8List? _originalBytes;
   Uint8List? _cutoutBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
-  late final AnimationController _magicController;
   bool _imagePickerBusy=false;
   String? _selectedFilter;
   String? _pendingFilter;
@@ -58,6 +57,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   final List<Offset> _stroke=[];
   final List<_LiveEraseStroke> _pendingErase=[];
   Future<void> _eraseQueue=Future<void>.value();
+  Future<void> _historyQueue=Future<void>.value();
+  final ScrollController _controlScroll=ScrollController();
+  int _previewDecodeVersion=0;
   ui.Image? _erasePreview;
   ui.Image? _eraseRestoration;
   double _fineAngle=0;
@@ -78,17 +80,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   @override
   void initState(){
     super.initState();
-    _magicController=AnimationController(vsync:this,
-      duration:const Duration(milliseconds:1200));
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
     unawaited(_load());
     unawaited(_loadRecentColors());
   }
   @override void dispose(){
-    _magicController.dispose();
     _erasePreview?.dispose();
     _eraseRestoration?.dispose();
     _transformController.dispose();
+    _controlScroll.dispose();
     super.dispose();
   }
   void _changeZoom(double factor){
@@ -102,11 +102,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     if(mounted)setState((){});
   }
   Future<void> _cacheEraseImage(Uint8List bytes,{bool original=false})async{
+    final revision=original?-1:++_previewDecodeVersion;
     try{
-      final codec=await ui.instantiateImageCodec(bytes,targetWidth:1300);
+      final codec=await ui.instantiateImageCodec(bytes,targetWidth:1000);
       final frame=await codec.getNextFrame();
       codec.dispose();
-      if(!mounted){frame.image.dispose();return;}
+      if(!mounted || (!original && revision!=_previewDecodeVersion)){
+        frame.image.dispose();return;
+      }
       setState((){
         if(original){
           _eraseRestoration?.dispose();
@@ -285,11 +288,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     });
   }
 
-  Future<void> _saveDraft() async {
+  Future<void> _saveDraft() {
     final bytes=_bytes,id=_draftId;
-    if(bytes==null||id==null)return;
-    await ImageEditingHistory.instance.save(id:id,name:_name,
-      bytes:bytes,steps:_steps,originalBytes:_originalBytes);
+    if(bytes==null||id==null)return _historyQueue;
+    // Snapshot before enqueueing; subsequent strokes cannot mutate this save.
+    final name=_name, steps=List<String>.of(_steps);
+    final original=_originalBytes;
+    _historyQueue=_historyQueue.catchError((Object _) {}).then((_) async {
+      await ImageEditingHistory.instance.save(id:id,name:name,
+        bytes:bytes,steps:steps,originalBytes:original);
+    });
+    return _historyQueue;
   }
 
   Future<void> _apply(String action, Map<String,Object?> options,
@@ -325,20 +334,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
       _cutoutBytes=null; // A crop or other transform changed image geometry.
     }
-    final dimensions=await ImageEditingEngine.dimensions(next);
+    // Keep geometry from the last decoded image for color/erase/filter edits.
+    // These do not change pixels dimensions; decoding them a second time for
+    // every tool Apply was unnecessarily stalling frame delivery.
+    final geometryChanged=step.toLowerCase().contains('crop') ||
+      step.toLowerCase().contains('straighten') ||
+      step.toLowerCase().contains('rotate') ||
+      step.toLowerCase().contains('resize');
+    final dimensions=geometryChanged
+      ?await ImageEditingEngine.dimensions(next):null;
     if(!mounted)return;
     setState((){
       _bytes=next;
-      _ratio=dimensions[0]/dimensions[1];
+      if(dimensions!=null)_ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
-    await _cacheEraseImage(next);
-    if(!step.startsWith('Manual ')&&!step.startsWith('Background')){
-      await _cacheEraseImage(next,original:true);
+    // Only the Erase tool needs decoded UI images. Decode asynchronously
+    // and cache when selected; the active image is already GPU-rendered.
+    if(_tool=='Erase')unawaited(_cacheEraseImage(next));
+    if(!step.startsWith('Manual ')&&!step.startsWith('Background')&&_tool=='Erase'){
+      unawaited(_cacheEraseImage(next,original:true));
     }
-    await _saveDraft();
+    unawaited(_saveDraft());
   }
 
   Future<void> _historyStep(bool undo) async {
@@ -426,7 +445,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _message('AI background removal could not finish. Check internet for '
         'the first AI model download, or try Remove Plain Background.');
     }finally{
-      _magicController.stop();
       _processingAction=null;
       if(mounted)setState(()=>_busy=false);
     }
@@ -435,7 +453,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   Future<void> _removePlainBackground()async{
     final data=_bytes;
     if(data==null||_busy)return;
-    _magicController.repeat();
     _processingAction='background';
     setState(()=>_busy=true);
     try {
@@ -1234,8 +1251,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     _=>Icons.tune_rounded,
   };
   void _selectTool(String tool){
-    // UI navigation does not trigger full-quality image encoding.
+    if(_tool==tool)return;
+    // No worker job, image re-encode or full-screen animated crossfade on tab
+    // changes. Lazy-build the brush bitmap only when Erase is first selected.
     setState(()=>_tool=tool);
+    if(_controlScroll.hasClients)_controlScroll.jumpTo(0);
+    if(tool=='Erase' && _bytes!=null){
+      unawaited(_cacheEraseImage(_bytes!));
+      if(_eraseRestoration==null && _originalBytes!=null){
+        unawaited(_cacheEraseImage(_originalBytes!,original:true));
+      }
+    }
   }
 
   Widget _toolTab(String tool,{bool vertical=false}){
@@ -1301,15 +1327,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
 
   Widget _controls()=>SingleChildScrollView(
-    key:ValueKey('panel-'+_tool),
+    controller:_controlScroll,
+    physics:const ClampingScrollPhysics(),
     padding:const EdgeInsets.fromLTRB(16,12,16,14),
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
       Text(_toolTitle(_tool),style:Theme.of(context).textTheme.titleMedium
         ?.copyWith(fontWeight:FontWeight.w800)),
       const SizedBox(height:8),
-      AnimatedSwitcher(duration:const Duration(milliseconds:220),
-        switchInCurve:Curves.easeOutCubic,
-        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls())),
+      // Avoid dual-page AnimatedSwitcher layouts during every tool change.
+      _toolControls(),
     ]));
 
   Widget _emptyCanvas({required bool wide}){
