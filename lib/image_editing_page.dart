@@ -477,7 +477,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _format='PNG';
     }catch(e){_message('Plain background removal failed: $e');}
     finally{
-      _magicController.stop();
       _processingAction=null;
       if(mounted)setState(()=>_busy=false);
     }
