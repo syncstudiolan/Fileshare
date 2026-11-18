@@ -34,7 +34,10 @@ class UpstreamToolCatalogTest {
   }
 
   @Test fun eachCategoryAndInputTypeRemainAvailable() {
-    assertTrue(TOOLS.map { it.section }.toSet().containsAll((0..5).toList()))
+    // Camera now lives beside Merge PDFs, not in a standalone section.
+    assertEquals(1, toolById("scan")?.section)
+    assertEquals("Camera", toolById("scan")?.title)
+    assertTrue(TOOLS.map { it.section }.toSet().containsAll((1..5).toList()))
     assertTrue(TOOLS.any { it.input == Input.Pdf })
     assertTrue(TOOLS.any { it.input == Input.Pdfs })
     assertTrue(TOOLS.any { it.input == Input.Images })
