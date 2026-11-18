@@ -362,7 +362,10 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
             Expanded(child:FilledButton.icon(
             onPressed:busy||sheets.isEmpty?null:()async{
               final entry=await export();
-              if(entry!=null&&context.mounted)Navigator.pop(context,entry);
+              if(entry!=null){
+                await EditorSessionStore.instance.delete('scanner',_scannerDraftId);
+                if(context.mounted)Navigator.pop(context,entry);
+              }
             },icon:const Icon(Icons.picture_as_pdf),
             label:Text('Create PDF (${sheets.length} pages)'))),
           ])),
