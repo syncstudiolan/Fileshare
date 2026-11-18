@@ -36,7 +36,6 @@ class FileShareApplication : Application() {
     }
     private val shared = mutableListOf<Map<String, String>>()
     private var channel: MethodChannel? = null
-    private val pdf by lazy { AdvancedPdfBridge(this) }
 
     @Synchronized
     fun engine(): FlutterEngine {
@@ -45,9 +44,6 @@ class FileShareApplication : Application() {
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL_NAME)
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
-                "pdf.countPages", "pdf.renderPage", "pdf.process", "pdf.fromImages", "pdf.fromOffice", "pdf.processMany", "pdf.detectDocument", "pdf.processScan", "pdf.detectFrame" -> {
-                    pdf.handle(MethodCall(call.method.removePrefix("pdf."), call.arguments), result)
-                }
                 "openUpstreamPdfTools" -> try {
                     val options = call.arguments as? Map<*, *>
                     val path = options?.get("path") as? String
