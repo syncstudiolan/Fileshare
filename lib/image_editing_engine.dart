@@ -192,7 +192,11 @@ class ImageEditingEngine {
         img.compositeImage(background, output);
         output = background;
     }
-    return Uint8List.fromList(img.encodePng(output));
+    // Editing snapshots are temporary, lossless working images. PNG's default
+    // zlib effort is costly on large phone photos and blocks Apply even after
+    // the pixel operation has finished. Level 1 keeps pixels lossless while
+    // avoiding expensive background compression on every tool change.
+    return Uint8List.fromList(img.encodePng(output,level:1));
   }
 
   static Future<Uint8List> compress(Uint8List bytes,
