@@ -153,11 +153,21 @@ fun ToolScreen(id: String, resume: Boolean) {
   // Only touches the saved draft once this screen has work of its own, so peeking at a tool keeps an older draft.
   val owns = remember { mutableStateOf(draft != null) }
   LaunchedEffect(files, opts, results) {
-    if (files.isNotEmpty() && results.isEmpty()) {
+    // Never discard a PDF editing session merely because Apply produced an
+    // output. Keep that output as the next editable input so Back -> dashboard
+    // and later Resume still have the last edited version, not the original.
+    val latest = if (results.isNotEmpty()) {
+      results.filter { File(it.path).isFile }.map {
+        Picked(it.name, it.path, it.size)
+      }
+    } else files
+    if (latest.isNotEmpty()) {
       owns.value = true
-      val kept = if (opts.containsKey("password")) opts.with("password", "") else opts // never on disk
-      Drafts.set(ToolDraft(tool.id, files.map { it.toDraft() }, kept))
-    } else if (owns.value) Drafts.set(null)
+      val kept = if (opts.containsKey("password")) opts.with("password", "") else opts
+      Drafts.set(ToolDraft(tool.id, latest.map { it.toDraft() }, kept))
+    } else if (owns.value) {
+      Drafts.set(null)
+    }
   }
 
   val changeFiles = { next: List<Picked> -> files = next; results = emptyList(); error = "" }
