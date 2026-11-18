@@ -1348,165 +1348,185 @@ class LiveTransferCard extends StatelessWidget {
 
   bool get incoming => items.first.incoming;
 
-  bool _photo(String path) {
-    final name = path.toLowerCase();
-    return name.endsWith('.jpg') || name.endsWith('.jpeg') ||
-      name.endsWith('.png') || name.endsWith('.webp') || name.endsWith('.gif');
+  static bool _photo(String name) {
+    final n = name.toLowerCase();
+    return n.endsWith('.jpg') || n.endsWith('.jpeg') ||
+      n.endsWith('.png') || n.endsWith('.webp') || n.endsWith('.gif');
   }
 
   Widget _visual(LanFile file) {
     if (_photo(file.name) && File(file.path).existsSync()) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Image.file(File(file.path), width: double.infinity,
-          height: double.infinity, fit: BoxFit.cover,
-          cacheWidth: 360,
-          errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined,
-            color: FileTheme.pink, size: 35)));
+        borderRadius: BorderRadius.circular(11),
+        child: Image.file(File(file.path), fit: BoxFit.cover,
+          width: double.infinity, height: double.infinity,
+          cacheWidth: 340, filterQuality: FilterQuality.low,
+          errorBuilder: (_, __, ___) => const Icon(
+            Icons.image_not_supported_outlined,
+            color: FileTheme.pink, size: 30)));
     }
     final name = file.name.toLowerCase();
     return Icon(name.endsWith('.mp4') || name.endsWith('.mov')
       ? Icons.play_circle_outline_rounded
       : (name.endsWith('.pdf') ? Icons.picture_as_pdf_outlined
-        : Icons.insert_drive_file_outlined), color: FileTheme.pink, size: 34);
+        : Icons.insert_drive_file_outlined), color: FileTheme.pink, size: 35);
   }
 
-  Widget _buttons(BuildContext context, LanFile file) {
-    final exists = File(file.path).existsSync();
-    final canShare = exists &&
-      (file.state == TransferState.delivered || !file.incoming);
-    final canDownload = exists && file.incoming &&
-      file.state == TransferState.delivered;
-    Widget action(String label, IconData icon, VoidCallback? callback) =>
-      IconButton(
-        tooltip: label, onPressed: callback,
-        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-        visualDensity: VisualDensity.compact,
-        icon: Icon(icon, color: callback == null
-          ? FileTheme.pink.withValues(alpha: .30) : FileTheme.pink),
-      );
-    return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-      if (file.incoming)
-        action('Download', Icons.download_rounded,
-          canDownload ? () => onSave(file) : null),
-      action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
-      action('Share', Icons.ios_share_rounded,
-        canShare ? () => onShare(file) : null),
-      action('Open in Tools', Icons.auto_fix_high_rounded,
-        canShare ? () => onTools(file) : null),
-    ]);
-  }
-
-  void _preview(BuildContext context,LanFile file){
-    if(!File(file.path).existsSync() ||
-       (file.incoming && file.state!=TransferState.delivered))return;
-    Navigator.push(context,MaterialPageRoute<void>(builder:(_)=>
+  void _preview(BuildContext context, LanFile file) {
+    if (!File(file.path).existsSync() ||
+        (file.incoming && file.state != TransferState.delivered)) return;
+    Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>
       FullScreenFilePreview(file:file,onSave:onSave,
         onDelete:onDelete,onShare:onShare,onTools:onTools)));
   }
 
-  Widget _file(BuildContext context, LanFile file) =>
-      LayoutBuilder(builder: (context, constraints) {
-    final side = constraints.maxWidth >= 570 ? 206.0 :
-      constraints.maxWidth >= 420 ? 160.0 :
-      constraints.maxWidth >= 310 ? 128.0 : 106.0;
+  Widget _buttons(BuildContext context, LanFile file) {
+    final exists = File(file.path).existsSync();
+    final canUse = exists &&
+      (file.state == TransferState.delivered || !file.incoming);
+    Widget action(String title, IconData icon, VoidCallback? onTap) =>
+      IconButton(
+        tooltip: title, onPressed: onTap,
+        iconSize: 21,
+        constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon, color: onTap == null
+          ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink),
+      );
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      if (file.incoming)
+        action('Download', Icons.download_rounded,
+          canUse ? () => onSave(file) : null),
+      action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
+      action('Share', Icons.ios_share_rounded,
+        canUse ? () => onShare(file) : null),
+      action('Open in Tools', Icons.auto_fix_high_rounded,
+        canUse ? () => onTools(file) : null),
+    ]);
+  }
+
+  Widget _file(BuildContext context, LanFile file) {
     final active = file.state == TransferState.sending ||
       file.state == TransferState.receiving ||
       file.state == TransferState.preparing;
     final status = switch (file.state) {
-      TransferState.delivered => 'Delivered',
+      TransferState.delivered => file.incoming ? 'Received' : 'Delivered',
       TransferState.queued => 'Pending',
       TransferState.sending => 'Sending',
       TransferState.receiving => 'Receiving',
       TransferState.preparing => 'Preparing',
       TransferState.failed => 'Failed',
     };
-    return Padding(padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => _preview(context, file),
-              child: SizedBox(width: side, height: side, child: _visual(file)),
-            ),
-            const SizedBox(width: 13),
-            Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(file.name, maxLines: 3, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800,
-                    color: FileTheme.foreground(context))),
-                const SizedBox(height: 8),
-                Text(_formatBytes(file.size),
-                  style: TextStyle(color: FileTheme.muted(context), fontSize: 12)),
-                const SizedBox(height: 7),
-                Text(status,
-                  style: const TextStyle(color: FileTheme.violet,
-                    fontWeight: FontWeight.w700, fontSize: 12)),
-                if (active) ...[
-                  const SizedBox(height: 9),
-                  LinearProgressIndicator(value: file.progress,
-                    minHeight: 5, borderRadius: BorderRadius.circular(9)),
-                ],
+    return LayoutBuilder(builder: (context, constraints) {
+      // Keep the thumbnail prominent without making the whole message tall.
+      final side = constraints.maxWidth >= 530 ? 148.0 :
+        constraints.maxWidth >= 330 ? 122.0 : 100.0;
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(11),
+            onTap: () => _preview(context, file),
+            child: SizedBox(width: side, height: side, child: _visual(file))),
+          const SizedBox(width: 12),
+          Expanded(child: SizedBox(height: side, child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                  color: FileTheme.foreground(context))),
+              const SizedBox(height: 4),
+              Text(_formatBytes(file.size),
+                style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
+              if (active || file.state == TransferState.failed) ...[
+                const SizedBox(height: 5),
+                Text(status, style: TextStyle(
+                  color: file.state == TransferState.failed
+                    ? Theme.of(context).colorScheme.error : FileTheme.violet,
+                  fontWeight: FontWeight.w700, fontSize: 11)),
+                if (active) Padding(padding: const EdgeInsets.only(top: 5),
+                  child: LinearProgressIndicator(value: file.progress,
+                    minHeight: 3, borderRadius: BorderRadius.circular(5))),
               ],
-            )),
-          ]),
-          const SizedBox(height: 7),
-          _buttons(context, file),
-        ],
-      ),
-    );
-  });
+              const Spacer(),
+              Align(alignment: Alignment.centerRight,
+                child: _buttons(context, file)),
+            ],
+          ))),
+        ]),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final first = items.first;
     final multiple = items.length > 1;
     final wide = MediaQuery.sizeOf(context).width > 750;
-    final bodyWidth = wide ? 760.0 : MediaQuery.sizeOf(context).width * .93;
+    final bodyWidth = wide ? 690.0 : MediaQuery.sizeOf(context).width * .95;
+    final peer = first.peer.trim().isEmpty
+      ? 'Unknown device' : first.peer.trim();
+    // One source label, one file name, one delivery indicator.
+    final origin = (incoming ? 'From ' : 'To ') + peer + ' · Offline LAN';
+    final delivered = items.every((f) => f.state == TransferState.delivered);
+    final queued = items.every((f) => f.state == TransferState.queued);
     return Align(
       alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
         constraints: BoxConstraints(maxWidth: bodyWidth),
-        padding: const EdgeInsets.all(12),
-        margin: const EdgeInsets.symmetric(vertical: 7),
+        padding: const EdgeInsets.fromLTRB(11, 10, 11, 7),
+        margin: const EdgeInsets.symmetric(vertical: 4),
         decoration: BoxDecoration(
           color: FileTheme.dark(context)
-              ? (incoming ? const Color(0xFF482945) : const Color(0xFF382B57))
-              : (incoming ? const Color(0xFFFFDCED) : const Color(0xFFF0E7FF)),
+            ? (incoming ? const Color(0xFF482945) : const Color(0xFF382B57))
+            : (incoming ? const Color(0xFFFFDCED) : const Color(0xFFF0E7FF)),
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(22),
-            topRight: const Radius.circular(22),
-            bottomLeft: Radius.circular(incoming ? 6 : 22),
-            bottomRight: Radius.circular(incoming ? 22 : 6)),
+            topLeft: const Radius.circular(17),
+            topRight: const Radius.circular(17),
+            bottomLeft: Radius.circular(incoming ? 5 : 17),
+            bottomRight: Radius.circular(incoming ? 17 : 5)),
           border: Border.all(color: FileTheme.violet.withValues(alpha: .15)),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
           Row(children: [
-            Expanded(child: Text(multiple
-                 ? items.length.toString() + ' files · ' + first.peer
-                 : (incoming ? 'From ' : 'To ') + first.peer + ' · Offline LAN',
+            Expanded(child: Text(origin,
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(color: FileTheme.foreground(context),
-                fontWeight: FontWeight.w800, fontSize: 14))),
-            DesignTag(incoming ? 'Received' : 'Sent', received: incoming),
-          ]),
-          const SizedBox(height: 7),
-          ...items.take(multiple ? 4 : 1).map((entry) => _file(context, entry)),
-          if (items.length > 4)
-            Text('+ ' + (items.length - 4).toString() + ' more files',
+                fontWeight: FontWeight.w700, fontSize: 12))),
+            if (multiple) Text('${items.length} files',
               style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
+          ]),
+          for (final file in items.take(4)) _file(context, file),
+          if (items.length > 4)
+            Padding(padding: const EdgeInsets.only(top: 5),
+              child: Text('+${items.length - 4} more files',
+                style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
           if (incoming && multiple)
-            TextButton.icon(
-              onPressed: items.every((f) => f.state == TransferState.delivered)
-                ? () async { for (final item in items) { await onSave(item); } }
-                : null,
-              icon: const Icon(Icons.download_for_offline_outlined),
-              label: const Text('Download All')),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text(first.created.toLocal().toString().substring(11, 16),
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 10))),
+            Align(alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: delivered
+                  ? () async { for (final f in items) { await onSave(f); } }
+                  : null,
+                icon: const Icon(Icons.download_for_offline_outlined, size: 17),
+                label: const Text('Download All'))),
+          const SizedBox(height: 4),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            if (!queued && first.state == TransferState.failed)
+              Text('Failed  ', style: TextStyle(fontSize: 10,
+                color: Theme.of(context).colorScheme.error)),
+            Text(first.created.toLocal().toString().substring(11, 16),
+              style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
+            const SizedBox(width: 4),
+            if (!incoming) Icon(
+              delivered ? Icons.done_all_rounded : Icons.done_rounded,
+              // Double tick means acknowledged as delivered, never merely queued.
+              size: 17, color: delivered ? FileTheme.violet
+                : FileTheme.muted(context)),
+            if (incoming && delivered)
+              const Icon(Icons.done_all_rounded, size: 16,
+                color: FileTheme.violet),
+          ]),
         ]),
       ),
     );
