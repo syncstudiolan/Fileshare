@@ -460,22 +460,19 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           data,tolerance:_tolerance);
         engine='Plain-color edge segmentation';
       }
-      switch(_backgroundEngine){
-        case 'Google ML Kit':
-          await mlKit();
-        case 'U²-NetP (ONNX)':
-          await u2NetP();
-        case 'Plain-color':
-          await plain();
-        default:
-          if(Platform.isAndroid){
-            try{await mlKit();}
-            catch(_){await u2NetP();}
-          }else if(Platform.isWindows){
-            await u2NetP();
-          }else{
-            await plain();
-          }
+      if(_backgroundEngine=='Google ML Kit'){
+        await mlKit();
+      }else if(_backgroundEngine=='U²-NetP (ONNX)'){
+        await u2NetP();
+      }else if(_backgroundEngine=='Plain-color'){
+        await plain();
+      }else if(Platform.isAndroid){
+        try{await mlKit();}
+        catch(_){await u2NetP();}
+      }else if(Platform.isWindows){
+        await u2NetP();
+      }else{
+        await plain();
       }
       final edited=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':width,'maskHeight':height,
