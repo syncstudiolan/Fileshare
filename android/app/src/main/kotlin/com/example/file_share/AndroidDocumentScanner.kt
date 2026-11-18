@@ -28,6 +28,7 @@ import kotlin.math.roundToInt
  */
 internal class AndroidDocumentScanner(private val context:Context) {
     private val ready by lazy { OpenCVLoader.initLocal() }
+    private val model by lazy { DocAlignerModel(context) }
     private fun ensure(){require(ready){"OpenCV initialization failed"}}
     private fun load(path:String,maxSize:Int):Bitmap {
         val opt=BitmapFactory.Options().apply{inJustDecodeBounds=true}
@@ -58,6 +59,14 @@ internal class AndroidDocumentScanner(private val context:Context) {
         ensure()
         val bitmap=load(path,1000)
         val rgba=Mat();Utils.bitmapToMat(bitmap,rgba);bitmap.recycle()
+        val rgb=Mat()
+        Imgproc.cvtColor(rgba,rgb,Imgproc.COLOR_RGBA2RGB)
+        val modelCorners=try{model.detect(rgb)}catch(_:Exception){null}
+        rgb.release()
+        if(modelCorners!=null){
+            rgba.release()
+            return modelCorners.flatMap{listOf(it.x,it.y)}
+        }
         val gray=Mat();val blur=Mat();val edges=Mat();val hierarchy=Mat()
         val contours=ArrayList<MatOfPoint>()
         try{
