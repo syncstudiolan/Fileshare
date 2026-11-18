@@ -85,6 +85,7 @@ dependencies {
     implementation("androidx.pdf:pdf-compose:1.0.0-alpha18")
     implementation("androidx.pdf:pdf-document-service:1.0.0-alpha18")
     implementation("com.google.android.gms:play-services-auth:22.0.0")
+    testImplementation("junit:junit:4.13.2")
     // Android-only PDF processing; not included in Windows/macOS bundles.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
