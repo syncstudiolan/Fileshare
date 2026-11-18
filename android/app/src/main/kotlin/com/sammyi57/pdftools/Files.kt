@@ -71,7 +71,6 @@ fun FilesTab() {
   val folder = folders.firstOrNull { it.first.path == folderPath }?.first
   val files = remember(version, folderPath) { listFiles(folderPath) }
   val all = remember(version) { listAllFiles() }
-  val scans = remember(version) { listDocs().mapNotNull { d -> d.pdf?.let { it.name to d.id } }.toMap() }
 
   // Opening Files also pulls in changes made in Drive.
   LaunchedEffect(Unit) { if (Backup.state.enabled) Backup.syncNow() }
