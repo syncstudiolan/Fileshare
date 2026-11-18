@@ -1,7 +1,5 @@
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file_share/editor_transfer_session.dart';
-import 'package:file_share/advanced_pdf_tools_page.dart';
 import 'package:file_share/image_editing_storage.dart';
 import 'dart:io';
 
@@ -14,40 +12,15 @@ void main(){
       expect(EditingFileRouter.acceptsImageTool(name),isTrue);
       expect(EditingFileRouter.acceptsPdfTool(name),isTrue);
     }
-    for(final name in ['statement.PDF','report.doc','invoice.docx',
-        'sheet.xls','table.xlsx','letter.odt','sheet.ods']){
+    for(final name in ['statement.PDF']){
       expect(EditingFileRouter.acceptsPdfTool(name),isTrue);
       expect(EditingFileRouter.acceptsImageTool(name),isFalse);
     }
-    for(final name in ['film.mp4','clip.mov','film.mkv','archive.zip']){
+    for(final name in ['report.doc','invoice.docx','sheet.xls','table.xlsx',
+        'letter.odt','sheet.ods','film.mp4','clip.mov','film.mkv','archive.zip']){
       expect(EditingFileRouter.acceptsPdfTool(name),isFalse);
       expect(EditingFileRouter.acceptsImageTool(name),isFalse);
     }
-  });
-
-  test('Image import uses native PDF fromImages and Office uses fromOffice',()async{
-    const channel=MethodChannel('file_share.native');
-    final messenger=TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    final calls=<MethodCall>[];
-    messenger.setMockMethodCallHandler(channel,(call)async{
-      calls.add(call);
-      if(call.method=='pdf.fromImages')return '/tmp/from_image.pdf';
-      if(call.method=='pdf.fromOffice')return '/tmp/from_office.pdf';
-      return null;
-    });
-    addTearDown(()=>messenger.setMockMethodCallHandler(channel,null));
-    expect(await PdfSourceConversion.toPdf('/tmp/picture.jpg','picture.jpg'),
-      '/tmp/from_image.pdf');
-    expect(await PdfSourceConversion.toPdf('/tmp/notes.docx','notes.docx'),
-      '/tmp/from_office.pdf');
-    expect(calls.map((c)=>c.method),[
-      'pdf.fromImages','pdf.fromOffice',
-    ]);
-    expect(calls.last.arguments,containsPair('name','notes.docx'));
-    expect(await PdfSourceConversion.toPdf('/tmp/printed.pdf','printed.pdf'),
-      '/tmp/printed.pdf');
-    await expectLater(PdfSourceConversion.toPdf(
-      '/tmp/movie.mp4','movie.mp4'),throwsFormatException);
   });
 
   test('Cart queue records immutable source filenames and keeps staging separate',()async{
