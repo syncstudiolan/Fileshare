@@ -55,6 +55,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   final List<Offset> _stroke=[];
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
+  Color? _pendingBackgroundColor;
   Color _custom=const Color(0xFF7D5BE3);
 
   static const _tools=['Background','Compress','Crop','Filters','Erase','Adjust'];
@@ -146,7 +147,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _name=name??'image.png';
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
         _undo.clear();_redo.clear();_steps.clear();
-        _pendingFilter=null;_selectedFilter=null;
+        _pendingFilter=null;_selectedFilter=null;_pendingBackgroundColor=null;
         _crop=const Rect.fromLTWH(.06,.06,.88,.88);
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
@@ -316,6 +317,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       await _removeBackground();
       if(_cutoutBytes==null)return;
     }
+    if(picture==null){
+      // Changing a swatch is just GPU compositing; no large-image encode.
+      setState((){
+        _pendingBackgroundColor=selected;
+        _background=selected;
+        _format='PNG';
+      });
+      return;
+    }
     final previous=_bytes!;
     setState(()=>_busy=true);
     try{
@@ -334,6 +344,22 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _message('Could not replace this background. Try a different image.');
     }finally{if(mounted)setState(()=>_busy=false);}
   }
+  Future<void> _finalizeBackgroundPreview()async{
+    final selected=_pendingBackgroundColor,cutout=_cutoutBytes;
+    if(selected==null||cutout==null||_busy||_bytes==null)return;
+    final previous=_bytes!;
+    setState(()=>_busy=true);
+    try{
+      final next=selected==Colors.transparent?cutout:
+        await ImageEditingEngine.edit(cutout,'flatten',{
+          'color':selected.toARGB32(),
+        });
+      await _commit(previous,next,'Background replacement');
+      if(mounted)setState(()=>_pendingBackgroundColor=null);
+    }catch(_){_message('Could not apply this background.');}
+    finally{if(mounted)setState(()=>_busy=false);}
+  }
+
   Future<void> _pickBackground()async{
     try{
       final picked=await FilePicker.pickFiles(type:FileType.image);
@@ -364,6 +390,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
 
   Future<void> _export(String action)async {
     if(_pendingFilter!=null)await _finalizeFilter();
+    if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
     final data=_bytes;
     if(data==null||_busy)return;
     try{
@@ -776,7 +803,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         DecoratedBox(decoration:BoxDecoration(
           border:Border.all(color:FileTheme.violet.withValues(alpha:.18))),
           child:CustomPaint(painter:_CheckerPainter())),
-        _liveAdjustment(_fastFilterPreview(Image.memory(_bytes!,fit:BoxFit.fill,
+        if(_pendingBackgroundColor!=null && _pendingBackgroundColor!=Colors.transparent)
+          ColoredBox(color:_pendingBackgroundColor!),
+        _liveAdjustment(_fastFilterPreview(Image.memory(
+          _pendingBackgroundColor!=null && _cutoutBytes!=null?_cutoutBytes!:_bytes!,fit:BoxFit.fill,
           cacheWidth:(width*MediaQuery.devicePixelRatioOf(context)).round().clamp(1,1920),
           gaplessPlayback:true,filterQuality:FilterQuality.medium))),
         if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
@@ -839,6 +869,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   };
   void _selectTool(String tool){
     if(_busy)return;
+    if(_tool=='Background'&&tool!='Background'&&_pendingBackgroundColor!=null){
+      unawaited(_finalizeBackgroundPreview().then((_){
+        if(mounted)setState(()=>_tool=tool);
+      }));
+      return;
+    }
     if(_tool=='Filters'&&tool!='Filters'&&_pendingFilter!=null){
       unawaited(_finalizeFilter().then((_){
         if(mounted)setState(()=>_tool=tool);
@@ -991,6 +1027,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     if(_busy || _bytes==null)return;
     if(_tool=='Filters'){
       await _finalizeFilter();
+    }else if(_tool=='Background'&&_pendingBackgroundColor!=null){
+      await _finalizeBackgroundPreview();
     }else if(_tool=='Crop'){
       _commitCrop();
     }else if(_tool=='Adjust'){
