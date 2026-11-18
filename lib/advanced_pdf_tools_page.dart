@@ -405,6 +405,12 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       'compressionQuality':compressionQuality,'compressionMode':compressMode,
       'splitMode':splitMode,'sizeTarget':sizeTarget,
       'watermarkOpacity':watermarkOpacity,
+      'watermarkScale':watermarkScale,
+      'nupLines':nupLines,'reverseAlternating':reverseAlternating,
+      'signaturePath':signaturePath,'author':author.text,
+      'subject':subject.text,'keywords':keywords.text,
+      'numberFormat':numberFormat,'numberPosition':numberPosition,
+      'splitHalfMode':splitHalfMode,'axis':axis,
     });
   }
   Future<void> _restoreSession()async{
@@ -446,6 +452,17 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       splitMode=state['splitMode'] as String? ??splitMode;
       sizeTarget=state['sizeTarget'] as String? ??sizeTarget;
       watermarkOpacity=value(state['watermarkOpacity'],watermarkOpacity);
+      watermarkScale=value(state['watermarkScale'],watermarkScale);
+      nupLines=state['nupLines'] as bool? ??nupLines;
+      reverseAlternating=state['reverseAlternating'] as bool? ??reverseAlternating;
+      signaturePath=state['signaturePath'] as String? ??signaturePath;
+      author.text=state['author'] as String? ??author.text;
+      subject.text=state['subject'] as String? ??subject.text;
+      keywords.text=state['keywords'] as String? ??keywords.text;
+      numberFormat=state['numberFormat'] as String? ??numberFormat;
+      numberPosition=state['numberPosition'] as String? ??numberPosition;
+      splitHalfMode=state['splitHalfMode'] as String? ??splitHalfMode;
+      axis=state['axis'] as String? ??axis;
     });
   }
   @override void dispose(){
@@ -595,7 +612,14 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       ?await Navigator.of(context).push<String>(
           MaterialPageRoute(builder:(_)=>const PdfSignaturePad()))
       :(await ImagePicker().pickImage(source:ImageSource.gallery))?.path;
-    if(path!=null&&mounted)setState(()=>signaturePath=path);
+    if(path!=null&&mounted){
+      final root=await getApplicationSupportDirectory();
+      final folder=Directory('${root.path}${Platform.pathSeparator}pdf_signature_drafts');
+      await folder.create(recursive:true);
+      final copy=await File(path).copy('${folder.path}${Platform.pathSeparator}'
+        'signature_${DateTime.now().microsecondsSinceEpoch}.png');
+      if(mounted)setState(()=>signaturePath=copy.path);
+    }
   }
   Future<void> addWorkflowStep()async{
     const excluded={'scan','workflow','password','unlock','zip',
