@@ -144,7 +144,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     setState(()=>_busy=true);
     try{
       final result=await SignatureEditEngine.preview(
-        _original!,_crop,filter);
+        _original!,SignatureCrop.full,filter);
       if(mounted)setState((){
         _filter=filter;
         _preview=result;
@@ -255,7 +255,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           decoration:const InputDecoration(
             labelText:'Target size in KB',hintText:'20',
             suffixText:'KB',border:OutlineInputBorder()),
-          onChanged:(value)=>_target=int.tryParse(value)??20),
+          onChanged:(value)=>setState(()=>_target=int.tryParse(value)??20)),
         const SizedBox(height:10),
         Wrap(spacing:8,runSpacing:8,children:[
           for(final kb in [10,20,30,50,100,200])
