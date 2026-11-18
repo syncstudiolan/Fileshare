@@ -1379,6 +1379,121 @@ class SelectedFileToolsPage extends StatelessWidget {
     sourcePath:file.path,sourceName:file.name);
 }
 
+
+/* Compact, direction-aware transfer bubble used by LAN and Guest QR.
+   Draw the side tail with the card itself so it scales on both platforms. */
+class TransferBubble extends StatelessWidget {
+  const TransferBubble({super.key, required this.incoming,
+    required this.child});
+  final bool incoming;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    // Unlike the old full-width cards, opposing sides stay visibly separated.
+    final maxWidth = width >= 760 ? 610.0 : width * .88;
+    final dark = FileTheme.dark(context);
+    final fill = dark
+      ? (incoming ? const Color(0xFF4B294B) : const Color(0xFF3C315E))
+      : (incoming ? const Color(0xFFFFDDED) : const Color(0xFFF0E7FF));
+    final accent = incoming ? FileTheme.pink : FileTheme.violet;
+    return Align(
+      alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          child: CustomPaint(
+            painter: _TransferBubblePainter(incoming, fill, accent),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                incoming ? 16 : 10, 11, incoming ? 10 : 16, 11),
+              child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TransferBubblePainter extends CustomPainter {
+  const _TransferBubblePainter(this.incoming, this.fill, this.accent);
+  final bool incoming;
+  final Color fill, accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final left = incoming ? 10.0 : 0.0;
+    final right = incoming ? size.width : size.width - 10.0;
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTRB(left, 0, right, size.height),
+      const Radius.circular(23));
+    final path = Path()..addRRect(rect);
+    final mid = size.height > 100 ? 45.0 : size.height * .34;
+    if (incoming) {
+      path.moveTo(left + 1, mid - 12);
+      path.lineTo(0, mid);
+      path.lineTo(left + 1, mid + 12);
+    } else {
+      path.moveTo(right - 1, mid - 12);
+      path.lineTo(size.width, mid);
+      path.lineTo(right - 1, mid + 12);
+    }
+    path.close();
+    canvas.drawShadow(path, accent.withValues(alpha: .25), 9, false);
+    canvas.drawPath(path, Paint()..color = fill);
+    canvas.drawPath(path, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = accent.withValues(alpha: .65));
+  }
+
+  @override
+  bool shouldRepaint(covariant _TransferBubblePainter old) =>
+    old.incoming != incoming || old.fill != fill || old.accent != accent;
+}
+
+class TransferCardActions extends StatelessWidget {
+  const TransferCardActions({super.key, required this.actions});
+  final List<Widget> actions;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    alignment: WrapAlignment.end,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 1,
+    runSpacing: 0,
+    children: [
+      for (var i = 0; i < actions.length; i++) ...[
+        if (i > 0) SizedBox(height: 19, child: VerticalDivider(
+          width: 7, thickness: 1,
+          color: FileTheme.pink.withValues(alpha: .38))),
+        actions[i],
+      ],
+    ],
+  );
+}
+
+class TransferCardTime extends StatelessWidget {
+  const TransferCardTime({super.key, required this.created,
+    required this.status});
+  final DateTime created;
+  final Widget status;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+    decoration: BoxDecoration(
+      color: FileTheme.violet.withValues(alpha: .15),
+      borderRadius: BorderRadius.circular(18)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(created.toLocal().toString().substring(11, 16),
+        style: TextStyle(fontSize: 10, color: FileTheme.muted(context))),
+      const SizedBox(width: 4),
+      status,
+    ]),
+  );
+}
+
 class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
     super.key, required this.items, required this.onSave,
@@ -1389,7 +1504,6 @@ class LiveTransferCard extends StatelessWidget {
   final Future<void> Function(LanFile) onDelete;
   final Future<void> Function(LanFile) onShare;
   final Future<void> Function(LanFile) onTools;
-
   bool get incoming => items.first.incoming;
 
   static bool _photo(String name) {
@@ -1400,20 +1514,24 @@ class LiveTransferCard extends StatelessWidget {
 
   Widget _visual(LanFile file) {
     if (_photo(file.name) && File(file.path).existsSync()) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(11),
+      return ClipRRect(borderRadius: BorderRadius.circular(12),
         child: Image.file(File(file.path), fit: BoxFit.cover,
-          width: double.infinity, height: double.infinity,
-          cacheWidth: 340, filterQuality: FilterQuality.low,
+          cacheWidth: 280,
           errorBuilder: (_, __, ___) => const Icon(
             Icons.image_not_supported_outlined,
-            color: FileTheme.pink, size: 30)));
+            color: FileTheme.pink, size: 34)));
     }
-    final name = file.name.toLowerCase();
-    return Icon(name.endsWith('.mp4') || name.endsWith('.mov')
-      ? Icons.play_circle_outline_rounded
-      : (name.endsWith('.pdf') ? Icons.picture_as_pdf_outlined
-        : Icons.insert_drive_file_outlined), color: FileTheme.pink, size: 35);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: FileTheme.pink.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(12)),
+      child: Center(child: Icon(
+        file.name.toLowerCase().endsWith('.pdf')
+          ? Icons.picture_as_pdf_outlined
+          : (file.name.toLowerCase().endsWith('.mp4')
+             ? Icons.play_circle_outline_rounded
+             : Icons.insert_drive_file_outlined),
+        color: FileTheme.pink, size: 42)));
   }
 
   void _preview(BuildContext context, LanFile file) {
@@ -1436,16 +1554,15 @@ class LiveTransferCard extends StatelessWidget {
       IconButton(
         tooltip: title, onPressed: onTap,
         iconSize: 19,
-        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         icon: Icon(icon, color: onTap == null
-          ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink),
-      );
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      if (file.incoming)
-        action('Download', Icons.download_rounded,
-          canUse ? () => onSave(file) : null),
+          ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink));
+    return TransferCardActions(actions: [
+      // Sender already has the original; no Download action on sent cards.
+      if (file.incoming) action('Download', Icons.download_rounded,
+        canUse ? () => onSave(file) : null),
       action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
       action('Share', Icons.ios_share_rounded,
         canUse ? () => onShare(file) : null),
@@ -1454,134 +1571,102 @@ class LiveTransferCard extends StatelessWidget {
     ]);
   }
 
+  Widget _status(LanFile file) {
+    final delivered = file.state == TransferState.delivered;
+    return Icon(
+      delivered ? Icons.done_all_rounded
+        : file.state == TransferState.queued ? Icons.schedule_rounded
+        : file.state == TransferState.failed ? Icons.error_outline_rounded
+        : Icons.done_rounded,
+      size: 15,
+      color: delivered ? FileTheme.pink : FileTheme.violet);
+  }
+
   Widget _file(BuildContext context, LanFile file) {
     final active = file.state == TransferState.sending ||
       file.state == TransferState.receiving ||
       file.state == TransferState.preparing;
-    final status = switch (file.state) {
-      TransferState.delivered => file.incoming ? 'Received' : 'Delivered',
-      TransferState.queued => 'Pending',
-      TransferState.sending => 'Sending',
-      TransferState.receiving => 'Receiving',
-      TransferState.preparing => 'Preparing',
-      TransferState.failed => 'Failed',
-    };
-    return LayoutBuilder(builder: (context, constraints) {
-      // Keep the thumbnail prominent without making the whole message tall.
-      final side = constraints.maxWidth >= 530 ? 124.0 :
-        constraints.maxWidth >= 330 ? 108.0 : 88.0;
-      return Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           InkWell(
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(12),
             onTap: () => _preview(context, file),
             child: SizedBox(width: side, height: side, child: _visual(file))),
-          const SizedBox(width: 12),
-          Expanded(child: SizedBox(height: side + (active || file.state == TransferState.failed ? 26 : 0), child: Column(
+          const SizedBox(width: 10),
+          Expanded(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              InkWell(onTap:()=>_preview(context,file),
-                child:Text(file.name, maxLines: 2,
+              InkWell(onTap: () => _preview(context,file),
+                child: Text(file.name, maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
                     color: FileTheme.foreground(context)))),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               Text(_formatBytes(file.size),
                 style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-              if (active || file.state == TransferState.failed) ...[
-                const SizedBox(height: 5),
-                Text(status, style: TextStyle(
-                  color: file.state == TransferState.failed
-                    ? Theme.of(context).colorScheme.error : FileTheme.violet,
-                  fontWeight: FontWeight.w700, fontSize: 11)),
-                if (active) Padding(padding: const EdgeInsets.only(top: 5),
-                  child: LinearProgressIndicator(value: file.progress,
-                    minHeight: 3, borderRadius: BorderRadius.circular(5))),
+              if(active || file.state == TransferState.failed) ...[
+                const SizedBox(height: 3),
+                Text(file.state.name, style: const TextStyle(
+                  fontSize: 10, color: FileTheme.pink)),
+                if (active) LinearProgressIndicator(
+                  value: file.progress, minHeight: 2),
               ],
-              const Spacer(),
+              const SizedBox(height: 7),
+              // On narrow devices the actions wrap instead of causing overflow.
               Align(alignment: Alignment.centerRight,
                 child: _buttons(context, file)),
+              const SizedBox(height: 3),
+              Align(alignment: Alignment.centerRight,
+                child: TransferCardTime(created: file.created,
+                  status: _status(file))),
             ],
-          ))),
-        ]),
-      );
-    });
+          )),
+        ]);
+      }),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final first = items.first;
     final multiple = items.length > 1;
-    final wide = MediaQuery.sizeOf(context).width > 750;
-    final bodyWidth = wide ? 690.0 : MediaQuery.sizeOf(context).width * .95;
     final peer = first.peer.trim().isEmpty
       ? 'Unknown device' : first.peer.trim();
-    // One source label, one file name, one delivery indicator.
     final origin = (incoming ? 'From ' : 'To ') + peer + ' · Offline LAN';
     final delivered = items.every((f) => f.state == TransferState.delivered);
-    final queued = items.every((f) => f.state == TransferState.queued);
-    return Align(
-      alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: bodyWidth),
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        decoration: BoxDecoration(
-          color: FileTheme.dark(context)
-            ? (incoming ? const Color(0xFF482945) : const Color(0xFF382B57))
-            : (incoming ? const Color(0xFFFFDCED) : const Color(0xFFF0E7FF)),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(17),
-            topRight: const Radius.circular(17),
-            bottomLeft: Radius.circular(incoming ? 5 : 17),
-            bottomRight: Radius.circular(incoming ? 17 : 5)),
-          border: Border.all(color: FileTheme.violet.withValues(alpha: .15)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
-          Row(children: [
-            Expanded(child: Text(origin,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: FileTheme.foreground(context),
-                fontWeight: FontWeight.w700, fontSize: 12))),
-            if (multiple) Text('${items.length} files',
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          ]),
-          for (final file in items.take(4)) _file(context, file),
-          if (items.length > 4)
-            Padding(padding: const EdgeInsets.only(top: 5),
-              child: Text('+${items.length - 4} more files',
-                style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
-          if (incoming && multiple)
-            Align(alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: delivered
-                  ? () async { for (final f in items) { await onSave(f); } }
-                  : null,
-                icon: const Icon(Icons.download_for_offline_outlined, size: 17),
-                label: const Text('Download All'))),
-          const SizedBox(height: 4),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            if (!queued && first.state == TransferState.failed)
-              Text('Failed  ', style: TextStyle(fontSize: 10,
-                color: Theme.of(context).colorScheme.error)),
-            Text(first.created.toLocal().toString().substring(11, 16),
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
-            const SizedBox(width: 4),
-            if (!incoming) Icon(
-              delivered ? Icons.done_all_rounded
-                : queued ? Icons.schedule_rounded
-                : first.state == TransferState.failed
-                  ? Icons.error_outline_rounded : Icons.done_rounded,
-              // Double tick only after the receiver's durable ACK.
-              size: 17, color: delivered ? FileTheme.violet
-                : FileTheme.muted(context)),
-            if (incoming && delivered)
-              const Icon(Icons.done_all_rounded, size: 16,
-                color: FileTheme.violet),
-          ]),
+    return TransferBubble(
+      incoming: incoming,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          CircleAvatar(radius: 15,
+            backgroundColor: FileTheme.violet.withValues(alpha: .22),
+            child: Icon(incoming ? Icons.download_rounded : Icons.upload_rounded,
+              size: 19, color: FileTheme.pink)),
+          const SizedBox(width: 8),
+          Expanded(child: Text(origin,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: FileTheme.foreground(context),
+              fontWeight: FontWeight.w700, fontSize: 12))),
+          if(multiple) Text('${items.length} files',
+            style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
         ]),
-      ),
+        for (final file in items.take(4)) _file(context, file),
+        if (items.length > 4)
+          Padding(padding: const EdgeInsets.only(top: 5),
+            child: Text('+${items.length - 4} more files',
+              style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
+        if (incoming && multiple)
+          Align(alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: delivered
+                ? () async { for (final f in items) { await onSave(f); } }
+                : null,
+              icon: const Icon(Icons.download_for_offline_outlined, size: 17),
+              label: const Text('Download All'))),
+      ]),
     );
   }
 }
@@ -1664,97 +1749,88 @@ class CloudInboxCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final first=items.first;
-    final grouped=items.length>1;
+    final grouped = items.length > 1;
     Widget action(String name, IconData icon, VoidCallback onPressed) =>
       IconButton(
-        tooltip: name, onPressed: onPressed, iconSize: 21,
+        tooltip: name, onPressed: onPressed, iconSize: 19,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: FileTheme.pink));
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width>700
-          ? 650 : MediaQuery.sizeOf(context).width*.95),
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
-        decoration: BoxDecoration(
-          color: FileTheme.dark(context)
-            ? const Color(0xFF482945) : const Color(0xFFFFDDED),
-          border: Border.all(color: FileTheme.pink.withValues(alpha: .17)),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(17), topRight: Radius.circular(17),
-            bottomLeft: Radius.circular(5), bottomRight: Radius.circular(17))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
-          Row(children: [
-            Expanded(child: Text('From Guest browser · Guest QR · Online',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: FileTheme.foreground(context),
-                fontWeight: FontWeight.w700, fontSize: 12))),
-            if(grouped) Text('${items.length} files',
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          ]),
-          for (final file in items.take(5))
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
-                SizedBox(width: 88, height: 88,
-                  child: CloudImageThumbnail(
-                    key: ValueKey('qr-thumb-'+file.id),
-                    file: file, onOpen: () => onPreview(file))),
-                const SizedBox(width: 11),
-                Expanded(child: SizedBox(height: 88, child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    InkWell(onTap: () => onPreview(file),
-                      child: Text(file.name, maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: FileTheme.foreground(context),
-                          fontWeight: FontWeight.w700, fontSize: 13))),
-                    const SizedBox(height: 4),
-                    Text(_formatBytes(file.size),
-                      style: TextStyle(color: FileTheme.muted(context),
-                        fontSize: 11)),
-                    const Spacer(),
-                    Align(alignment: Alignment.centerRight,
-                      child: Row(mainAxisSize: MainAxisSize.min,children: [
-                        action('Download received QR file', Icons.download_rounded,
-                          () => onSave(file)),
-                        action('Delete QR file', Icons.delete_outline_rounded,
-                          () => onDelete(file)),
-                        action('Share QR file externally', Icons.ios_share_rounded,
-                          () => onShare(file)),
-                        action('Open in Tools', Icons.auto_fix_high_rounded,
-                          () => onTools(file)),
-                      ])),
-                  ],
-                ))),
-              ]),
-            ),
-          if (items.length > 5) Padding(
-            padding: const EdgeInsets.only(top: 5),
+    return TransferBubble(
+      incoming: true,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          CircleAvatar(radius: 15,
+            backgroundColor: FileTheme.pink.withValues(alpha: .22),
+            child: const Icon(Icons.download_rounded,
+              size: 19, color: FileTheme.pink)),
+          const SizedBox(width: 8),
+          Expanded(child: Text('From Guest browser · Guest QR · Online',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: FileTheme.foreground(context),
+              fontWeight: FontWeight.w700, fontSize: 12))),
+          if (grouped) Text('${items.length} files',
+            style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
+        ]),
+        for (final file in items.take(5))
+          Padding(padding: const EdgeInsets.only(top: 8),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
+              return Row(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: side, height: side,
+                    child: CloudImageThumbnail(
+                      key: ValueKey('qr-thumb-'+file.id),
+                      file: file, onOpen: () => onPreview(file))),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkWell(onTap: () => onPreview(file),
+                        child: Text(file.name, maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: FileTheme.foreground(context),
+                            fontWeight: FontWeight.w700, fontSize: 13))),
+                      const SizedBox(height: 3),
+                      Text(_formatBytes(file.size),
+                        style: TextStyle(color: FileTheme.muted(context),
+                          fontSize: 11)),
+                      const SizedBox(height: 7),
+                      Align(alignment: Alignment.centerRight,
+                        child: TransferCardActions(actions: [
+                          action('Download received QR file', Icons.download_rounded,
+                            () => onSave(file)),
+                          action('Delete QR file', Icons.delete_outline_rounded,
+                            () => onDelete(file)),
+                          action('Share QR file externally', Icons.ios_share_rounded,
+                            () => onShare(file)),
+                          action('Open in Tools', Icons.auto_fix_high_rounded,
+                            () => onTools(file)),
+                        ])),
+                      const SizedBox(height: 3),
+                      Align(alignment: Alignment.centerRight,
+                        child: TransferCardTime(created: file.created,
+                          status: const Icon(Icons.done_all_rounded,
+                            size: 15, color: FileTheme.pink))),
+                    ],
+                  )),
+                ]);
+            })),
+        if (items.length > 5)
+          Padding(padding: const EdgeInsets.only(top: 5),
             child: Text('+${items.length - 5} more files',
               style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
-          if (grouped) Align(alignment: Alignment.centerRight,
+        if (grouped)
+          Align(alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: () async {
                 for (final file in items) { await onSave(file); }
               },
               icon: const Icon(Icons.download_for_offline_outlined, size: 17),
               label: const Text('Download All'))),
-          const SizedBox(height: 5),
-          Row(mainAxisAlignment: MainAxisAlignment.end,children: [
-            Text(first.created.toLocal().toString().substring(11,16),
-              style: TextStyle(color: FileTheme.muted(context),fontSize: 10)),
-            const SizedBox(width: 4),
-            const Icon(Icons.done_all_rounded,
-              size: 16, color: FileTheme.pink),
-          ]),
-        ]),
-      ),
+      ]),
     );
   }
 }
