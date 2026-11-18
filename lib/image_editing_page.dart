@@ -129,9 +129,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       _steps.addAll(widget.draft?.steps??[]);
       _ratio=dimensions[0]/dimensions[1];
+      Uint8List original=bytes;
+      final savedOriginal=widget.draft?.originalFilePath;
+      if(savedOriginal!=null&&await File(savedOriginal).exists()){
+        original=await File(savedOriginal).readAsBytes();
+      }
       if(mounted)setState((){
         _bytes=Uint8List.fromList(bytes);
-        _originalBytes=Uint8List.fromList(bytes);
+        _originalBytes=Uint8List.fromList(original);
         _cutoutBytes=null;
       });
       unawaited(_cacheEraseImage(bytes));
@@ -284,7 +289,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     final bytes=_bytes,id=_draftId;
     if(bytes==null||id==null)return;
     await ImageEditingHistory.instance.save(id:id,name:_name,
-      bytes:bytes,steps:_steps);
+      bytes:bytes,steps:_steps,originalBytes:_originalBytes);
   }
 
   Future<void> _apply(String action, Map<String,Object?> options,
@@ -309,7 +314,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       // because the Editor route was closed.
       final id=_draftId;
       if(id!=null)await ImageEditingHistory.instance.save(
-        id:id,name:_name,bytes:next,steps:[..._steps,step]);
+        id:id,name:_name,bytes:next,steps:[..._steps,step],
+        originalBytes:_originalBytes);
       return;
     }
     _undo.add(previous);
@@ -1791,7 +1797,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     unawaited(ImageEditingHistory.instance.load());
   }
   Future<void> _cart(ImageEditingDraft draft)async{
-    final original=File(draft.filePath);
+    final original=File(draft.originalFilePath??draft.filePath);
     final root=await getApplicationSupportDirectory();
     final cart=Directory('${root.path}${Platform.pathSeparator}image_editing_cart');
     await cart.create(recursive:true);
@@ -1810,7 +1816,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
             ImageEditingPage(draft:entry)));
         case 'share':
           await SharePlus.instance.share(ShareParams(
-            files:[XFile(entry.filePath)]));
+            files:[XFile(entry.originalFilePath??entry.filePath)]));
         case 'cart':
           await _cart(entry);
         case 'download':
