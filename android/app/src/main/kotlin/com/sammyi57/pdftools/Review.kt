@@ -111,7 +111,9 @@ fun Review(
   val index = pager.currentPage.coerceIn(0, max(0, pages.size - 1))
   val current = pages.getOrNull(index) ?: return
   var selected by remember { mutableStateOf<List<String>>(emptyList()) }
-  var sheet by remember { mutableStateOf("") } // filters | adjust | resize
+  var sheet by remember { mutableStateOf("") } // filters | adjust | resize | compress
+  var compressionText by remember(doc.id) { mutableStateOf((doc.compressionTargetKb ?: 500).toString()) }
+  var compressionError by remember { mutableStateOf("") }
   var modal by remember { mutableStateOf("") } // crop | cleanup | markup | reorder | delete | rename | reset
   var saving by remember { mutableStateOf(false) }
   var filterAll by remember { mutableStateOf(false) } // Filters: every pick goes to all pages
@@ -221,6 +223,47 @@ fun Review(
           "adjust" -> AdjustSheet(current.shots[0], { b, k -> editShots(targets) { s, _ -> s.copy(brightness = b, contrast = k) } }) {
             editShots(pages.map { it.id }) { s, _ -> s.copy(brightness = current.shots[0].brightness, contrast = current.shots[0].contrast) }
           }
+          "compress" -> Column(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            T("Compress this scanned PDF", Type.bold, ScanUi.text)
+            T("Choose an approximate target size. Original photos, crops and filters stay in editable History. A very small target can reduce photo detail.", Type.small, ScanUi.dim)
+            Row(Modifier.horizontalScroll(rememberScrollState()),
+              horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(200, 500, 1024, 3072).forEach { kb ->
+                DarkChip(if (kb < 1024) "${kb} KB" else "${kb / 1024} MB",
+                  compressionText == kb.toString()) {
+                  compressionText = kb.toString()
+                  compressionError = ""
+                }
+              }
+            }
+            T("Custom target in KB", Type.small, ScanUi.text)
+            Field(compressionText, {
+              compressionText = it.filter(Char::isDigit).take(7)
+              compressionError = ""
+            }, placeholder = "200, 500, 3072", keyboard = androidx.compose.ui.text.input.KeyboardType.Number)
+            if (compressionError.isNotEmpty()) T(compressionError, Type.small, ScanUi.accent)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Btn("No compression", Modifier.weight(1f), I.close,
+                BtnKind.Secondary, height = 46.dp) {
+                setDoc { it.copy(compressionTargetKb = null) }
+                compressionText = ""
+                sheet = ""
+              }
+              Btn("Apply target", Modifier.weight(1f), I.filePdfBox, height = 46.dp) {
+                val target = compressionText.toIntOrNull()
+                if (target == null || target !in 50..200000) {
+                  compressionError = "Enter a size from 50 to 200,000 KB"
+                } else {
+                  setDoc { it.copy(compressionTargetKb = target) }
+                  sheet = ""
+                }
+              }
+            }
+            T("Tap Save PDF or Add to Cart to export using this target. Exact output size cannot be guaranteed.", Type.small, ScanUi.dim)
+          }
           "resize" -> Column {
             SheetHead("Page size") { ApplyAll(current.size) { editPages(pages.map { it.id }) { it.copy(size = current.size) } } }
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -239,6 +282,7 @@ fun Review(
       Triple(I.rotateRight, "Rotate", false) to { editShots(targets) { s, _ -> s.copy(rotation = (s.rotation + 90) % 360, strokes = emptyList()) } },
       Triple(I.imageFilterBlackWhite, "Filters", false) to { sheet = if (sheet == "filters") "" else "filters" },
       Triple(I.tuneVariant, "Adjust", false) to { sheet = if (sheet == "adjust") "" else "adjust" },
+      Triple(I.filePdfBox, "Compress", false) to { sheet = if (sheet == "compress") "" else "compress" },
       Triple(I.eraser, "Cleanup", selecting) to { modal = "cleanup" },
       Triple(I.draw, "Markup", selecting) to { modal = "markup" },
       Triple(I.resize, "Resize", false) to { sheet = if (sheet == "resize") "" else "resize" },
