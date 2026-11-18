@@ -1,5 +1,7 @@
 package com.sammyi57.pdftools
 
+import com.example.file_share.R
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
