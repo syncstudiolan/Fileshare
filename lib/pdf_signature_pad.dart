@@ -57,8 +57,7 @@ class _PdfSignaturePadState extends State<PdfSignaturePad>{
               behavior:HitTestBehavior.opaque,
               onPanStart:begin,onPanUpdate:move,
               child:CustomPaint(painter:_SignaturePainter(strokes,ink,width),
-                child:Container(decoration:BoxDecoration(
-                  border:Border.all(color:Colors.deepPurple,width:1))))))))))),
+                child:const SizedBox.expand()))))))))),
       Row(children:[
         const SizedBox(width:14),const Text('Pen width'),
         Expanded(child:Slider(value:width,min:1,max:8,
