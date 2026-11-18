@@ -58,3 +58,59 @@ offline/online transfer, login and history APIs are preserved.
 ## Validation-only PR check
 The existing `preview_validation` workflow runs Flutter analyzer and widget tests
 for PRs. It does **not** assemble or upload an APK, Windows EXE, or release.
+
+## Cross-tool continuation & Cart — November 18 update
+
+### Shared contracts
+- `lib/editor_transfer_session.dart` introduces `EditingFileRouter` for
+  deterministic file typing and `EditorSessionStore` for local, resumable
+  editing state. This is the intended integration contract for future tools.
+- Every staged File Share attachment is an **independent, immutable copy**:
+  sending to Cart never deletes or replaces the editable history source.
+- After successful staging, editor navigation returns to the existing unified
+  File Share dashboard/cart. No second Cart screen or cloud upload is created.
+- The session JSON is persisted in application-support storage, with a backup
+  during replacement and a local recovery read. Draft deletion clears its
+  session data.
+- Image editing history continues to own the actual edited photo bytes; PDF
+  editing history continues to own the actual PDF bytes.
+
+### Resume workflows
+- Image Editor: pending eraser strokes finish in the ordered worker queue;
+  selected filters, straighten, adjustments, crop and background swatch are
+  finalized before the queued snapshot when processing permits. The editor's
+  selected tool, crop handles/mode, brush settings, fine rotation, compression
+  preferences and other controls are serialized for reopening its history.
+- PDF Editor: before Add to Cart, persist current page, selected tool, crop
+  ranges, pending redactions and signature placements, workflow steps and
+  other editing options. A temporary PDF incorporating pending crop/signature/
+  redaction edits is staged, leaving the original history PDF unchanged. The
+  open-PDF prompt retains Current Page, Choose Page or Entire PDF.
+- Scanner: raw captured photos are copied to persistent application-support
+  storage; partial scan pages, crop rectangles/corners, filters and ordering
+  can be reopened. Add to Cart exports the current partial multipage PDF to
+  PDF history and stages a separate copy; it retains the scanner session.
+  Finishing the PDF explicitly clears the active scanner session.
+
+### Dashboard → Toolbox routing
+- LAN and Guest QR selected files already arrive at
+  `FileShareToolboxPage(sourcePath,sourceName)`, through the same dashboard
+  route. The selected file is preserved when launching an available editor.
+- Image Editing accepts image files only; incompatible videos/Office/PDF show
+  an explanation rather than opening an empty editor.
+- Advanced PDF Editing Tools accepts PDF and images. Image input first uses
+  the existing local `pdf.fromImages` pipeline and opens the result in the
+  PDF Workspace.
+- DOC/DOCX/XLS/XLSX and ODT/ODS use a new Android-only offline converter,
+  then open an editable PDF, leaving their original Office file intact.
+  The lightweight converter preserves readable text, spreadsheet cell values
+  and page breaks, but **does not promise pixel-perfect Microsoft Office
+  layout fidelity** for charts, macros, embedded media and advanced formatting.
+- Videos and unknown binary types cannot enter the PDF editor.
+- Windows/macOS still show the Android-only notice for native PDF tools.
+
+### Validation boundaries
+A successful Flutter analyzer, widget test and Kotlin compile establish source
+compatibility only; they do not verify file conversion fidelity, installation,
+native CameraX/Google ML Kit runtime, background transfers or device FPS.
+The draft is not ready for release or merge until Android device QA.
