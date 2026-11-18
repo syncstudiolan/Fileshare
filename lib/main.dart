@@ -1250,6 +1250,51 @@ class PendingBatch {
 final LanEngine appLan = LanEngine();
 
 
+/// Central tap policy for every LAN/QR/Cart/History card.
+/// Pictures are only previewed; PDF opens File Share's own Android editor.
+class FileCardOpenRouter {
+  static bool isPdf(String name) => name.toLowerCase().endsWith('.pdf');
+  static bool isDocx(String name) => name.toLowerCase().endsWith('.docx');
+  static bool isImage(String name) {
+    final lower=name.toLowerCase();
+    return ['.jpg','.jpeg','.png','.webp','.gif','.bmp','.heic']
+      .any(lower.endsWith);
+  }
+
+  static Future<bool> openEditor(
+    BuildContext context,String path,String name) async {
+    if (!isPdf(name) && !isDocx(name))return false;
+    if (!Platform.isAndroid) {
+      if (isPdf(name)) {
+        await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
+          title:const Text('PDF editing on Android'),
+          content:const Text('These tools are only available on Android/mobile.'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(dialog),
+            child:const Text('OK'))]));
+        return true;
+      }
+      return false;
+    }
+    try{
+      var pdfPath=path;
+      if(isDocx(name)){
+        pdfPath=await const MethodChannel('file_share.native')
+          .invokeMethod<String>('convertDocxToPdf',{'path':path})??'';
+        if(pdfPath.isEmpty)throw StateError('DOCX conversion returned no PDF');
+      }
+      await const MethodChannel('file_share.native').invokeMethod<void>(
+        'openUpstreamPdfTools',{
+          'path':pdfPath,
+          'theme':Theme.of(context).brightness==Brightness.dark?'dark':'light',
+        });
+    }catch(e){
+      if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Cannot open this document in PDF Tools: $e')));
+    }
+    return true;
+  }
+}
+
 /// Real file preview. Uses a zoomable full-screen image and the same actions
 /// as the file card; no duplicate upload is initiated from here.
 class FullScreenFilePreview extends StatelessWidget {
@@ -1376,9 +1421,13 @@ class LiveTransferCard extends StatelessWidget {
   void _preview(BuildContext context, LanFile file) {
     if (!File(file.path).existsSync() ||
         (file.incoming && file.state != TransferState.delivered)) return;
-    Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>
-      FullScreenFilePreview(file:file,onSave:onSave,
-        onDelete:onDelete,onShare:onShare,onTools:onTools)));
+    unawaited(FileCardOpenRouter.openEditor(
+      context,file.path,file.name).then((handled){
+      if(handled||!context.mounted)return;
+      Navigator.push(context,MaterialPageRoute<void>(builder:(_) =>
+        FullScreenFilePreview(file:file,onSave:onSave,
+          onDelete:onDelete,onShare:onShare,onTools:onTools)));
+    }));
   }
 
   Widget _buttons(BuildContext context, LanFile file) {
@@ -2185,6 +2234,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final local=await PersonalCloud.instance.download(entry);
       if(!mounted)return;
       final selected=_cloudAsLocalFile(entry,local);
+      if(await FileCardOpenRouter.openEditor(
+        context,local.path,entry.name))return;
+      if(!mounted)return;
       await Navigator.of(context).push(MaterialPageRoute<void>(
         builder:(_)=>FullScreenFilePreview(
           file:selected,
@@ -2269,6 +2321,21 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       errorBuilder:(_,__,___)=>const Icon(Icons.image_outlined)))
                 :const Icon(Icons.insert_drive_file_outlined,color:FileTheme.pink)),
               title:Text(batch.labels[i],maxLines:1,overflow:TextOverflow.ellipsis),
+              onTap:()async{
+                final name=batch.labels[i];
+                final path=batch.sources[i].path;
+                if(await FileCardOpenRouter.openEditor(context,path,name))return;
+                if(!context.mounted)return;
+                final preview=LanFile(id:batch.id,batch:batch.id,name:name,
+                  path:path,peer:'Cart',incoming:false,size:batch.sizes[i],
+                  created:DateTime.now(),state:TransferState.queued);
+                await Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder:(_)=>FullScreenFilePreview(file:preview,
+                    onSave:(_ )async{},onDelete:(_ )async{},
+                    onShare:(_ )async{await SharePlus.instance.share(
+                      ShareParams(files:[XFile(path)]));},
+                    onTools:(_ )async{_navigate('Toolbox');})));
+              },
               subtitle:Text(_formatBytes(batch.sizes[i])+' · Not sent',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
               trailing:IconButton(
