@@ -28,7 +28,8 @@ void main(){
     expect(find.text('Send to File Share Cart'),findsNothing);
     final cart=find.byTooltip('Send to File Share Cart');
     expect(cart,findsOneWidget);
-    expect(tester.widget<IconButton>(cart).onPressed,isNull);
+    final cartButton=find.ancestor(of:cart,matching:find.byType(IconButton));
+    expect(tester.widget<IconButton>(cartButton.first).onPressed,isNull);
     expect(find.byTooltip('Apply'),findsOneWidget);
     expect(find.byTooltip('Undo'),findsOneWidget);
     expect(find.byTooltip('Redo'),findsOneWidget);
