@@ -47,8 +47,9 @@ void main(){
   });
 
   test('Invalid targets fail rather than exporting a wrong size',()async{
-    await expectLater(
-      SignatureEditEngine.exactJpeg(source(),SignatureCrop.full,
-        'Original',0),throwsArgumentError);
+    expect(
+      ()=>SignatureEditEngine.exactJpeg(
+        source(),SignatureCrop.full,'Original',0),
+      throwsArgumentError);
   });
 }
