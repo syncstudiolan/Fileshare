@@ -604,49 +604,85 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       ]));
   }
 
+  Widget _colorSwatch(Color color)=>Tooltip(
+    message:color==Colors.transparent?'Transparent background':
+      '#${color.toARGB32().toRadixString(16).padLeft(8,'0').substring(2).toUpperCase()}',
+    child:InkWell(
+      borderRadius:BorderRadius.circular(28),
+      onTap:_busy?null:()=>_replaceBackground(color:color),
+      child:Container(width:41,height:41,
+        decoration:BoxDecoration(
+          color:color==Colors.transparent?Colors.grey.shade200:color,
+          shape:BoxShape.circle,
+          border:Border.all(color:color==_background?
+            FileTheme.violet:Colors.grey.withValues(alpha:.5),
+            width:color==_background?3:1)),
+        child:color==_background?const Icon(Icons.check_rounded,size:19):null),
+    ),
+  );
+
   Widget _toolControls(){
     switch(_tool){
       case 'Background':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          Text(Platform.isAndroid?'AI: Google ML Kit • Manual Erase available below':
-            Platform.isWindows?'Windows: U²-NetP on-device AI (4.6 MB first download)':
-            'Plain-color background remover',
-            style:TextStyle(color:FileTheme.muted(context))),
-          const SizedBox(height:10),
-          FilledButton.icon(onPressed:_busy?null:_removeBackground,
-            icon:const Icon(Icons.auto_fix_high),
-            label:const Text('AI Remove Background')),
-          if(true) ...[
-            const SizedBox(height:8),
-            _slider('Plain background tolerance',_tolerance,5,120,
-              (v)=>setState(()=>_tolerance=v),(){}),
-            OutlinedButton.icon(
-              onPressed:_busy?null:_removePlainBackground,
-              icon:const Icon(Icons.colorize_outlined),
-              label:const Text('Remove plain-color background')),
-          ],
-          const SizedBox(height:16),
-          OutlinedButton.icon(onPressed:()=>_selectTool('Erase'),
-            icon:const Icon(Icons.auto_fix_off_rounded),
-            label:const Text('Manual background Erase / Restore')),
-          const SizedBox(height:10),
-          const Text('Replace background',style:TextStyle(fontWeight:FontWeight.bold)),
-          const SizedBox(height:7),
-          Wrap(spacing:8,runSpacing:8,children:[
-            for(final color in _colors)
-              InkWell(onTap:_busy?null:()=>_replaceBackground(color:color),
-                child:CircleAvatar(radius:18,backgroundColor:color==Colors.transparent
-                  ?Colors.grey.shade300:color,
-                  child:color==_background?const Icon(Icons.check,size:18):null)),
-          ]),
+          const Text('AI Background Removal',
+            style:TextStyle(fontWeight:FontWeight.w800,fontSize:15)),
           const SizedBox(height:8),
-          Wrap(spacing:8,runSpacing:8,children:[
+          Text('Remove a portrait background or erase unwanted areas.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+          const SizedBox(height:12),
+          SizedBox(width:double.infinity,child:FilledButton.icon(
+            onPressed:_busy?null:_removeBackground,
+            icon:_busy?const SizedBox(width:18,height:18,
+              child:CircularProgressIndicator(strokeWidth:2)):
+              const Icon(Icons.auto_fix_high_rounded),
+            label:const Text('AI Remove Background'))),
+          const SizedBox(height:14),
+          const Text('Plain-color background',
+            style:TextStyle(fontWeight:FontWeight.w700)),
+          _slider('Color tolerance',_tolerance,5,120,
+            (v)=>setState(()=>_tolerance=v),(){}),
+          SizedBox(width:double.infinity,child:OutlinedButton.icon(
+            onPressed:_busy?null:_removePlainBackground,
+            icon:const Icon(Icons.colorize_outlined),
+            label:const Text('Remove plain-color background'))),
+          const SizedBox(height:14),
+          SizedBox(width:double.infinity,child:OutlinedButton.icon(
+            onPressed:()=>_selectTool('Erase'),
+            icon:const Icon(Icons.auto_fix_off_rounded),
+            label:const Text('Manual Erase / Restore'))),
+          const Divider(height:30),
+          Row(children:[
+            const Expanded(child:Text('Replace Background',
+              style:TextStyle(fontWeight:FontWeight.w800,fontSize:15))),
+            Container(height:27,width:27,decoration:BoxDecoration(
+              color:_background,shape:BoxShape.circle,
+              border:Border.all(color:FileTheme.violet))),
+          ]),
+          const SizedBox(height:10),
+          const Text('Preset colors',style:TextStyle(fontSize:12)),
+          const SizedBox(height:7),
+          Wrap(spacing:9,runSpacing:9,children:[
+            for(final color in _colors)_colorSwatch(color),
+          ]),
+          if(_recentColors.isNotEmpty) ...[
+            const SizedBox(height:14),
+            const Text('Recently used colors',
+              style:TextStyle(fontSize:12,fontWeight:FontWeight.w600)),
+            const SizedBox(height:8),
+            Wrap(spacing:9,runSpacing:9,children:[
+              for(final color in _recentColors)_colorSwatch(color),
+            ]),
+          ],
+          const SizedBox(height:13),
+          Wrap(spacing:9,runSpacing:8,children:[
             OutlinedButton.icon(onPressed:_busy?null:_pickBackground,
               icon:const Icon(Icons.photo_library_outlined),
-              label:const Text('Gallery background')),
-            const SizedBox(width:8),
-            OutlinedButton.icon(onPressed:_busy?null:()=>_customColorDialog(),
-              icon:const Icon(Icons.palette_outlined),label:const Text('Custom')),
+              label:const Text('Gallery')),
+            FilledButton.tonalIcon(
+              onPressed:_busy?null:_customColorDialog,
+              icon:const Icon(Icons.palette_outlined),
+              label:const Text('RGB Color Picker')),
           ]),
         ]);
       case 'Compress':
