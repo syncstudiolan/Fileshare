@@ -1792,7 +1792,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       _showSamples=false;
       _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
     });
-    _snack('Edited image is ready in File Share Cart. Tap Send to transfer.');
+    _snack('Edited file is ready in File Share Cart. Tap Send to transfer.');
   }
 
   @override
