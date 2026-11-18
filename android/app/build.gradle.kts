@@ -56,18 +56,36 @@ val syncDocAlignerModel=tasks.register("syncDocAlignerModel") {
             java.net.URL(
                 "https://raw.githubusercontent.com/sammyZi/pdf-tools/6a48d60ccbbaca4dd18840b9d85f00d44b51f311/app/src/main/assets/docaligner_lc100.onnx"
             ).openConnection().apply {
-                connectTimeout=25000
-                readTimeout=60000
+                connectTimeout=15000
+                readTimeout=30000
             }.getInputStream().use { input ->
                 temporary.outputStream().use { input.copyTo(it) }
             }
             check(temporary.length()==4757043L) {
                 "DocAligner model size verification failed"
             }
-            if(modelPath.exists())modelPath.delete()
-            check(temporary.renameTo(modelPath)) {
-                "Could not install DocAligner model in Android assets"
+            // Match the upstream Git blob identity, not just a size.
+            val digest=java.security.MessageDigest.getInstance("SHA-1")
+            digest.update(("blob "+temporary.length()+"\\u0000").toByteArray())
+            temporary.inputStream().use { file ->
+                val bytes=ByteArray(65536)
+                while(true){
+                    val count=file.read(bytes)
+                    if(count<0)break
+                    digest.update(bytes,0,count)
+                }
             }
+            val gitSha=digest.digest().joinToString("") {
+                "%02x".format(it.toInt() and 0xff)
+            }
+            check(gitSha=="0215be79853f05ce3f389e5a554604e61249c3b0") {
+                "Pinned DocAligner asset failed source integrity check"
+            }
+            if(modelPath.exists())modelPath.delete()
+            check(temporary.renameTo(modelPath)){"Cannot install DocAligner model"}
+        }catch(e:java.io.IOException) {
+            logger.warn("DocAligner optional download unavailable; OpenCV contour detection remains active",e)
+            if(modelPath.exists() && modelPath.length()!=4757043L)modelPath.delete()
         }finally{if(temporary.exists())temporary.delete()}
     }
 }
