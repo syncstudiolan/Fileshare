@@ -208,9 +208,11 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
         :await picker.pickMultiImage(imageQuality:95);
       if(photos.isEmpty)return;
       final out=await AdvancedPdfEngine.fromImages(photos.map((e)=>e.path).toList());
+      final suggested='Scan_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final named=mounted?await askPdfName(context,suggested):null;
       final entry=await PdfHistory.instance.save(
         id:DateTime.now().microsecondsSinceEpoch.toString(),
-        name:'Scan_${DateTime.now().millisecondsSinceEpoch}.pdf',sourcePath:out,
+        name:named??suggested,sourcePath:out,
         actions:['Scanned document']);
       await File(out).delete();
       await openDraft(entry);
@@ -423,7 +425,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
           icon:const Icon(Icons.share_outlined)),
         IconButton(tooltip:'Rename PDF',onPressed:rename,
           icon:const Icon(Icons.drive_file_rename_outline)),
-        IconButton(tooltip:'Send to File Share Cart',onPressed:busy?null:sendToCart,
+        IconButton(tooltip:'Send to File Share Cart',onPressed:sendToCart,
           icon:const Icon(Icons.add_shopping_cart_outlined)),
         PopupMenuButton<String>(onSelected:(v){
           if(v=='cart')unawaited(sendToCart());
@@ -475,7 +477,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
                     border:const OutlineInputBorder())),
               const SizedBox(height:8),
               Row(children:[
-                Expanded(child:OutlinedButton.icon(onPressed:busy?null:sendToCart,
+                Expanded(child:OutlinedButton.icon(onPressed:sendToCart,
                   icon:const Icon(Icons.add_shopping_cart),
                   label:const Text('Add to Cart'))),
                 const SizedBox(width:10),
