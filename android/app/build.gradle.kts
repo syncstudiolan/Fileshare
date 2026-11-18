@@ -21,9 +21,23 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // A single ARM64 test package; do not bundle unused emulators/32-bit native code.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+    packaging {
+        jniLibs {
+            excludes += setOf("lib/x86_64/**", "lib/armeabi-v7a/**", "lib/x86/**")
+        }
     }
     buildTypes {
         getByName("release") {
+            // TESTING ONLY. The prior CI release was unsigned and could not install.
+            // Use a separate application id to avoid signature conflicts/data loss
+            // with the user's existing File Share installation.
+            signingConfig = signingConfigs.getByName("debug")
+            applicationIdSuffix = ".testing"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
