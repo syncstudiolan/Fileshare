@@ -49,6 +49,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   List<Offset> _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
     const Offset(.94,.94),const Offset(.06,.94)];
   int? _activeCropHandle;
+  String _cropMode='Normal Crop';
   final List<Offset> _stroke=[];
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
@@ -465,7 +466,25 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         ]);
       case 'Crop':
         return Column(children:[
-          const Text('Drag the crop rectangle or its corner to resize'),
+          const Text('Drag corners or side handles in Normal Crop. Align document corners in Perspective Crop.'),
+          const SizedBox(height:8),
+          SegmentedButton<String>(
+            segments:const [
+              ButtonSegment(value:'Normal Crop',label:Text('Normal Crop')),
+              ButtonSegment(value:'Perspective Crop',label:Text('Perspective Crop')),
+            ],
+            selected:{_cropMode},
+            onSelectionChanged:(value)=>setState((){
+              _cropMode=value.first;
+              if(_cropMode=='Normal Crop'){
+                final left=_cropCorners.map((p)=>p.dx).reduce(math.min);
+                final right=_cropCorners.map((p)=>p.dx).reduce(math.max);
+                final top=_cropCorners.map((p)=>p.dy).reduce(math.min);
+                final bottom=_cropCorners.map((p)=>p.dy).reduce(math.max);
+                _crop=Rect.fromLTRB(left,top,right,bottom);
+                _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,_crop.bottomLeft];
+              }
+            })),
           const SizedBox(height:12),
           Wrap(spacing:8,children:[
             for(final label in ['Free','1:1','4:3','16:9','A4'])
@@ -597,6 +616,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     unawaited(_apply('adjust',options));
   }
   void _commitCrop(){
+    if(_cropMode=='Normal Crop'){
+      unawaited(_apply('crop',{
+        'x':_crop.left,'y':_crop.top,'w':_crop.width,'h':_crop.height,
+      },description:'Normal crop'));
+      return;
+    }
     final points=_cropCorners;
     unawaited(_apply('perspective',{
       'tlx':points[0].dx,'tly':points[0].dy,
@@ -636,13 +661,26 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   void _startGesture(DragStartDetails d,Size size){
-    final point=Offset(d.localPosition.dx/size.width,
-      d.localPosition.dy/size.height);
+    final point=Offset(d.localPosition.dx/size.width,d.localPosition.dy/size.height);
     if(_tool=='Crop'){
       _activeCropHandle=null;
-      for(var i=0;i<_cropCorners.length;i++){
-        if((point-_cropCorners[i]).distance<.12){
-          _activeCropHandle=i;break;
+      final corners=_cropCorners;
+      final handles=<Offset>[
+        ...corners,
+        if(_cropMode=='Normal Crop') ...[
+          Offset((corners[0].dx+corners[1].dx)/2,corners[0].dy),
+          Offset(corners[1].dx,(corners[1].dy+corners[2].dy)/2),
+          Offset((corners[2].dx+corners[3].dx)/2,corners[2].dy),
+          Offset(corners[3].dx,(corners[3].dy+corners[0].dy)/2),
+        ],
+      ];
+      final touch=math.max(22.0,math.min(size.width,size.height)*.025);
+      var best=double.infinity;
+      for(var i=0;i<handles.length;i++){
+        final hp=Offset(handles[i].dx*size.width,handles[i].dy*size.height);
+        final distance=(hp-d.localPosition).distance;
+        if(distance<=touch && distance<best){
+          best=distance;_activeCropHandle=i;
         }
       }
     }else if(_tool=='Erase'){
@@ -654,23 +692,28 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       final dx=d.delta.dx/size.width,dy=d.delta.dy/size.height;
       setState((){
         final index=_activeCropHandle;
-        if(index!=null){
+        if(_cropMode=='Normal Crop'&&index!=null){
+          const minimum=.025;
+          var left=_crop.left,right=_crop.right,top=_crop.top,bottom=_crop.bottom;
+          if(index==0||index==3||index==7)left=(left+dx).clamp(0.0,right-minimum).toDouble();
+          if(index==1||index==2||index==5)right=(right+dx).clamp(left+minimum,1.0).toDouble();
+          if(index==0||index==1||index==4)top=(top+dy).clamp(0.0,bottom-minimum).toDouble();
+          if(index==2||index==3||index==6)bottom=(bottom+dy).clamp(top+minimum,1.0).toDouble();
+          _crop=Rect.fromLTRB(left,top,right,bottom);
+          _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,_crop.bottomLeft];
+        }else if(index!=null){
           final old=_cropCorners[index];
-          _cropCorners[index]=Offset(
-            (old.dx+dx).clamp(0.0,1.0).toDouble(),
+          _cropCorners[index]=Offset((old.dx+dx).clamp(0.0,1.0).toDouble(),
             (old.dy+dy).clamp(0.0,1.0).toDouble());
         }else{
-          // Drag inside polygon to move the entire crop, without changing
-          // its shape or dragging individual corner handles by accident.
           final left=_cropCorners.map((p)=>p.dx).reduce(math.min);
           final right=_cropCorners.map((p)=>p.dx).reduce(math.max);
           final top=_cropCorners.map((p)=>p.dy).reduce(math.min);
           final bottom=_cropCorners.map((p)=>p.dy).reduce(math.max);
           final tx=dx.clamp(-left,1-right).toDouble();
           final ty=dy.clamp(-top,1-bottom).toDouble();
-          _cropCorners=[
-            for(final point in _cropCorners)point+Offset(tx,ty),
-          ];
+          _cropCorners=[for(final p in _cropCorners)p+Offset(tx,ty)];
+          if(_cropMode=='Normal Crop')_crop=_crop.shift(Offset(tx,ty));
         }
       });
     }else if(_tool=='Erase'){
@@ -718,7 +761,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           child:CustomPaint(painter:_CheckerPainter())),
         _liveAdjustment(Image.memory(_bytes!,fit:BoxFit.fill,
           gaplessPlayback:true,filterQuality:FilterQuality.medium)),
-        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners)),
+        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
+          showSideHandles:_cropMode=='Normal Crop')),
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
@@ -1099,8 +1143,9 @@ class _CheckerPainter extends CustomPainter {
   @override bool shouldRepaint(covariant CustomPainter old)=>false;
 }
 class _CropPainter extends CustomPainter {
-  _CropPainter(this.corners);
+  _CropPainter(this.corners,{this.showSideHandles=false});
   final List<Offset> corners;
+  final bool showSideHandles;
   Offset _point(Offset p,Size size)=>
     Offset(p.dx*size.width,p.dy*size.height);
   @override void paint(Canvas canvas,Size size){
@@ -1128,9 +1173,17 @@ class _CropPainter extends CustomPainter {
       canvas.drawCircle(p,9,Paint()..color=Colors.white);
       canvas.drawCircle(p,6,handle);
     }
+    if(showSideHandles){
+      for(var i=0;i<4;i++){
+        final p=Offset.lerp(points[i],points[(i+1)%4],.5)!;
+        final rect=Rect.fromCenter(center:p,width:i.isEven?30:13,height:i.isEven?13:30);
+        canvas.drawRRect(RRect.fromRectAndRadius(rect,const Radius.circular(6)),Paint()..color=Colors.white);
+        canvas.drawRRect(RRect.fromRectAndRadius(rect.deflate(2),const Radius.circular(4)),handle);
+      }
+    }
   }
   @override bool shouldRepaint(covariant _CropPainter old){
-    if(old.corners.length!=corners.length)return true;
+    if(old.showSideHandles!=showSideHandles||old.corners.length!=corners.length)return true;
     for(var i=0;i<corners.length;i++){
       if(old.corners[i]!=corners[i])return true;
     }
