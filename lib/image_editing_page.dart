@@ -260,6 +260,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     final data=_bytes;
     if(data==null||_busy)return;
     _magicController.repeat();
+    _processingAction='background';
     setState(()=>_busy=true);
     try{
       late Uint8List mask;
@@ -316,6 +317,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         'the first AI model download, or try Remove Plain Background.');
     }finally{
       _magicController.stop();
+      _processingAction=null;
       if(mounted)setState(()=>_busy=false);
     }
   }
@@ -324,6 +326,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     final data=_bytes;
     if(data==null||_busy)return;
     _magicController.repeat();
+    _processingAction='background';
     setState(()=>_busy=true);
     try {
       final dimensions=await ImageEditingEngine.dimensions(data);
@@ -338,6 +341,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }catch(e){_message('Plain background removal failed: $e');}
     finally{
       _magicController.stop();
+      _processingAction=null;
       if(mounted)setState(()=>_busy=false);
     }
   }
@@ -477,7 +481,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     switch(_tool){
       case 'Background':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          Text(Platform.isAndroid?'Fast recommended: Google ML Kit':
+          Text(Platform.isAndroid?'AI: Google ML Kit • Manual Erase available below':
             Platform.isWindows?'Windows: U²-NetP on-device AI (4.6 MB first download)':
             'Plain-color background remover',
             style:TextStyle(color:FileTheme.muted(context))),
@@ -790,7 +794,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         }
       }
     }else if(_tool=='Erase'){
-      _stroke..clear()..add(point);
+      if(_busy)return;
+      setState(()=>_stroke..clear()..add(point));
     }
   }
   void _changeGesture(DragUpdateDetails d,Size size){
@@ -825,17 +830,33 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }else if(_tool=='Erase'){
       final point=Offset((d.localPosition.dx/size.width).clamp(0,1).toDouble(),
         (d.localPosition.dy/size.height).clamp(0,1).toDouble());
-      _stroke.add(point);
+      setState(()=>_stroke.add(point));
     }
   }
   void _finishGesture(){
     if(_tool!='Erase'||_stroke.isEmpty)return;
-    final points=_stroke.map((p)=><String,Object?>{
-      'x':p.dx,'y':p.dy}).toList();
-    _stroke.clear();
-    unawaited(_apply(_eraseMode.toLowerCase(),{
-      'points':points,'radius':_eraseRadius,'softness':_softness,
-    }));
+    final pending=_LiveEraseStroke(List.unmodifiable(_stroke),_eraseMode,
+      _eraseRadius,_softness);
+    setState((){
+      _pendingErase.add(pending);
+      _stroke.clear();
+    });
+    _eraseQueue=_eraseQueue.then((_)async{
+      final before=_bytes;
+      if(before==null)return;
+      final next=await ImageEditingEngine.edit(before,
+        pending.mode.toLowerCase(),{
+          'points':[for(final p in pending.points){'x':p.dx,'y':p.dy}],
+          'radius':pending.radius,'softness':pending.softness,
+        });
+      await _commit(before,next,'Manual ${pending.mode.toLowerCase()}');
+      if(mounted)setState(()=>_pendingErase.remove(pending));
+    }).catchError((Object e){
+      if(mounted){
+        setState(()=>_pendingErase.remove(pending));
+        _message('Could not complete this erase stroke.');
+      }
+    });
   }
 
   /// Slider feedback uses the GPU color-matrix while dragging; final
@@ -867,18 +888,26 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           child:CustomPaint(painter:_CheckerPainter())),
         if(_pendingBackgroundColor!=null && _pendingBackgroundColor!=Colors.transparent)
           ColoredBox(color:_pendingBackgroundColor!),
-        _liveAdjustment(_fastFilterPreview(Image.memory(
-          _pendingBackgroundColor!=null && _cutoutBytes!=null?_cutoutBytes!:_bytes!,fit:BoxFit.fill,
-          cacheWidth:(width*MediaQuery.devicePixelRatioOf(context)).round().clamp(1,1920),
-          gaplessPlayback:true,filterQuality:FilterQuality.medium))),
+        _liveAdjustment(_fastFilterPreview(
+          Transform.rotate(angle:_fineAngle*math.pi/180,
+            child:(_tool=='Erase'&&_erasePreview!=null)
+              ?CustomPaint(painter:_RealtimeEraserPainter(
+                image:_erasePreview!,restoration:_eraseRestoration,
+                pending:_pendingErase,active:_stroke,mode:_eraseMode,
+                radius:_eraseRadius,softness:_softness))
+              :Image.memory(
+                  _pendingBackgroundColor!=null&&_cutoutBytes!=null?
+                    _cutoutBytes!:_bytes!,fit:BoxFit.fill,
+                  cacheWidth:(width*MediaQuery.devicePixelRatioOf(context))
+                    .round().clamp(1,1920),
+                  gaplessPlayback:true,filterQuality:FilterQuality.medium)))),
         if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
-        if(_busy && _tool=='Background')Positioned(right:12,top:12,
-          child:AnimatedBuilder(animation:_magicController,
-            builder:(context,child)=>Transform.rotate(
-              angle:_magicController.value*math.pi*2,child:child),
-            child:const CircleAvatar(backgroundColor:Color(0xCC765ADB),
-              child:Icon(Icons.auto_fix_high_rounded,color:Colors.white)))),
+        if(_busy && _processingAction=='background')
+          Positioned.fill(child:IgnorePointer(child:AnimatedBuilder(
+            animation:_magicController,
+            builder:(context,_)=>CustomPaint(
+              painter:_FullMagicPainter(_magicController.value))))),
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
@@ -1066,7 +1095,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         borderRadius:BorderRadius.circular(wide?22:18),
         border:Border.all(color:FileTheme.violet.withValues(alpha:.15))),
       child:Column(children:[
-        if(_busy)const LinearProgressIndicator(minHeight:3),
+        if(_busy&&_processingAction!='background'&&
+          _processingAction!='crop'&&_processingAction!='straighten')
+          const LinearProgressIndicator(minHeight:2),
         Expanded(child:_bytes==null?_emptyCanvas(wide:wide):
           Padding(padding:EdgeInsets.all(wide?14:8),
             child:RepaintBoundary(child:_preview()))),
