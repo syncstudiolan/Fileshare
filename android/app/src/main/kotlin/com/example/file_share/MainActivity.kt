@@ -49,6 +49,7 @@ class FileShareApplication : Application() {
                     val path = options?.get("path") as? String
                     val launch = Intent(this, com.sammyi57.pdftools.MainActivity::class.java)
                     launch.putExtra("fileshare.pdf.theme", options?.get("theme") as? String ?: "system")
+                    launch.putExtra("fileshare.pdf.embedded", true)
                     launch.putExtra("fileshare.pdf.share", options?.get("action") == "share")
                     if (!path.isNullOrBlank()) {
                         val input = File(path)
