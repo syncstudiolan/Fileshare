@@ -248,7 +248,7 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
                       corners,showSideHandles:normal)),
                   ]),
                 );
-              }))),),
+              }))),
           )),
         if(shot!=null) ...[
           Row(children:[
