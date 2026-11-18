@@ -77,10 +77,10 @@ class FaceRestorationEngine {
     if(normalizedRoi.length!=4)throw ArgumentError('Expected face region');
     final image=img.decodeImage(source);
     if(image==null)throw const FormatException('Unsupported image');
-    final left=(normalizedRoi[0]*image.width).round().clamp(0,image.width-1);
-    final top=(normalizedRoi[1]*image.height).round().clamp(0,image.height-1);
-    final right=(normalizedRoi[2]*image.width).round().clamp(left+1,image.width);
-    final bottom=(normalizedRoi[3]*image.height).round().clamp(top+1,image.height);
+    final left=(normalizedRoi[0]*image.width).round().clamp(0,image.width-1).toInt();
+    final top=(normalizedRoi[1]*image.height).round().clamp(0,image.height-1).toInt();
+    final right=(normalizedRoi[2]*image.width).round().clamp(left+1,image.width).toInt();
+    final bottom=(normalizedRoi[3]*image.height).round().clamp(top+1,image.height).toInt();
     final w=right-left,h=bottom-top;
     if(w<40||h<40)throw StateError('Selected face region is too small');
     final crop=img.copyCrop(image,x:left,y:top,width:w,height:h);
