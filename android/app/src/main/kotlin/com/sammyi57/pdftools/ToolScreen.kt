@@ -108,6 +108,11 @@ private fun DetailsEditor(p: EditorProps) {
   T("Leave a field empty to remove it.", Type.small, c.sub)
 }
 
+/** A saved PDF can return directly to editing without another picker. */
+object PdfImportBridge {
+  var pending: Picked? = null
+}
+
 private fun stripPdf(name: String) = name.replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
 
 @Composable
@@ -120,7 +125,9 @@ fun ToolScreen(id: String, resume: Boolean) {
   }
   val scope = rememberCoroutineScope()
   val draft = remember { Drafts.current?.takeIf { resume && it.tool == tool.id } }
-  var files by remember { mutableStateOf<List<Picked>>(draft?.files?.map { it.toPicked() } ?: emptyList()) }
+  var files by remember { mutableStateOf<List<Picked>>(
+    PdfImportBridge.pending?.let(::listOf) ?: draft?.files?.map { it.toPicked() } ?: emptyList()) }
+  LaunchedEffect(Unit) { PdfImportBridge.pending = null }
   var opts by remember { mutableStateOf<Opts>(draft?.opts ?: defaults(tool.opts)) }
   var busy by remember { mutableStateOf("") } // "run" | "preview"
   var error by remember { mutableStateOf("") }
