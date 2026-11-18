@@ -117,8 +117,13 @@ Future<int?> _choosePdfPage(BuildContext context,int pages)async{
 }
 Future<void> addPdfToCart(BuildContext context,PdfDraft draft,
     {required bool editorOpen,int page=0,int? pageCount})async{
+  File? snapshot;
+  File? extracted;
   try{
-    var path=draft.path;
+    final temp=await getTemporaryDirectory();
+    snapshot=await File(draft.path).copy(
+      '${temp.path}${Platform.pathSeparator}pdf_cart_snapshot_${DateTime.now().microsecondsSinceEpoch}.pdf');
+    var path=snapshot.path;
     var name=draft.name;
     if(editorOpen){
       final count=pageCount??await AdvancedPdfEngine.pages(path);
@@ -129,6 +134,7 @@ Future<void> addPdfToCart(BuildContext context,PdfDraft draft,
       if(chosen==null)return;
       if(chosen>=0){
         path=await AdvancedPdfEngine.edit(path,'currentPage',{'page':chosen});
+        extracted=File(path);
         name='${draft.name.replaceFirst(RegExp(r'\\.pdf$',caseSensitive:false),'')}_page_${chosen+1}.pdf';
       }
     }
@@ -144,6 +150,9 @@ Future<void> addPdfToCart(BuildContext context,PdfDraft draft,
   }catch(e){
     if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content:Text('Could not add PDF to cart: $e')));
+  }finally{
+    try{if(snapshot!=null&&await snapshot.exists())await snapshot.delete();}catch(_){}
+    try{if(extracted!=null&&await extracted.exists())await extracted.delete();}catch(_){}
   }
 }
 
