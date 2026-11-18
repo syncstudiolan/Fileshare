@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   file_picker: ^13.3.3
+  archive: ^4.7.1
   image_picker: ^1.2.1
   camera: ^0.12.2
   camera_windows: ^0.3.1
