@@ -113,7 +113,17 @@ class Nav(private val controller: NavHostController) {
 
   /** Leaves the current screen; taps queued while a heavy job ran can't pop past the tabs. */
   fun back() {
-    if (controller.previousBackStackEntry != null) controller.popBackStack()
+    // When launched from File Share, the native PDF Home is an internal
+    // navigation host, not another user-visible stop. Return to the Flutter
+    // dashboard from the first Viewer/Scanner/Tool screen.
+    val previous = controller.previousBackStackEntry
+    if (EmbeddedPdfSession.fromFileShare &&
+        (previous == null || previous.destination.hasRoute<MainRoute>())) {
+      EmbeddedPdfSession.exitToDashboard()
+      return
+    }
+    if (previous != null) controller.popBackStack()
+    else if (EmbeddedPdfSession.fromFileShare) EmbeddedPdfSession.exitToDashboard()
   }
 
   fun show(t: Tab) {
@@ -232,7 +242,12 @@ private fun Root() {
 @Composable
 private fun MainShell() {
   val nav = LocalNav.current
-  BackHandler(nav.tab != Tab.Tools) { nav.tab = Tab.Tools }
+  BackHandler(EmbeddedPdfSession.fromFileShare) {
+    EmbeddedPdfSession.exitToDashboard()
+  }
+  BackHandler(!EmbeddedPdfSession.fromFileShare && nav.tab != Tab.Tools) {
+    nav.tab = Tab.Tools
+  }
   val draft = Drafts.current
   val draftTool = draft?.let { toolById(it.tool) }
   val holder = rememberSaveableStateHolder()
