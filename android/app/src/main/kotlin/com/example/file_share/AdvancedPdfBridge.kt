@@ -2,6 +2,10 @@ package com.example.file_share
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.YuvImage
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.Matrix
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
@@ -55,6 +59,7 @@ class AdvancedPdfBridge(private val context: Context) {
                     "fromImages" -> fromImages(args)
                     "processMany" -> advanced.run(args)
                     "detectDocument" -> scanner.corners(required(args,"path"))
+                    "detectFrame" -> detectFrame(args)
                     "processScan" -> scanner.process(required(args,"path"),args)
                     else -> throw IllegalArgumentException("Unsupported PDF method: ${call.method}")
                 }
@@ -72,6 +77,33 @@ class AdvancedPdfBridge(private val context: Context) {
     private fun select(a:Map<*,*>,k:String,default:String="")=a[k] as? String ?: default
     private fun temporary(ext:String="pdf"):File =
         File.createTempFile("fileshare_pdf_",".$ext",context.cacheDir)
+
+    private fun detectFrame(a:Map<*,*>):List<Double>? {
+        val bytes=a["bytes"] as? ByteArray?:return null
+        val width=number(a,"width",0)
+        val height=number(a,"height",0)
+        require(width>0&&height>0&&width*height*3L/2<=bytes.size){
+            "Camera frame does not contain NV21 data"
+        }
+        val compressed=ByteArrayOutputStream()
+        YuvImage(bytes,ImageFormat.NV21,width,height,null).compressToJpeg(
+            Rect(0,0,width,height),65,compressed)
+        val original=BitmapFactory.decodeByteArray(compressed.toByteArray(),0,
+            compressed.size())?:return null
+        val rotation=number(a,"rotation",0)%360
+        val oriented=if(rotation==0)original else Bitmap.createBitmap(
+            original,0,0,original.width,original.height,
+            Matrix().apply{postRotate(rotation.toFloat())},true)
+        val file=temporary("jpg")
+        return try{
+            file.outputStream().use{oriented.compress(Bitmap.CompressFormat.JPEG,75,it)}
+            scanner.corners(file.absolutePath)
+        }finally{
+            file.delete()
+            if(oriented!==original)oriented.recycle()
+            original.recycle()
+        }
+    }
 
     private fun render(path:String,page:Int,width:Int):ByteArray {
         val file=File(path)
