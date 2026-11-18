@@ -193,7 +193,7 @@ class AdvancedPdfBridge(private val context: Context) {
                 PDPageContentStream(doc,p,PDPageContentStream.AppendMode.APPEND,true,true).use{stream->
                     stream.beginText()
                     stream.setFont(PDType1Font.HELVETICA,11f)
-                    stream.setNonStrokingColor(Color.BLACK)
+                    stream.setNonStrokingColor(0,0,0)
                     stream.newLineAtOffset(box.lowerLeftX+box.width/2,box.lowerLeftY+18f)
                     stream.showText("${i+1}")
                     stream.endText()
