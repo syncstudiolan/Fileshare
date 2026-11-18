@@ -279,7 +279,7 @@ private fun ResumeBar(tool: Tool, files: Int) {
   if (confirming) ConfirmDialog(
     "Discard ${tool.title}?", "The ${plural(files, "file")} you picked and the options you set will be cleared. Your files themselves aren't touched.",
     "Discard", danger = true, onDismiss = { confirming = false },
-  ) { Drafts.set(null) }
+  ) { Drafts.discardCurrent() }
   Row(
     Modifier.padding(horizontal = 14.dp).padding(bottom = 10.dp).fillMaxWidth().shadow(10.dp, shape)
       .tap(shape = shape, scaleTo = 0.98f, label = "Continue ${tool.title}") { nav.tool(tool.id, resume = true) }
