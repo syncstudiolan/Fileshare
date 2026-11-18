@@ -57,7 +57,7 @@ class FileShareApplication : Application() {
                         require(input.isFile && input.canRead()) { "PDF file unavailable" }
                         require(input.extension.equals("pdf", ignoreCase = true)) { "Expected a PDF file" }
                         launch.action = Intent.ACTION_VIEW
-                        launch.setDataAndType(Uri.fromFile(input), "application/pdf")
+                        launch.putExtra("fileshare.pdf.path", input.absolutePath)
                     }
                     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(launch)
