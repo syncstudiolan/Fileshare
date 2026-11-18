@@ -332,6 +332,9 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   double aspect=0.72;
   bool busy=false;
   String tool='rotate',splitMode='ranges',splitHalfMode='file',axis='h';
+  String cropMode='crop',pageSize='A4',numberPosition='center',numberFormat='n';
+  String compressMode='quality',sizeTarget='2';
+  double watermarkOpacity=.2;
   String? signaturePath;
   final selectedPaths=<String>[];
   final redactionBoxes=<Map<String,dynamic>>[];
@@ -473,13 +476,14 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       case 'zip':return {'paths':[draft.path,...selectedPaths]};
       case 'nup':return {'perSheet':nupCount,'lines':false};
       case 'flip':return {'axis':axis};
-      case 'crop':return {'pages':pages,'left':horizontalCrop.start,
-        'right':horizontalCrop.end,'top':verticalCrop.start,
-        'bottom':verticalCrop.end};
-      case 'watermark':return {'text':pages.isEmpty?'DRAFT':pages};
-      case 'pageNumbers':return {};
+      case 'crop':return {'pages':pages,'mode':cropMode,'size':pageSize,
+        'left':horizontalCrop.start,'right':horizontalCrop.end,
+        'top':verticalCrop.start,'bottom':verticalCrop.end};
+      case 'watermark':return {'text':pages.isEmpty?'DRAFT':pages,'opacity':watermarkOpacity};
+      case 'pageNumbers':return {'position':numberPosition,'format':numberFormat};
       case 'metadata':return {'title':pages,'author':'','subject':'','keywords':''};
-      case 'compress':return {'quality':compressionQuality};
+      case 'compress':return {'mode':compressMode,'quality':compressionQuality,
+        'targetMB':sizeTarget};
       case 'password':case 'unlock':return {'password':pages};
       case 'fillSign':return {'items':signItems};
       case 'redact':return {'boxes':redactionBoxes};
@@ -614,7 +618,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
               redactionBoxes.where((b)=>b['page']==page).toList(),liveRect)),
             if(tool=='fillSign')CustomPaint(painter:_PdfSignaturePainter(
               signItems.where((b)=>b['page']==page).toList())),
-            if(tool=='crop')CustomPaint(painter:_PdfCropGuides(
+            if(tool=='crop'&&cropMode=='crop')CustomPaint(painter:_PdfCropGuides(
               horizontalCrop,verticalCrop)),
           ]);
           if(tool=='redact'||tool=='fillSign')return GestureDetector(
@@ -663,18 +667,50 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
           DropdownMenuItem(value:'v',child:Text('Flip vertically')),
         ],onChanged:(n)=>setState(()=>axis=n??'h')),
       if(tool=='compress')Column(children:[
-        Text('Image quality $compressionQuality%'),
-        Slider(min:20,max:95,divisions:15,value:compressionQuality.toDouble(),
-          onChanged:(v)=>setState(()=>compressionQuality=v.round())),
+        SegmentedButton<String>(segments:const [
+          ButtonSegment(value:'quality',label:Text('Compression level')),
+          ButtonSegment(value:'size',label:Text('Target file size')),
+        ],selected:{compressMode},onSelectionChanged:(v)=>
+          setState(()=>compressMode=v.first)),
+        if(compressMode=='quality') ...[
+          Text('Image quality $compressionQuality%'),
+          Slider(min:20,max:95,divisions:15,value:compressionQuality.toDouble(),
+            onChanged:(v)=>setState(()=>compressionQuality=v.round())),
+        ]else TextFormField(initialValue:sizeTarget,
+          keyboardType:TextInputType.number,
+          decoration:const InputDecoration(labelText:'Target size in MB'),
+          onChanged:(v)=>sizeTarget=v),
       ]),
       if(tool=='crop')Column(children:[
-        const Align(alignment:Alignment.centerLeft,child:Text('Left / Right crop')),
-        RangeSlider(values:horizontalCrop,min:0,max:1,
-          onChanged:(v)=>setState(()=>horizontalCrop=v)),
-        const Align(alignment:Alignment.centerLeft,child:Text('Top / Bottom crop')),
-        RangeSlider(values:verticalCrop,min:0,max:1,
-          onChanged:(v)=>setState(()=>verticalCrop=v)),
+        SegmentedButton<String>(segments:const [
+          ButtonSegment(value:'crop',label:Text('Crop margins')),
+          ButtonSegment(value:'resize',label:Text('Resize pages')),
+        ],selected:{cropMode},onSelectionChanged:(v)=>
+          setState(()=>cropMode=v.first)),
+        if(cropMode=='crop') ...[
+          const Align(alignment:Alignment.centerLeft,child:Text('Left / Right crop')),
+          RangeSlider(values:horizontalCrop,min:0,max:1,
+            onChanged:(v)=>setState(()=>horizontalCrop=v)),
+          const Align(alignment:Alignment.centerLeft,child:Text('Top / Bottom crop')),
+          RangeSlider(values:verticalCrop,min:0,max:1,
+            onChanged:(v)=>setState(()=>verticalCrop=v)),
+        ]else DropdownButton<String>(isExpanded:true,value:pageSize,
+          items:const ['A4','A5','Letter','Legal'].map((s)=>
+            DropdownMenuItem(value:s,child:Text('Page size $s'))).toList(),
+          onChanged:(v)=>setState(()=>pageSize=v??'A4')),
       ]),
+      if(tool=='pageNumbers')Row(children:[
+        Expanded(child:DropdownButton<String>(value:numberPosition,isExpanded:true,
+          items:const ['left','center','right'].map((x)=>DropdownMenuItem(
+            value:x,child:Text(x))).toList(),
+          onChanged:(v)=>setState(()=>numberPosition=v??'center'))),
+        Expanded(child:DropdownButton<String>(value:numberFormat,isExpanded:true,
+          items:const [DropdownMenuItem(value:'n',child:Text('1, 2, 3')),
+            DropdownMenuItem(value:'of',child:Text('Page N of Total'))],
+          onChanged:(v)=>setState(()=>numberFormat=v??'n'))),
+      ]),
+      if(tool=='watermark')Slider(min:.05,max:.5,value:watermarkOpacity,
+        onChanged:(v)=>setState(()=>watermarkOpacity=v)),
       if(tool=='fillSign')Row(children:[
         TextButton.icon(onPressed:addSignatureImage,
           icon:const Icon(Icons.draw),label:const Text('Signature photo')),
