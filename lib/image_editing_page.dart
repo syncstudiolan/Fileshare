@@ -511,8 +511,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
             _crop!=const Rect.fromLTWH(.06,.06,.88,.88))){
           await _commitCrop();
         }
-        if(_tool=='Adjust'&&(_brightness!=1||_contrast!=1||
-            _saturation!=1||_exposure!=0)){
+        if(_brightness!=1||_contrast!=1||
+            _saturation!=1||_exposure!=0){
           await _commitAdjust();
         }
       }
