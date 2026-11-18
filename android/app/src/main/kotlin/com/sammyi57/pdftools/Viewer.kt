@@ -100,7 +100,8 @@ fun PdfViewerScreen(path: String, name: String) {
   var password by remember { mutableStateOf<String?>(null) }
   var asking by remember { mutableStateOf(false) }
   var wrong by remember { mutableStateOf(false) }
-  var sendMode by remember { mutableStateOf<String?>(null) }
+  var sendMode by remember { mutableStateOf<String?>(if (Incoming.shareOnce) "share" else null) }
+  LaunchedEffect(Unit) { Incoming.shareOnce = false }
   var renameOpen by remember { mutableStateOf(false) }
 
   LaunchedEffect(password) {
