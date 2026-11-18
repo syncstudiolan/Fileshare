@@ -1,3 +1,4 @@
+import 'live_document_camera_page.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -15,6 +16,8 @@ class ScanSheet {
   double ratio;
   String filter;
   int rotation;
+  String cropMode='Perspective';
+  Rect crop=const Rect.fromLTWH(0,0,1,1);
 }
 
 /// Camera/image capture, manually adjustable four-point perspective and
@@ -43,10 +46,14 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
   }
   Future<void> add({required bool camera})async{
     try{
+      final result=camera
+        ?await Navigator.of(context).push<LiveScanResult>(
+            MaterialPageRoute(builder:(_)=>LiveDocumentCameraPage(initialMode:mode)))
+        :null;
       final captures=camera
-        ?[if(await picker.pickImage(source:ImageSource.camera,
-            imageQuality:96,maxWidth:4000) case final XFile photo)photo]
+        ?(result?.paths.map((path)=>XFile(path)).toList()??<XFile>[])
         :await picker.pickMultiImage(imageQuality:96,maxWidth:4000);
+      if(result!=null)mode=result.mode;
       if(captures.isEmpty)return;
       setState(()=>busy=true);
       for(final capture in captures){
@@ -78,7 +85,8 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
       for(final shot in sheets){
         final processed=await _native.invokeMethod<String>('pdf.processScan',{
           'path':shot.path,'corners':shot.corners,'filter':shot.filter,
-          'rotate':shot.rotation,
+          'rotate':shot.rotation,'cropMode':shot.cropMode,
+          'crop':[shot.crop.left,shot.crop.top,shot.crop.right,shot.crop.bottom],
         });
         if(processed==null)throw StateError('Scanner produced no image');
         intermediates.add(File(processed));
@@ -142,6 +150,15 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
               selected:mode==type,label:Text(type),
               onSelected:(_)=>setState(()=>mode=type))),
         ])),
+        if(shot!=null)Padding(padding:const EdgeInsets.symmetric(horizontal:12,vertical:4),
+          child:SegmentedButton<String>(
+            segments:const [
+              ButtonSegment(value:'Perspective',icon:Icon(Icons.crop_rotate),
+                label:Text('Perspective')),
+              ButtonSegment(value:'Normal',icon:Icon(Icons.crop_free),
+                label:Text('Normal / Freeform')),
+            ],selected:{shot.cropMode},
+            onSelectionChanged:(v)=>setState(()=>shot.cropMode=v.first))),
         Expanded(child:shot==null?Center(child:Column(
           mainAxisSize:MainAxisSize.min,children:[
             const Icon(Icons.document_scanner_outlined,size:75),
@@ -153,36 +170,70 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
             child:AspectRatio(aspectRatio:shot.ratio,
               child:LayoutBuilder(builder:(context,box){
                 final corners=shot.corners??[0.0,0.0,1.0,0.0,1.0,1.0,0.0,1.0];
+                final normal=shot.cropMode=='Normal';
+                final handles=normal?[
+                  shot.crop.topLeft,shot.crop.topRight,
+                  shot.crop.bottomRight,shot.crop.bottomLeft,
+                  Offset(shot.crop.center.dx,shot.crop.top),
+                  Offset(shot.crop.right,shot.crop.center.dy),
+                  Offset(shot.crop.center.dx,shot.crop.bottom),
+                  Offset(shot.crop.left,shot.crop.center.dy),
+                ]:List<Offset>.generate(4,(i)=>
+                  Offset(corners[i*2],corners[i*2+1]));
+                Widget preview=Image.file(File(shot.path),fit:BoxFit.fill,
+                  cacheWidth:1300,gaplessPlayback:true);
+                if(shot.filter=='Gray'||shot.filter=='B&W'){
+                  preview=ColorFiltered(colorFilter:ColorFilter.matrix(
+                    const [.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,
+                    .2126,.7152,.0722,0,0,0,0,0,1,0]),child:preview);
+                }else if(shot.filter=='Enhance'){
+                  preview=ColorFiltered(colorFilter:const ColorFilter.matrix(
+                    [1.13,0,0,0,-8,0,1.13,0,0,-8,0,0,1.13,0,-8,0,0,0,1,0]),
+                    child:preview);
+                }
                 return GestureDetector(
-                  onPanUpdate:(details){
-                    final x=details.localPosition.dx/box.maxWidth;
-                    final y=details.localPosition.dy/box.maxHeight;
-                    if(_dragCorner<0)return;
-                    setState((){
-                      final moved=List<double>.from(corners);
-                      moved[2*_dragCorner]=x.clamp(0,1).toDouble();
-                      moved[2*_dragCorner+1]=y.clamp(0,1).toDouble();
-                      shot.corners=moved;
-                    });
-                  },
+                  behavior:HitTestBehavior.opaque,
                   onPanStart:(details){
-                    final x=details.localPosition.dx;
-                    final y=details.localPosition.dy;
-                    var d=double.infinity;_dragCorner=-1;
-                    for(var i=0;i<4;i++){
-                      final dx=x-corners[i*2]*box.maxWidth;
-                      final dy=y-corners[i*2+1]*box.maxHeight;
-                      final length=math.sqrt(dx*dx+dy*dy);
-                      if(length<d&&length<55){d=length;_dragCorner=i;}
+                    var best=double.infinity;_dragCorner=-1;
+                    for(var i=0;i<handles.length;i++){
+                      final point=Offset(handles[i].dx*box.maxWidth,
+                        handles[i].dy*box.maxHeight);
+                      final distance=(details.localPosition-point).distance;
+                      if(distance<best&&distance<55){best=distance;_dragCorner=i;}
                     }
+                  },
+                  onPanUpdate:(details){
+                    final index=_dragCorner;
+                    if(index<0)return;
+                    final dx=details.delta.dx/box.maxWidth;
+                    final dy=details.delta.dy/box.maxHeight;
+                    setState((){
+                      if(normal){
+                        var l=shot.crop.left,r=shot.crop.right;
+                        var t=shot.crop.top,b=shot.crop.bottom;
+                        if(index==0||index==3||index==7)l=(l+dx).clamp(0.0,r-.025);
+                        if(index==1||index==2||index==5)r=(r+dx).clamp(l+.025,1.0);
+                        if(index==0||index==1||index==4)t=(t+dy).clamp(0.0,b-.025);
+                        if(index==2||index==3||index==6)b=(b+dy).clamp(t+.025,1.0);
+                        shot.crop=Rect.fromLTRB(l,t,r,b);
+                      }else{
+                        final updated=List<double>.from(corners);
+                        updated[2*index]=(updated[2*index]+dx).clamp(0.0,1.0);
+                        updated[2*index+1]=(updated[2*index+1]+dy).clamp(0.0,1.0);
+                        shot.corners=updated;
+                      }
+                    });
                   },
                   onPanEnd:(_)=>_dragCorner=-1,
                   child:Stack(fit:StackFit.expand,children:[
-                    Image.file(File(shot.path),fit:BoxFit.fill),
-                    CustomPaint(painter:_ScanCornersPainter(corners)),
+                    preview,
+                    CustomPaint(painter:_ScanCornersPainter(normal?
+                      [shot.crop.left,shot.crop.top,shot.crop.right,shot.crop.top,
+                       shot.crop.right,shot.crop.bottom,shot.crop.left,shot.crop.bottom]:
+                      corners,showSideHandles:normal)),
                   ]),
                 );
-              }))),
+              }))),),
           )),
         if(shot!=null) ...[
           Row(children:[
@@ -212,7 +263,7 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
               ()=>shot.rotation=(shot.rotation+90)%360),
               icon:const Icon(Icons.rotate_right_outlined)),
             IconButton(tooltip:'Reset crop',onPressed:()=>setState(
-              ()=>shot.corners=[0,0,1,0,1,1,0,1]),
+              (){shot.corners=[0,0,1,0,1,1,0,1];shot.crop=const Rect.fromLTWH(0,0,1,1);}),
               icon:const Icon(Icons.restart_alt)),
           ])),
         ],
@@ -230,8 +281,9 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
 }
 
 class _ScanCornersPainter extends CustomPainter{
-  const _ScanCornersPainter(this.corners);
+  const _ScanCornersPainter(this.corners,{this.showSideHandles=false});
   final List<double> corners;
+  final bool showSideHandles;
   @override void paint(Canvas canvas,Size size){
     final p=List<Offset>.generate(4,(i)=>Offset(
       corners[i*2]*size.width,corners[i*2+1]*size.height));
@@ -240,11 +292,14 @@ class _ScanCornersPainter extends CustomPainter{
     path.close();
     canvas.drawPath(path,Paint()..color=const Color(0xFF9B74FF)
       ..style=PaintingStyle.stroke..strokeWidth=3);
-    for(final point in p){
+    final handles=<Offset>[...p,
+      if(showSideHandles)for(var i=0;i<4;i++)
+        Offset.lerp(p[i],p[(i+1)%4],.5)!];
+    for(final point in handles){
       canvas.drawCircle(point,10,Paint()..color=Colors.white);
       canvas.drawCircle(point,6,Paint()..color=const Color(0xFF7A4BDB));
     }
   }
   @override bool shouldRepaint(covariant _ScanCornersPainter old)=>
-    !identical(corners,old.corners);
+    showSideHandles!=old.showSideHandles||!identical(corners,old.corners);
 }
