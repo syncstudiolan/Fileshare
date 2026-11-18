@@ -45,6 +45,7 @@ class AdvancedPdfBridge(private val context: Context) {
     private val executor = Executors.newSingleThreadExecutor()
     private val advanced by lazy { PdfAdvancedOperations(context){ args -> process(args) } }
     private val scanner by lazy { AndroidDocumentScanner(context) }
+    private val office by lazy { OfficePdfConverter(context) }
     init { PDFBoxResourceLoader.init(context) }
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -56,6 +57,7 @@ class AdvancedPdfBridge(private val context: Context) {
                     "renderPage" -> render(required(args,"path"), number(args,"page",0), number(args,"width",900))
                     "process" -> process(args)
                     "fromImages" -> fromImages(args)
+                    "fromOffice" -> office.convert(required(args,"path"),required(args,"name"))
                     "processMany" -> advanced.run(args)
                     "detectDocument" -> scanner.corners(required(args,"path"))
                     "detectFrame" -> detectFrame(args)
