@@ -311,9 +311,18 @@ class AdvancedPdfBridge(private val context: Context) {
             require(left>=0&&top>=0&&right<=1&&bottom<=1&&right>left&&bottom>top)
             for(i in pages(doc,a)){
                 val p=doc.getPage(i);val box=p.cropBox
-                p.cropBox=PDRectangle(box.lowerLeftX+left*box.width,
-                    box.lowerLeftY+(1-bottom)*box.height,
-                    (right-left)*box.width,(bottom-top)*box.height)
+                val x=left;val y=top;val w=right-left;val h=bottom-top
+                val rot=((p.rotation%360)+360)%360
+                val fractions=when(rot){
+                    90->listOf(y,x,h,w)
+                    180->listOf(1f-x-w,y,w,h)
+                    270->listOf(1f-y-h,1f-x-w,h,w)
+                    else->listOf(x,1f-y-h,w,h)
+                }
+                p.cropBox=PDRectangle(
+                    box.lowerLeftX+fractions[0]*box.width,
+                    box.lowerLeftY+fractions[1]*box.height,
+                    fractions[2]*box.width,fractions[3]*box.height)
             }
             doc.save(dest)
         }
