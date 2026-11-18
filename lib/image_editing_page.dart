@@ -112,14 +112,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(!mounted || (!original && revision!=_previewDecodeVersion)){
         frame.image.dispose();return;
       }
+      // Keep the previous GPU frame alive until Flutter has painted the new
+      // bitmap. Disposing it inside setState can race a raster-thread frame.
+      ui.Image? replaced;
       setState((){
         if(original){
-          _eraseRestoration?.dispose();
+          replaced=_eraseRestoration;
           _eraseRestoration=frame.image;
         }else{
-          _erasePreview?.dispose();
+          replaced=_erasePreview;
           _erasePreview=frame.image;
         }
+      });
+      if(replaced!=null)WidgetsBinding.instance.addPostFrameCallback((_){
+        replaced?.dispose();
       });
     }catch(_){/* Image.memory still renders any supported file. */}
   }
