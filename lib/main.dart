@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'file_transfer_camera_page.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_filex/open_filex.dart';
@@ -2004,6 +2005,38 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
+  /// Camera button next to the + composer. Capture returns a local photo,
+  /// then copies it into File Share-owned staging storage. Never auto-send.
+  Future<void> _openTransferCamera() async {
+    if(_choosing)return;
+    setState(()=>_choosing=true);
+    try {
+      final captured=await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder:(_)=>const FileTransferCameraPage()));
+      if(captured==null||!mounted)return;
+      final source=File(captured);
+      if(!await source.exists())throw StateError('Captured photo is missing');
+      final root=await getApplicationSupportDirectory();
+      final folder=Directory('${root.path}${Platform.pathSeparator}camera_cart');
+      await folder.create(recursive:true);
+      final name='Camera_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final target=File('${folder.path}${Platform.pathSeparator}$name');
+      await source.copy(target.path);
+      final length=await target.length();
+      if(length==0){await target.delete();throw StateError('Empty photo');}
+      if(!mounted)return;
+      setState(() {
+        _showSamples=false;
+        _staged.add(PendingBatch(LanEngine.newId(),[target],[name],[length]));
+      });
+      _snack('Camera photo added to Cart. Tap Send to transfer.');
+    } catch(e) {
+      _snack('Camera error: $e');
+    } finally {
+      if(mounted)setState(()=>_choosing=false);
+    }
+  }
+
   Future<void> _choose() async {
     if(_choosing)return;
     setState(()=>_choosing=true);
@@ -2374,9 +2407,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onPressed: _choosing ? null : _choose,
                     icon: const Icon(Icons.add_rounded)),
                   IconButton(
-                    tooltip: 'Toolbox',
-                    onPressed:()=>_navigate('Toolbox'),
-                    icon:const Icon(Icons.handyman_outlined)),
+                    tooltip: 'Camera',
+                    onPressed:_choosing?null:_openTransferCamera,
+                    icon:const Icon(Icons.camera_alt_outlined,
+                      color:FileTheme.violet)),
                   Expanded(child: Text(_staged.isEmpty
                       ? 'Choose files to send...'
                       : _staged.length.toString() + ' selection(s)',
