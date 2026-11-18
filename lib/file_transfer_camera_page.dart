@@ -170,11 +170,24 @@ class _FileTransferCameraPageState extends State<FileTransferCameraPage>
         ],
       ),
       body:SafeArea(child:Column(children:[
-        Expanded(child:Center(child:ready
-          ?AspectRatio(
-              aspectRatio:controller.value.aspectRatio,
-              child:CameraPreview(controller))
-          :Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+        Expanded(child:ClipRect(child:SizedBox.expand(child:ready
+          // Match the native phone camera: aspect-fill the available viewport.
+          // Crop outer preview edges, never distort the image into a strip.
+          ?LayoutBuilder(builder:(context,box){
+              final preview=controller.value.previewSize;
+              final portrait=box.maxHeight>box.maxWidth;
+              final w=portrait
+                ?(preview?.height??720.0):(preview?.width??1280.0);
+              final h=portrait
+                ?(preview?.width??1280.0):(preview?.height??720.0);
+              return FittedBox(
+                fit:BoxFit.cover,
+                alignment:Alignment.center,
+                clipBehavior:Clip.hardEdge,
+                child:SizedBox(width:w,height:h,
+                  child:CameraPreview(controller)));
+            })
+          :Center(child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
               if(_loading)const CircularProgressIndicator(color:Color(0xFFAC91F3)),
               if(!_loading)const Icon(Icons.no_photography_outlined,
                 size:55,color:Colors.white70),
@@ -182,7 +195,7 @@ class _FileTransferCameraPageState extends State<FileTransferCameraPage>
               Text(_loading?'Opening camera…':(_error??'No camera available'),
                 textAlign:TextAlign.center,
                 style:const TextStyle(color:Colors.white70)),
-            ]))),
+            ]))))),
         if(_error!=null&&ready)Padding(
           padding:const EdgeInsets.all(8),
           child:Text(_error!,style:const TextStyle(color:Colors.amber))),
