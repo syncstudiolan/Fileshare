@@ -108,7 +108,7 @@ class FileShareApplication : Application() {
     fun stagePdfFromTools(source: File, suggestedName: String): Boolean {
         if (!source.isFile || !source.canRead() ||
             !source.extension.equals("pdf", ignoreCase = true)) return false
-        val safe = suggestedName.replace('/', '_').replace('\\\\', '_')
+        val safe = suggestedName.replace('/', '_').replace(92.toChar(), '_')
             .filter { it.code >= 32 }.take(140).ifBlank { "document.pdf" }
         val name = if (safe.endsWith(".pdf", ignoreCase = true)) safe else "$safe.pdf"
         val folder = File(filesDir, "fileshare_inbox").apply { mkdirs() }
