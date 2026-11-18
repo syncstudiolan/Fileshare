@@ -337,6 +337,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         });
       await _commit(previous,next,'Background replacement');
       if(mounted)setState((){
+        _pendingBackgroundColor=null;
         _background=selected;
         _format='PNG';
       });
