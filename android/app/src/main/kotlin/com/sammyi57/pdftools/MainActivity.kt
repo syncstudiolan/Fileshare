@@ -34,7 +34,8 @@ class MainActivity : ComponentActivity() {
     PDFBoxResourceLoader.init(applicationContext) // PdfBox's fonts and glyph lists
     preferFastestRefreshRate()
     enableEdgeToEdge()
-    registerAsPdfHandler()
+    // Embedded module: File Share owns PDF open/share intents.
+    // No separate PDF-handler alias is registered.
     if (savedInstanceState == null) takeIncoming(intent)
     setContent { App() }
   }
