@@ -40,7 +40,7 @@ void main(){
     await tester.pumpWidget(const MaterialApp(home:FileShareToolboxPage()));
     await tester.tap(find.text('Advanced PDF Editing Tools'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('supported on Android devices only'),findsOneWidget);
+    expect(find.textContaining('These tools are only available on Android/mobile.'),findsOneWidget);
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
   });
