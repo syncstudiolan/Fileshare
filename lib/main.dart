@@ -1612,82 +1612,94 @@ class CloudInboxCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final first=items.first;
+    final grouped=items.length>1;
+    Widget action(String name, IconData icon, VoidCallback onPressed) =>
+      IconButton(
+        tooltip: name, onPressed: onPressed, iconSize: 21,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+        padding: EdgeInsets.zero,
+        icon: Icon(icon, color: FileTheme.pink));
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width>700
-          ? 580 : MediaQuery.sizeOf(context).width*.90),
-        margin: const EdgeInsets.symmetric(vertical: 7),
-        padding: const EdgeInsets.all(14),
+          ? 650 : MediaQuery.sizeOf(context).width*.95),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.fromLTRB(11, 10, 11, 8),
         decoration: BoxDecoration(
           color: FileTheme.dark(context)
             ? const Color(0xFF482945) : const Color(0xFFFFDDED),
           border: Border.all(color: FileTheme.pink.withValues(alpha: .17)),
           borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(22), topRight: Radius.circular(22),
-            bottomLeft: Radius.circular(5), bottomRight: Radius.circular(22))),
+            topLeft: Radius.circular(17), topRight: Radius.circular(17),
+            bottomLeft: Radius.circular(5), bottomRight: Radius.circular(17))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
           Row(children: [
-            Expanded(child: Text(items.length>1
-              ? items.length.toString()+' Files (QR Group)' : 'Guest QR upload',
+            Expanded(child: Text('From Guest browser · Guest QR · Online',
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(color: FileTheme.foreground(context),
-                fontWeight: FontWeight.w800))),
-            const DesignTag('Received',received:true),
+                fontWeight: FontWeight.w700, fontSize: 12))),
+            if(grouped) Text('${items.length} files',
+              style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
           ]),
-          const SizedBox(height: 7),
-          Text('From Guest browser · Guest QR · Online',
-            style: TextStyle(color: FileTheme.muted(context),fontSize:11)),
-          for(final file in items.take(5))
-            Padding(padding:const EdgeInsets.only(top:12),
-              child:Column(children:[
-                Row(children:[
-                  CloudImageThumbnail(key:ValueKey('qr-thumb-'+file.id),
-                    file:file,onOpen:()=>onPreview(file)),
-                  const SizedBox(width:10),
-                  Expanded(child:InkWell(
-                    onTap:()=>onPreview(file),
-                    child:Column(crossAxisAlignment:CrossAxisAlignment.start,
-                      children:[
-                        Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis,
-                          style:TextStyle(color:FileTheme.foreground(context),
-                            fontWeight:FontWeight.w700,fontSize:13)),
-                        const SizedBox(height:4),
-                        Text(_formatBytes(file.size),
-                          style:TextStyle(color:FileTheme.muted(context),
-                            fontSize:11)),
-                      ]),
-                  )),
-                ]),
-                const SizedBox(height:5),
-                Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[
-                  IconButton(tooltip:'Download received QR file',
-                    onPressed:()=>onSave(file),
-                    icon:const Icon(Icons.download_rounded,color:FileTheme.pink)),
-                  IconButton(tooltip:'Delete QR file',
-                    onPressed:()=>onDelete(file),
-                    icon:const Icon(Icons.delete_outline_rounded,
-                      color:FileTheme.pink)),
-                  IconButton(tooltip:'Share QR file externally',
-                    onPressed:()=>onShare(file),
-                    icon:const Icon(Icons.ios_share_rounded,color:FileTheme.pink)),
-                  IconButton(tooltip:'Open in Tools',
-                    onPressed:()=>onTools(file),
-                    icon:const Icon(Icons.auto_fix_high_rounded,
-                      color:FileTheme.pink)),
-                ]),
-              ])),
-          if(items.length>5)
-            Text('+ '+(items.length-5).toString()+' more files',
-              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
-          if(items.length>1)
-            TextButton.icon(
-              onPressed:()async{for(final f in items){await onSave(f);}},
-              icon:const Icon(Icons.download_for_offline_outlined),
-              label:const Text('Download All')),
-          Align(alignment:Alignment.centerRight,
-            child:Text('Guest QR · '+first.created.toLocal().toString().substring(11,16),
-              style:TextStyle(color:FileTheme.muted(context),fontSize:10))),
+          for (final file in items.take(5))
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
+                SizedBox(width: 100, height: 100,
+                  child: CloudImageThumbnail(
+                    key: ValueKey('qr-thumb-'+file.id),
+                    file: file, onOpen: () => onPreview(file))),
+                const SizedBox(width: 11),
+                Expanded(child: SizedBox(height: 100, child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    InkWell(onTap: () => onPreview(file),
+                      child: Text(file.name, maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: FileTheme.foreground(context),
+                          fontWeight: FontWeight.w700, fontSize: 13))),
+                    const SizedBox(height: 4),
+                    Text(_formatBytes(file.size),
+                      style: TextStyle(color: FileTheme.muted(context),
+                        fontSize: 11)),
+                    const Spacer(),
+                    Align(alignment: Alignment.centerRight,
+                      child: Row(mainAxisSize: MainAxisSize.min,children: [
+                        action('Download', Icons.download_rounded,
+                          () => onSave(file)),
+                        action('Delete', Icons.delete_outline_rounded,
+                          () => onDelete(file)),
+                        action('Share externally', Icons.ios_share_rounded,
+                          () => onShare(file)),
+                        action('Open in Tools', Icons.auto_fix_high_rounded,
+                          () => onTools(file)),
+                      ])),
+                  ],
+                ))),
+              ]),
+            ),
+          if (items.length > 5) Padding(
+            padding: const EdgeInsets.only(top: 5),
+            child: Text('+${items.length - 5} more files',
+              style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
+          if (grouped) Align(alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () async {
+                for (final file in items) { await onSave(file); }
+              },
+              icon: const Icon(Icons.download_for_offline_outlined, size: 17),
+              label: const Text('Download All'))),
+          const SizedBox(height: 5),
+          Row(mainAxisAlignment: MainAxisAlignment.end,children: [
+            Text(first.created.toLocal().toString().substring(11,16),
+              style: TextStyle(color: FileTheme.muted(context),fontSize: 10)),
+            const SizedBox(width: 4),
+            const Icon(Icons.done_all_rounded,
+              size: 16, color: FileTheme.pink),
+          ]),
         ]),
       ),
     );
