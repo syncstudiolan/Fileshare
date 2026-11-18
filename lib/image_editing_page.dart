@@ -17,6 +17,7 @@ import 'image_editing_engine.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
+import 'photo_enhancer_engine.dart';
 
 /// File Share's native-feeling editing workspace. The main canvas, transition
 /// animations and controls are Flutter GPU rendered; expensive file encodes and
@@ -72,8 +73,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   List<Color> _recentColors=[];
   Color? _pendingBackgroundColor;
   Color _custom=const Color(0xFF7D5BE3);
+  String _backgroundEngine='Auto (ML Kit first)';
+  int _enhanceScale=2;
+  double _enhanceStrength=.8;
+  double _enhanceProgress=0;
 
-  static const _tools=['Background','Erase','Crop','Straighten','Filters','Adjust','Compress'];
+  static const _tools=['Background','Erase','Photo Enhancer','Crop','Filters','Straighten','Adjust','Compress'];
   static const _colors=[Colors.transparent,Colors.white,Colors.black,
     Color(0xFFE84D9F), Color(0xFF765ADB),Color(0xFFE53935),
     Color(0xFF1E88E5),Color(0xFF43A047),Color(0xFFFFEB3B)];
@@ -251,6 +256,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       'brightness':_brightness,'contrast':_contrast,
       'saturation':_saturation,'exposure':_exposure,
       'backgroundColor':_background.toARGB32(),
+      'backgroundEngine':_backgroundEngine,
+      'enhanceScale':_enhanceScale,
+      'enhanceStrength':_enhanceStrength,
       'zoom':_zoom,
     });
   }
@@ -284,6 +292,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _eraseMode=state['eraseMode'] as String? ??_eraseMode;
       _fineAngle=number(state['fineAngle'],0);
       _straightenAutoCrop=state['straightenAutoCrop'] as bool? ??true;
+      _backgroundEngine=state['backgroundEngine'] as String? ?? _backgroundEngine;
+      _enhanceScale=(state['enhanceScale'] as num?)?.toInt() ?? 2;
+      _enhanceStrength=(state['enhanceStrength'] as num?)?.toDouble() ?? .8;
       _quality=(state['quality'] as num?)?.toInt()??_quality;
       _targetKb=(state['targetKb'] as num?)?.toInt()??_targetKb;
       _brightness=number(state['brightness'],_brightness);
@@ -404,45 +415,60 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     try{
       late Uint8List mask;
       late int width,height;
-      var engine='U²-NetP AI';
-      if(Platform.isAndroid){
-        try{
-          final dir=await getTemporaryDirectory();
-          final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
-          await temporary.writeAsBytes(data,flush:true);
-          final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
-          try{
-            final result=await segmenter.processImage(
-              InputImage.fromFilePath(temporary.path));
-            if(result==null || result.width<=0 || result.height<=0 ||
-               result.confidences.length!=result.width*result.height){
-              throw const FormatException('ML Kit subject mask is invalid');
-            }
-            width=result.width;height=result.height;
-            mask=Uint8List.fromList(result.confidences.map(
-              (confidence)=>(confidence.clamp(0.0,1.0)*255).round()).toList());
-            engine='Google ML Kit';
-          }finally{
-            await segmenter.close();
-            if(await temporary.exists())await temporary.delete();
-          }
-        }catch(_){
-          // A failed Android platform call is not a user-facing crash.
-          // The model is downloaded once, hash-verified, then used offline.
-          width=WindowsBackgroundAi.modelSize;
-          height=WindowsBackgroundAi.modelSize;
-          mask=await WindowsBackgroundAi.segmentationMask(data);
+      var engine='';
+      Future<void> mlKit() async {
+        if(!Platform.isAndroid) {
+          throw UnsupportedError('Google ML Kit segmentation is Android-only');
         }
-      }else if(Platform.isWindows){
+        final dir=await getTemporaryDirectory();
+        final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
+        await temporary.writeAsBytes(data,flush:true);
+        final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
+        try {
+          final result=await segmenter.processImage(
+            InputImage.fromFilePath(temporary.path));
+          if(result==null || result.width<=0 || result.height<=0 ||
+             result.confidences.length!=result.width*result.height){
+            throw const FormatException('Google ML Kit mask invalid');
+          }
+          width=result.width;height=result.height;
+          mask=Uint8List.fromList(result.confidences.map(
+            (v)=>(v.clamp(0.0,1.0)*255).round()).toList());
+          engine='Google ML Kit';
+        }finally {
+          await segmenter.close();
+          if(await temporary.exists())await temporary.delete();
+        }
+      }
+      Future<void> u2NetP() async {
         width=WindowsBackgroundAi.modelSize;
         height=WindowsBackgroundAi.modelSize;
         mask=await WindowsBackgroundAi.segmentationMask(data);
-      }else{
+        engine='U²-NetP (ONNX)';
+      }
+      Future<void> plain() async {
         final dimensions=await ImageEditingEngine.dimensions(data);
         width=dimensions[0];height=dimensions[1];
         mask=await ImageEditingEngine.simpleBackgroundMask(
           data,tolerance:_tolerance);
-        engine='Plain background remover';
+        engine='Plain-color edge segmentation';
+      }
+      switch(_backgroundEngine){
+        case 'Google ML Kit':
+          await mlKit();
+        case 'U²-NetP (ONNX)':
+          await u2NetP();
+        case 'Plain-color':
+          await plain();
+        default:
+          if(Platform.isAndroid){
+            try{await mlKit();}
+            catch(_){await u2NetP();}
+          }else if(Platform.isWindows){
+            await u2NetP();
+          }else{
+            await plain();
+          }
       }
       final edited=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':width,'maskHeight':height,
@@ -454,6 +480,27 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     }catch(_){
       _message('AI background removal could not finish. Check internet for '
         'the first AI model download, or try Remove Plain Background.');
+    }finally{
+      _processingAction=null;
+      if(mounted)setState(()=>_busy=false);
+    }
+  }
+
+  Future<void> _runPhotoEnhancer() async {
+    await _eraseQueue;
+    final current=_bytes;
+    if(current==null||_busy)return;
+    _processingAction='photo_enhance';
+    setState((){_busy=true;_enhanceProgress=0;});
+    try{
+      final result=await PhotoEnhancerEngine.enhance(current,
+        scale:_enhanceScale,blend:_enhanceStrength,
+        onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
+      await _commit(current,result,
+        'Photo Enhancer Real-ESRGAN ${_enhanceScale}x');
+      _message('Photo enhanced with Real-ESRGAN ${_enhanceScale}x');
+    }catch(e){
+      _message('Photo Enhancer could not finish: $e');
     }finally{
       _processingAction=null;
       if(mounted)setState(()=>_busy=false);
@@ -657,6 +704,31 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     switch(_tool){
       case 'Background':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Background removal engine',
+            style:TextStyle(fontWeight:FontWeight.w700,fontSize:12)),
+          const SizedBox(height:7),
+          DropdownButtonFormField<String>(
+            initialValue:_backgroundEngine,
+            isExpanded:true,
+            decoration:const InputDecoration(
+              border:OutlineInputBorder(),
+              helperText:'Auto uses ML Kit first on Android, then U²-NetP.'),
+            items:[
+              const DropdownMenuItem(value:'Auto (ML Kit first)',
+                child:Text('Auto · ML Kit first')),
+              if(Platform.isAndroid)
+                const DropdownMenuItem(value:'Google ML Kit',
+                  child:Text('Google ML Kit · Portrait')),
+              const DropdownMenuItem(value:'U²-NetP (ONNX)',
+                child:Text('U²-NetP · AI subject removal')),
+              const DropdownMenuItem(value:'Plain-color',
+                child:Text('Plain-color · Edge flood fill')),
+            ],
+            onChanged:_busy?null:(value){
+              if(value!=null)setState(()=>_backgroundEngine=value);
+            },
+          ),
+          const SizedBox(height:12),
           const Text('AI Background Removal',
             style:TextStyle(fontWeight:FontWeight.w800,fontSize:15)),
           const SizedBox(height:8),
@@ -716,6 +788,42 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
               icon:const Icon(Icons.palette_outlined),
               label:const Text('RGB Color Picker')),
           ]),
+        ]);
+      case 'Photo Enhancer':
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Real-ESRGAN AI Photo Enhancer',
+            style:TextStyle(fontWeight:FontWeight.w800,fontSize:15)),
+          const SizedBox(height:8),
+          Text('Real 2× AI image restoration on Android and Windows. '
+            '4× processes two 2× passes. The verified model (~64 MB) '
+            'downloads once and runs offline afterward.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+          const SizedBox(height:14),
+          SegmentedButton<int>(
+            segments:const [
+              ButtonSegment(value:2,label:Text('2× HD')),
+              ButtonSegment(value:4,label:Text('4× Ultra HD')),
+            ],selected:{_enhanceScale},
+            onSelectionChanged:_busy?null:(v)=>
+              setState(()=>_enhanceScale=v.first)),
+          const SizedBox(height:12),
+          _slider('AI strength',_enhanceStrength,0,1,
+            (v)=>setState(()=>_enhanceStrength=v),(){}),
+          Text('AI infers details; it cannot recover guaranteed original '
+            'identity or text. Lower strength preserves more of the original.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+          if(_processingAction=='photo_enhance')...[
+            const SizedBox(height:12),
+            LinearProgressIndicator(value:_enhanceProgress,
+              minHeight:5,borderRadius:BorderRadius.circular(4)),
+            Text('${(_enhanceProgress*100).round()}%'),
+          ],
+          const SizedBox(height:14),
+          SizedBox(width:double.infinity,
+            child:FilledButton.icon(
+              onPressed:_busy?null:_runPhotoEnhancer,
+              icon:const Icon(Icons.auto_awesome_rounded),
+              label:const Text('Enhance Photo'))),
         ]);
       case 'Compress':
         return Column(children:[
@@ -1248,6 +1356,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
   String _toolTitle(String tool)=>switch(tool){
     'Background'=>'Background Removal',
+    'Photo Enhancer'=>'Photo Enhancer',
     'Compress'=>'Compression',
     'Crop'=>'Freeform Crop',
     'Erase'=>'Manual Erase',
@@ -1257,6 +1366,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   };
   IconData _toolIcon(String tool)=>switch(tool){
     'Background'=>Icons.auto_fix_high_rounded,
+    'Photo Enhancer'=>Icons.auto_awesome_rounded,
     'Compress'=>Icons.compress_rounded,
     'Crop'=>Icons.crop_free_rounded,
     'Straighten'=>Icons.straighten_rounded,
