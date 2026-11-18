@@ -76,7 +76,10 @@ class EditorSessionStore {
   }
   Future<void> delete(String tool,String id)async{
     final file=await _file(tool,id);
-    if(await file.exists())await file.delete();
+    for(final path in [file.path,'${file.path}.bak','${file.path}.new']){
+      final current=File(path);
+      if(await current.exists())await current.delete();
+    }
   }
 }
 
