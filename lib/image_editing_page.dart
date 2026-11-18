@@ -1527,6 +1527,46 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   );
 }
 
+class _SaturationValuePicker extends CustomPainter {
+  const _SaturationValuePicker(this.color);
+  final HSVColor color;
+  @override void paint(Canvas canvas,Size size){
+    final rect=Offset.zero & size;
+    canvas.drawRect(rect,Paint()..shader=ui.Gradient.linear(
+      const Offset(0,0),Offset(size.width,0),
+      [Colors.white,HSVColor.fromAHSV(1,color.hue,1,1).toColor()]));
+    canvas.drawRect(rect,Paint()..shader=ui.Gradient.linear(
+      const Offset(0,0),Offset(0,size.height),
+      [Colors.transparent,Colors.black]));
+    final point=Offset(color.saturation*size.width,
+      (1-color.value)*size.height);
+    canvas.drawCircle(point,8,Paint()..color=Colors.white
+      ..style=PaintingStyle.stroke..strokeWidth=3);
+    canvas.drawCircle(point,9.5,Paint()..color=Colors.black54
+      ..style=PaintingStyle.stroke..strokeWidth=1);
+  }
+  @override bool shouldRepaint(covariant _SaturationValuePicker old)=>
+    old.color!=color;
+}
+class _HueColorPicker extends CustomPainter {
+  const _HueColorPicker(this.hue);
+  final double hue;
+  @override void paint(Canvas canvas,Size size){
+    canvas.drawRRect(RRect.fromRectAndRadius(
+      Offset.zero & size,const Radius.circular(10)),
+      Paint()..shader=ui.Gradient.linear(
+        const Offset(0,0),Offset(size.width,0),[
+          for(var i=0;i<=6;i++)
+            HSVColor.fromAHSV(1,i*60.0,1,1).toColor(),
+        ]));
+    final x=(hue/360).clamp(0,1)*size.width;
+    canvas.drawCircle(Offset(x,size.height/2),size.height*.44,
+      Paint()..color=Colors.white..style=PaintingStyle.stroke
+        ..strokeWidth=3);
+  }
+  @override bool shouldRepaint(covariant _HueColorPicker old)=>old.hue!=hue;
+}
+
 class _InstantCropPainter extends CustomPainter{
   const _InstantCropPainter({required this.image,required this.crop});
   final ui.Image image;
