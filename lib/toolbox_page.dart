@@ -54,7 +54,8 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
       }
       try {
         await const MethodChannel('file_share.native').invokeMethod<void>(
-          'openUpstreamPdfTools', {'path': widget.sourcePath});
+          'openUpstreamPdfTools', {'path': widget.sourcePath,
+            'theme': Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light'});
       } on PlatformException catch (error) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
