@@ -174,13 +174,13 @@ void main() {
   testWidgets('Compact Guest QR transfer displays source once',
       (tester) async {
     final f=CloudFile(id:'qr1',session:'qr-group',
-      name:'passport.jpg',size:20000,
+      name:'passport.pdf',size:20000,
       created:DateTime.utc(2026,11,18,10,0));
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:ListView(children:[
       CloudInboxCard(items:[f],onSave:noopCloud,onDelete:noopCloud,
         onShare:noopCloud,onPreview:noopCloud,onTools:noopCloud),
     ]))));
-    expect(find.text('passport.jpg'),findsOneWidget);
+    expect(find.text('passport.pdf'),findsOneWidget);
     expect(find.text('From Guest browser · Guest QR · Online'),findsOneWidget);
     expect(tester.takeException(),isNull);
   });
