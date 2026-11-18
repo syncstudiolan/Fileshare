@@ -310,7 +310,7 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
                       Text(t.name,textAlign:TextAlign.center,maxLines:2,
                         style:const TextStyle(fontSize:12,fontWeight:FontWeight.bold)),
                       if(!t.active)const Text('Coming soon',style:TextStyle(fontSize:10)),
-                    ]))),
+                    ])),
                 ));
               });
           }),
