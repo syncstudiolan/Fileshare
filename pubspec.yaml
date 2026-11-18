@@ -11,7 +11,6 @@ dependencies:
     sdk: flutter
   file_picker: ^13.3.3
   image_picker: ^1.2.1
-  camera: ^0.11.2
   path_provider: ^2.1.5
   share_plus: ^13.3.1
   open_filex: ^5.0.0
