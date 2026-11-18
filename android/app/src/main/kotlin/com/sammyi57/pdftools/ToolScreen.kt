@@ -251,6 +251,24 @@ fun ToolScreen(id: String, resume: Boolean) {
           Reorderable(files, { it.path }, changeFiles) { f, i, _ -> Box(Modifier.background(c.surface)) { FileRow(f, i, true, files.size, changeFiles, files) } }
         } else files.forEachIndexed { i, f -> FileRow(f, i, false, files.size, changeFiles, files) }
       }
+      files.firstOrNull()?.takeIf {
+        it.name.endsWith(".pdf", ignoreCase = true) && java.io.File(it.path).isFile
+      }?.let { chosen ->
+        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Btn("Cart current PDF", Modifier.weight(1f), I.plusBoxMultipleOutline,
+            BtnKind.Secondary, height = 46.dp) {
+            val original = java.io.File(chosen.path)
+            sendResult = Saved(chosen.name, original.path, original.length(),
+              original.lastModified()) to true
+          }
+          Btn("Share current PDF", Modifier.weight(1f), I.shareVariantOutline,
+            BtnKind.Secondary, height = 46.dp) {
+            val original = java.io.File(chosen.path)
+            sendResult = Saved(chosen.name, original.path, original.length(),
+              original.lastModified()) to false
+          }
+        }
+      }
       if (multi && files.size > 1) T("Use the arrows, or hold a file and drag it, to change the order.", Type.small, c.sub, Modifier.padding(top = 8.dp))
       if (multi) {
         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
