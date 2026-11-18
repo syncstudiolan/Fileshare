@@ -234,6 +234,11 @@ fun FilesTab() {
           is Menu.OfFile -> {
             val f = m.f
             scans[f.name]?.let { id -> MenuRow(I.fileDocumentEditOutline, "Edit scan", onClick = pick { nav.scan(id) }) }
+            if (kindOf(f.name) == DocKind.Pdf) MenuRow(
+              I.fileDocumentEditOutline, "Edit PDF pages", onClick = pick {
+                PdfImportBridge.pending = Picked(f.name, f.path, f.size)
+                nav.tool("organize")
+              })
             MenuRow(I.shareVariantOutline, "Share", onClick = pick {
               if (kindOf(f.name) == DocKind.Pdf) pdfSend = f to false
               else share(f.path, f.name)
