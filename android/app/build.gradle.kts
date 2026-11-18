@@ -89,9 +89,6 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("org.opencv:opencv:4.12.0")
-    // Legacy Word (.doc) and Excel (.xls), loaded only on Android.
-    implementation("org.apache.poi:poi:5.2.5")
-    implementation("org.apache.poi:poi-scratchpad:5.2.5")
 }
 
 // Pinned Apache-2.0 DocAligner LC100 model from the reviewed upstream.
