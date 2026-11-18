@@ -40,11 +40,11 @@ const pdfFeatures=<PdfFeature>[
   PdfFeature('merge','Merge PDFs','Combine',Icons.layers_outlined,active:true),
   PdfFeature('alternate','Alternate & Mix','Combine',Icons.shuffle,active:true),
   PdfFeature('split','Split PDF','Combine',Icons.call_split,active:true),
-  PdfFeature('splitText','Split by Text','Combine',Icons.text_snippet_outlined,active:true),
+  PdfFeature('splitText','Split by Text','Combine',Icons.text_snippet_outlined),
   PdfFeature('splitBookmarks','Split by Bookmarks','Combine',Icons.bookmark_outline),
   PdfFeature('splitHalf','Split in Half','Combine',Icons.splitscreen),
   PdfFeature('splitSize','Split by Size','Combine',Icons.data_usage_outlined),
-  PdfFeature('zip','PDF to ZIP','Combine',Icons.folder_zip_outlined,active:true),
+  PdfFeature('zip','PDF to ZIP','Combine',Icons.folder_zip_outlined),
   PdfFeature('organize','Organize Pages','Organize',Icons.view_carousel_outlined,active:true),
   PdfFeature('rotate','Rotate PDF','Organize',Icons.rotate_right,active:true),
   PdfFeature('flip','Flip PDF','Organize',Icons.flip,active:true),
@@ -334,6 +334,8 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   Uint8List? preview;
   bool busy=false;
   final input=TextEditingController();
+  RangeValues horizontalCrop=const RangeValues(0,1);
+  RangeValues verticalCrop=const RangeValues(0,1);
   late String tool=widget.initialTool??'rotate';
   final List<String> selectedPaths=[];
   @override void initState(){super.initState();unawaited(load());}
@@ -405,7 +407,10 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       case 'merge':case 'alternate':
         return {'paths':[draft.path,...selectedPaths]};
       case 'rotate':return {'degrees':90,'pages':input.text};
-      case 'split':case 'organize':case 'crop':return {'pages':input.text};
+      case 'split':case 'organize':return {'pages':input.text};
+      case 'crop':return {'pages':input.text,
+        'left':horizontalCrop.start,'right':horizontalCrop.end,
+        'top':verticalCrop.start,'bottom':verticalCrop.end};
       case 'watermark':return {'text':input.text.isEmpty?'DRAFT':input.text};
       case 'splitText':return {'text':input.text};
       case 'password':case 'unlock':return {'password':input.text};
@@ -461,6 +466,14 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
               if(tool=='merge'||tool=='alternate')
                 OutlinedButton.icon(onPressed:addMergeFiles,
                   icon:const Icon(Icons.add),label:Text('Add PDFs (${selectedPaths.length})')),
+              if(tool=='crop') ...[
+                const Align(alignment:Alignment.centerLeft,child:Text('Horizontal crop area')),
+                RangeSlider(values:horizontalCrop,min:0,max:1,
+                  onChanged:(v)=>setState(()=>horizontalCrop=v)),
+                const Align(alignment:Alignment.centerLeft,child:Text('Vertical crop area')),
+                RangeSlider(values:verticalCrop,min:0,max:1,
+                  onChanged:(v)=>setState(()=>verticalCrop=v)),
+              ],
               if(!const ['zip','pageNumbers','currentPage','alternate','merge'].contains(tool))
                 TextField(controller:input,obscureText:tool=='password'||tool=='unlock',
                   decoration:InputDecoration(
