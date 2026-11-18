@@ -46,8 +46,8 @@ void main(){
     expect(calls.last.arguments,containsPair('name','notes.docx'));
     expect(await PdfSourceConversion.toPdf('/tmp/printed.pdf','printed.pdf'),
       '/tmp/printed.pdf');
-    expect(()=>PdfSourceConversion.toPdf('/tmp/movie.mp4','movie.mp4'),
-      throwsFormatException);
+    await expectLater(PdfSourceConversion.toPdf(
+      '/tmp/movie.mp4','movie.mp4'),throwsFormatException);
   });
 
   test('Cart queue records immutable source filenames and keeps staging separate',()async{
