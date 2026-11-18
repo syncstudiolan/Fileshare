@@ -15,3 +15,10 @@
 # OpenCV's Java Native Interface expects stable Java method signatures.
 -keep class org.opencv.** { *; }
 -keep class com.google.mlkit.vision.text.** { *; }
+
+# PDFBox-Android's JPEG-2000 (JPX) codec is OPTIONAL, not shipped by default.
+# Its original JP2Android artifact is JCenter-only; do not add an unavailable
+# dependency or suppress unrelated R8 problems. PDFBox logs an unsupported-JPX
+# warning when such an image is encountered. Other PDF features remain intact.
+-dontwarn com.gemalto.jp2.JP2Decoder
+-dontwarn com.gemalto.jp2.JP2Encoder
