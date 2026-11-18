@@ -17,6 +17,22 @@ class UpstreamToolCatalogTest {
     assertTrue(TOOLS.any { it.id == "redact" })
   }
 
+  @Test fun pageSelectionUsesZeroBasedIndicesWithoutMutatingDocument() {
+    assertEquals(listOf(2), selectedPageIndices("current", 3, "", 7))
+    assertEquals((0 until 7).toList(), selectedPageIndices("all", 2, "", 7))
+    assertEquals(listOf(0,2,3,4), selectedPageIndices("range", 1, "1, 3-5", 7))
+    assertEquals(listOf(0,1), selectedPageIndices("range", 1, "1-2, 2", 5))
+  }
+
+  @Test fun invalidPageRangesAreRejected() {
+    listOf("", "0", "3-1", "7", "../data", "1;2").forEach { expression ->
+      try {
+        selectedPageIndices("range", 1, expression, 5)
+        org.junit.Assert.fail("Should reject: $expression")
+      } catch (_: IllegalArgumentException) { }
+    }
+  }
+
   @Test fun eachCategoryAndInputTypeRemainAvailable() {
     assertTrue(TOOLS.map { it.section }.toSet().containsAll((0..5).toList()))
     assertTrue(TOOLS.any { it.input == Input.Pdf })
