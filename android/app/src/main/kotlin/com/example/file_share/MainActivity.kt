@@ -52,6 +52,7 @@ class FileShareApplication : Application() {
                     val options = call.arguments as? Map<*, *>
                     val path = options?.get("path") as? String
                     val launch = Intent(this, com.sammyi57.pdftools.MainActivity::class.java)
+                    launch.putExtra("fileshare.pdf.theme", options?.get("theme") as? String ?: "system")
                     if (!path.isNullOrBlank()) {
                         val input = File(path)
                         require(input.isFile && input.canRead()) { "PDF file unavailable" }
