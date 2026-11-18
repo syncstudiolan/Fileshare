@@ -54,3 +54,7 @@ offline/online transfer, login and history APIs are preserved.
 - Performance targets (60/90/120 Hz) and installation size must be measured
   on a real release APK; they cannot be guaranteed from source changes alone.
 - No APK/EXE release has been produced by this draft.
+
+## Validation-only PR check
+The existing `preview_validation` workflow runs Flutter analyzer and widget tests
+for PRs. It does **not** assemble or upload an APK, Windows EXE, or release.
