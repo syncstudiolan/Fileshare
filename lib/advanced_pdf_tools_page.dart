@@ -173,8 +173,11 @@ Future<bool> addPdfToCart(BuildContext context,PdfDraft draft,
     await dir.create(recursive:true);
     final file=await File(path).copy('${dir.path}${Platform.pathSeparator}${DateTime.now().microsecondsSinceEpoch}.pdf');
     ImageEditingCart.instance.add(file,name);
-    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content:Text('$name added to File Share Cart')));
+    if(context.mounted){
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('$name added to File Share Cart')));
+      returnToFileShareCart(context);
+    }
     return true;
   }catch(e){
     if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
@@ -232,7 +235,8 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
   }
   Future<void> pickPdf({String? initialTool})async{
     final file=await FilePicker.pickFile(type:FileType.custom,
-      allowedExtensions:['pdf']);
+      allowedExtensions:['pdf','png','jpg','jpeg','webp','bmp',
+        'doc','docx','xls','xlsx','odt','ods']);
     if(file?.path!=null)await importPath(file!.path!,file.name,
       initialTool:initialTool);
   }
