@@ -2334,7 +2334,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onSave:(_ )async{},onDelete:(_ )async{},
                     onShare:(_ )async{await SharePlus.instance.share(
                       ShareParams(files:[XFile(path)]));},
-                    onTools:(_ )async{_navigate('Toolbox');})));
+                    onTools:(_ )async{
+                      await Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder:(_)=>SelectedFileToolsPage(file:preview)));
+                    })));
               },
               subtitle:Text(_formatBytes(batch.sizes[i])+' · Not sent',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
@@ -3371,10 +3374,15 @@ class FileCategoriesPage extends StatelessWidget {
               title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
               subtitle:Text(_formatBytes(item.size)+' · '+item.state.name),
               trailing:const Icon(Icons.chevron_right_rounded),
-              onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
-                builder:(_)=>FullScreenFilePreview(
-                  file:item,onSave:_save,onDelete:_delete,onShare:_share,
-                  onTools:(item)=>_openTools(context,item)))),
+              onTap:()async{
+                if(await FileCardOpenRouter.openEditor(
+                  context,item.path,item.name))return;
+                if(!context.mounted)return;
+                await Navigator.push(context,MaterialPageRoute<void>(
+                  builder:(_)=>FullScreenFilePreview(
+                    file:item,onSave:_save,onDelete:_delete,onShare:_share,
+                    onTools:(file)=>_openTools(context,file))));
+              },
             )),
         );
       },
@@ -3400,10 +3408,15 @@ class FileCategoriesPage extends StatelessWidget {
                 ListTile(title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
                   subtitle:Text(_formatBytes(item.size)),
                   trailing:const Icon(Icons.chevron_right_rounded),
-                  onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
-                    builder:(_)=>FullScreenFilePreview(file:item,
-                      onSave:_save,onDelete:_delete,onShare:_share,
-                  onTools:(item)=>_openTools(context,item))))),
+                  onTap:()async{
+                    if(await FileCardOpenRouter.openEditor(
+                      context,item.path,item.name))return;
+                    if(!context.mounted)return;
+                    await Navigator.push(context,MaterialPageRoute<void>(
+                      builder:(_)=>FullScreenFilePreview(file:item,
+                        onSave:_save,onDelete:_delete,onShare:_share,
+                        onTools:(file)=>_openTools(context,file))));
+                  }),
             ],
           ))),
     ]);
