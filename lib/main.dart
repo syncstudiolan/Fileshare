@@ -1421,7 +1421,7 @@ class LiveTransferCard extends StatelessWidget {
     return LayoutBuilder(builder: (context, constraints) {
       // Keep the thumbnail prominent without making the whole message tall.
       final side = constraints.maxWidth >= 530 ? 148.0 :
-        constraints.maxWidth >= 330 ? 122.0 : 100.0;
+        constraints.maxWidth >= 330 ? 136.0 : 104.0;
       return Padding(
         padding: const EdgeInsets.only(top: 8),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start,children: [
