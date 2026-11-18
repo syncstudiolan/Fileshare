@@ -321,35 +321,80 @@ class AdvancedPdfBridge(private val context: Context) {
     }
 
     private fun compress(path:String,a:Map<*,*>,dest:File) {
-        val quality=number(a,"quality",60).coerceIn(20,95)
-        PDDocument.load(File(path)).use { doc ->
-            for(obj in doc.document.objects) {
-                val stream=obj.getObject() as? COSStream ?: continue
+        val mode=select(a,"mode","quality")
+        if(mode!="size"){
+            compressQuality(path,dest,number(a,"quality",60).coerceIn(20,95),0)
+            return
+        }
+        val target=((a["targetMB"] as? String)?.toDoubleOrNull()
+            ?:((a["targetMB"] as? Number)?.toDouble()?:2.0))*1048576.0
+        require(target>0){"Target file size must be positive"}
+        val steps=listOf(80 to 0,60 to 2400,45 to 2000,
+            35 to 1600,25 to 1200,20 to 900)
+        var bestBytes=File(path).readBytes()
+        for((quality,side) in steps){
+            val candidate=temporary()
+            try{
+                compressQuality(path,candidate,quality,side)
+                val bytes=candidate.readBytes()
+                if(bytes.size<bestBytes.size)bestBytes=bytes
+                if(bytes.size<=target){dest.writeBytes(bytes);return}
+            }finally{candidate.delete()}
+        }
+        dest.writeBytes(bestBytes)
+    }
+    private fun compressQuality(path:String,dest:File,quality:Int,maxSide:Int) {
+        PDDocument.load(File(path)).use{doc->
+            for(obj in doc.document.objects){
+                val stream=obj.getObject() as? COSStream?:continue
                 if(stream.getCOSName(COSName.SUBTYPE)!=COSName.IMAGE)continue
                 val filter=stream.getDictionaryObject(COSName.FILTER)
-                val jpeg=filter==COSName.DCT_DECODE ||
-                    (filter is COSArray && filter.size()==1 &&
+                val jpeg=filter==COSName.DCT_DECODE||
+                    (filter is COSArray&&filter.size()==1&&
                     filter.getObject(0)==COSName.DCT_DECODE)
                 if(!jpeg)continue
-                try {
+                try{
                     val raw=stream.createRawInputStream().use{it.readBytes()}
-                    val bitmap=BitmapFactory.decodeByteArray(raw,0,raw.size)?:continue
-                    val output=ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.JPEG,quality,output)
-                    bitmap.recycle()
-                    val next=output.toByteArray()
-                    if(next.size>=raw.size)continue
-                    stream.createRawOutputStream().use{it.write(next)}
-                    stream.setItem(COSName.FILTER,COSName.DCT_DECODE)
-                    stream.setItem(COSName.COLORSPACE,COSName.DEVICERGB)
-                    stream.setInt(COSName.BITS_PER_COMPONENT,8)
-                    stream.removeItem(COSName.DECODE_PARMS)
-                }catch(_:Exception){ /* retain unsupported image encodings */ }
+                    val meta=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+                    BitmapFactory.decodeByteArray(raw,0,raw.size,meta)
+                    if(meta.outWidth<=0||meta.outHeight<=0)continue
+                    var sample=1
+                    if(maxSide>0){
+                        while(max(meta.outWidth,meta.outHeight)/sample>maxSide*2)sample*=2
+                    }
+                    val bitmap=BitmapFactory.decodeByteArray(raw,0,raw.size,
+                        BitmapFactory.Options().apply{inSampleSize=sample})?:continue
+                    val resized=if(maxSide>0&&max(bitmap.width,bitmap.height)>maxSide){
+                        val factor=maxSide.toFloat()/max(bitmap.width,bitmap.height)
+                        Bitmap.createScaledBitmap(bitmap,
+                            max(1,(bitmap.width*factor).toInt()),
+                            max(1,(bitmap.height*factor).toInt()),true)
+                    }else bitmap
+                    try{
+                        val bytes=ByteArrayOutputStream().use{out->
+                            resized.compress(Bitmap.CompressFormat.JPEG,quality,out)
+                            out.toByteArray()
+                        }
+                        if(bytes.size>=raw.size)continue
+                        stream.createRawOutputStream().use{it.write(bytes)}
+                        stream.setItem(COSName.FILTER,COSName.DCT_DECODE)
+                        stream.setItem(COSName.COLORSPACE,COSName.DEVICERGB)
+                        stream.setInt(COSName.BITS_PER_COMPONENT,8)
+                        stream.setInt(COSName.WIDTH,resized.width)
+                        stream.setInt(COSName.HEIGHT,resized.height)
+                        stream.removeItem(COSName.DECODE)
+                        stream.removeItem(COSName.DECODE_PARMS)
+                    }finally{
+                        if(resized!==bitmap)resized.recycle()
+                        bitmap.recycle()
+                    }
+                }catch(_:Exception){/* Preserve unusual JPEG streams as-is. */}
             }
+            doc.documentCatalog.cosObject.removeItem(COSName.METADATA)
             doc.save(dest)
         }
-        // Never return a needlessly larger file.
-        if(dest.length()>=File(path).length())File(path).copyTo(dest,overwrite=true)
+        if(dest.length()>=File(path).length())
+            File(path).copyTo(dest,overwrite=true)
     }
 
     private fun fromImages(a:Map<*,*>):String {
