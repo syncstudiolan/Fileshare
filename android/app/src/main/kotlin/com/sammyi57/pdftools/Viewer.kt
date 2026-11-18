@@ -100,6 +100,8 @@ fun PdfViewerScreen(path: String, name: String) {
   var password by remember { mutableStateOf<String?>(null) }
   var asking by remember { mutableStateOf(false) }
   var wrong by remember { mutableStateOf(false) }
+  var sendMode by remember { mutableStateOf<String?>(null) }
+  var renameOpen by remember { mutableStateOf(false) }
 
   LaunchedEffect(password) {
     try {
@@ -168,8 +170,9 @@ fun PdfViewerScreen(path: String, name: String) {
           IconBtn(I.arrowLeft, label = "Back") { nav.back() }
           Marquee(stem(name), Type.bold.copy(fontSize = Type.bold.fontSize * 1.1f), c.ink, Modifier.weight(1f).padding(horizontal = 4.dp))
           IconBtn(I.magnify, label = "Search", enabled = doc != null) { searching = true }
-          IconBtn(I.shareVariantOutline, label = "Share") { share(path, name) }
-          IconBtn(I.openInNew, label = "Open in another app") { openExternally(path, name) }
+          IconBtn(I.pencilOutline, label = "Rename") { renameOpen = true }
+          IconBtn(I.shareVariantOutline, label = "Share") { sendMode = "share" }
+          IconBtn(I.plusBoxMultipleOutline, label = "Add to Cart") { sendMode = "cart" }
         }
       }
     }
@@ -213,6 +216,19 @@ fun PdfViewerScreen(path: String, name: String) {
     Thumbnails(path, pages, page - 1) { i -> thumbs = false; scope.launch { state.scrollToPage(i) } }
   }
 
+  sendMode?.let { mode ->
+    PdfSendPicker(path, name, page, pages, mode == "cart", onClose = { sendMode = null })
+  }
+  if (renameOpen) PromptDialog(
+    "Rename PDF", stem(name), "File name", "New name", "Rename",
+    onClose = { renameOpen = false },
+  ) { typed ->
+    val source = File(path)
+    val target = renameFile(Saved(name, path, source.length(), source.lastModified()), typed)
+    relinkPdf(path, target)
+    renameOpen = false
+    if (target.path != path) nav.viewer(target.path, target.name)
+  }
   if (asking) PasswordPrompt(name, wrong, onCancel = { nav.back() }) { password = it }
 }
 
