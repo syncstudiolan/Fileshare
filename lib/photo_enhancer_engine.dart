@@ -108,7 +108,10 @@ class PhotoEnhancerEngine {
         final x0=tx*core,y0=ty*core;
         final cw=math.min(core,input.width-x0);
         final ch=math.min(core,input.height-y0);
-        final pw=cw+2*overlap,ph=ch+2*overlap,area=pw*ph;
+        // RRDBNet x2 uses pixel-unshuffle; inference tile axes must be even.
+        final pw=cw+2*overlap+(cw.isOdd?1:0);
+        final ph=ch+2*overlap+(ch.isOdd?1:0);
+        final area=pw*ph;
         final tensor=Float32List(area*3);
         for(var y=0;y<ph;y++) {
           for(var x=0;x<pw;x++) {
