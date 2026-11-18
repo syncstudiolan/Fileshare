@@ -86,6 +86,15 @@ fun FilesTab() {
   var moving by remember { mutableStateOf<Saved?>(null) }
   var deleteChoice by remember { mutableStateOf<DeleteChoice?>(null) }
   var exporting by remember { mutableStateOf<Pair<Saved, Boolean>?>(null) }
+  var pdfSend by remember { mutableStateOf<Pair<Saved, Boolean>?>(null) }
+  var pdfSendCount by remember { mutableStateOf(0) }
+  LaunchedEffect(pdfSend) {
+    val file = pdfSend?.first ?: return@LaunchedEffect
+    pdfSendCount = withContext(Dispatchers.IO) {
+      runCatching { com.tom_roush.pdfbox.pdmodel.PDDocument.load(java.io.File(file.path))
+        .use { it.numberOfPages } }.getOrDefault(0)
+    }
+  }
 
   val needle = query.trim().lowercase()
   val filtered = files.filter {
@@ -209,6 +218,12 @@ fun FilesTab() {
     }
   }
 
+  pdfSend?.let { selected ->
+    if (pdfSendCount > 0) PdfSendPicker(
+      selected.first.path, selected.first.name, 1, pdfSendCount,
+      selected.second, onClose = { pdfSend = null })
+  }
+
   menu?.let { m ->
     ModalBottomSheet({ menu = null }, containerColor = c.surface) {
       Column(Modifier.padding(horizontal = 14.dp).padding(bottom = 18.dp).navigationBarsPadding()) {
@@ -219,7 +234,13 @@ fun FilesTab() {
           is Menu.OfFile -> {
             val f = m.f
             scans[f.name]?.let { id -> MenuRow(I.fileDocumentEditOutline, "Edit scan", onClick = pick { nav.scan(id) }) }
-            MenuRow(I.shareVariantOutline, "Share", onClick = pick { share(f.path, f.name) })
+            MenuRow(I.shareVariantOutline, "Share", onClick = pick {
+              if (kindOf(f.name) == DocKind.Pdf) pdfSend = f to false
+              else share(f.path, f.name)
+            })
+            if (kindOf(f.name) == DocKind.Pdf) MenuRow(
+              I.plusBoxMultipleOutline, "Add to File Share Cart",
+              onClick = pick { pdfSend = f to true })
             if (kindOf(f.name) == DocKind.Pdf) {
               MenuRow(I.fileWordOutline, "Save as Word doc", onClick = pick { exporting = f to true })
               MenuRow(I.fileImageOutline, "Save as JPEG", onClick = pick { exporting = f to false })
