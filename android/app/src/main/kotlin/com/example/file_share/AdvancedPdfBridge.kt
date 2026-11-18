@@ -20,6 +20,8 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
+import com.tom_roush.pdfbox.util.Matrix
 import com.tom_roush.pdfbox.cos.COSStream
 import com.tom_roush.pdfbox.cos.COSArray
 import io.flutter.plugin.common.MethodCall
@@ -192,33 +194,59 @@ class AdvancedPdfBridge(private val context: Context) {
         }
     }
     private fun watermark(path:String,a:Map<*,*>,dest:File){
-        val text=select(a,"text","DRAFT").take(100).filter{it.code in 32..126}
+        val text=select(a,"text","DRAFT").trim().take(100).filter{it.code in 32..126}
         require(text.isNotEmpty()){"Watermark text is required"}
-        PDDocument.load(File(path)).use { doc ->
+        val opacity=(a["opacity"] as? Number)?.toFloat()?.coerceIn(.05f,1f)?:.2f
+        PDDocument.load(File(path)).use{ doc->
+            val font=PDType1Font.HELVETICA_BOLD
             for(p in doc.pages){
-                val box=p.cropBox;val size=min(box.width,box.height)/12
-                PDPageContentStream(doc,p,PDPageContentStream.AppendMode.APPEND,true,true).use{ stream ->
+                val box=p.cropBox
+                val size=min(box.width,box.height)/10f
+                val width=font.getStringWidth(text)/1000f*size
+                val rad=Math.toRadians(-32.0)
+                val x=box.lowerLeftX+box.width/2-
+                    (kotlin.math.cos(rad)*width/2).toFloat()
+                val y=box.lowerLeftY+box.height/2-
+                    (kotlin.math.sin(rad)*width/2).toFloat()
+                PDPageContentStream(doc,p,PDPageContentStream.AppendMode.APPEND,true,true).use{stream->
+                    stream.saveGraphicsState()
+                    stream.setGraphicsStateParameters(PDExtendedGraphicsState().apply{
+                        nonStrokingAlphaConstant=opacity
+                        strokingAlphaConstant=opacity
+                    })
+                    stream.setNonStrokingColor(.82f,.27f,.17f)
                     stream.beginText()
-                    stream.setFont(PDType1Font.HELVETICA_BOLD,size)
-                    stream.setNonStrokingColor(180,170,190)
-                    stream.newLineAtOffset(box.lowerLeftX+box.width*.18f,box.lowerLeftY+box.height*.5f)
+                    stream.setFont(font,size)
+                    stream.setTextMatrix(Matrix.getRotateInstance(rad,x,y))
                     stream.showText(text)
                     stream.endText()
+                    stream.restoreGraphicsState()
                 }
             }
             doc.save(dest)
         }
     }
     private fun pageNumbers(path:String,a:Map<*,*>,dest:File){
-        PDDocument.load(File(path)).use { doc ->
-            for(i in 0 until doc.numberOfPages){
+        val position=select(a,"position","center")
+        val format=select(a,"format","n")
+        PDDocument.load(File(path)).use{doc->
+            val font=PDType1Font.HELVETICA
+            val total=doc.numberOfPages
+            for(i in 0 until total){
                 val p=doc.getPage(i);val box=p.cropBox
+                val label=if(format=="of")"Page ${i+1} of $total" else "${i+1}"
+                val width=font.getStringWidth(label)/1000f*10
+                val x=when(position){
+                    "left"->box.lowerLeftX+28f
+                    "right"->box.lowerLeftX+box.width-28f-width
+                    else->box.lowerLeftX+(box.width-width)/2f
+                }
                 PDPageContentStream(doc,p,PDPageContentStream.AppendMode.APPEND,true,true).use{stream->
                     stream.beginText()
-                    stream.setFont(PDType1Font.HELVETICA,11f)
-                    stream.setNonStrokingColor(0,0,0)
-                    stream.newLineAtOffset(box.lowerLeftX+box.width/2,box.lowerLeftY+18f)
-                    stream.showText("${i+1}")
+                    stream.setFont(font,10f)
+                    stream.setNonStrokingColor(.2f,.2f,.2f)
+                    stream.newLineAtOffset(x,box.lowerLeftY+20f)
+                    stream.showText(label)
                     stream.endText()
                 }
             }
