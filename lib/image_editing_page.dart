@@ -886,32 +886,116 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     },description:'Perspective freeform crop');
   }
 
-  Future<void> _customColorDialog()async{
-    var red=_custom.r*255,green=_custom.g*255,
-      blue=_custom.b*255;
-    final color=await showDialog<Color>(context:context,builder:(context)=>
-      StatefulBuilder(builder:(context,update)=>AlertDialog(
-        title:const Text('Custom background color'),
-        content:Column(mainAxisSize:MainAxisSize.min,children:[
-          for(final channel in [0,1,2])
-            Slider(value:[red,green,blue][channel],min:0,max:255,
-              onChanged:(v)=>update((){
-                if(channel==0)red=v;
-                if(channel==1)green=v;
-                if(channel==2)blue=v;
-              })),
-          Container(height:35,color:Color.fromARGB(255,
-            red.round(),green.round(),blue.round())),
-        ]),
-        actions:[TextButton(onPressed:()=>Navigator.pop(context),
-          child:const Text('Cancel')),
-          FilledButton(onPressed:()=>Navigator.pop(context,
-            Color.fromARGB(255,red.round(),green.round(),blue.round())),
-            child:const Text('Apply'))],
-      )));
-    if(color!=null){
-      _custom=color;
-      await _replaceBackground(color:color);
+  Future<void> _customColorDialog() async {
+    Color picked=_custom;
+    final hex=TextEditingController(
+      text:picked.toARGB32().toRadixString(16).substring(2).toUpperCase());
+    final rgb=[picked.r,picked.g,picked.b].map((x)=>
+      TextEditingController(text:(x*255).round().toString())).toList();
+    try {
+      final result=await showDialog<Color>(context:context,
+        builder:(dialog)=>StatefulBuilder(builder:(dialog,refresh){
+          void choose(Color color){
+            refresh(()=>picked=color);
+            hex.text=color.toARGB32().toRadixString(16)
+              .padLeft(8,'0').substring(2).toUpperCase();
+            final values=[color.r,color.g,color.b];
+            for(var i=0;i<3;i++){
+              rgb[i].text=(values[i]*255).round().toString();
+            }
+          }
+          final hsv=HSVColor.fromColor(picked);
+          return AlertDialog(
+            title:const Text('RGB Background Color Picker'),
+            content:SizedBox(width:330,child:SingleChildScrollView(
+              child:Column(mainAxisSize:MainAxisSize.min,
+                crossAxisAlignment:CrossAxisAlignment.start,children:[
+                Container(height:44,decoration:BoxDecoration(
+                  color:picked,borderRadius:BorderRadius.circular(12),
+                  border:Border.all(color:Colors.grey.shade400))),
+                const SizedBox(height:15),
+                const Text('Choose saturation and brightness'),
+                const SizedBox(height:8),
+                LayoutBuilder(builder:(context,limits)=>GestureDetector(
+                  onPanDown:(d)=>choose(hsv.withSaturation(
+                    (d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
+                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
+                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked)
+                    .withSaturation((d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
+                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
+                  child:CustomPaint(
+                    painter:_SaturationValuePicker(hsv),
+                    child:const SizedBox(height:150,width:double.infinity)),
+                )),
+                const SizedBox(height:13),
+                const Text('Hue'),
+                const SizedBox(height:6),
+                LayoutBuilder(builder:(context,limits)=>GestureDetector(
+                  onPanDown:(d)=>choose(HSVColor.fromColor(picked).withHue(
+                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
+                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked).withHue(
+                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
+                  child:CustomPaint(painter:_HueColorPicker(hsv.hue),
+                    child:const SizedBox(height:26,width:double.infinity)),
+                )),
+                const SizedBox(height:14),
+                Row(children:[
+                  for(var i=0;i<3;i++)Expanded(child:Padding(
+                    padding:EdgeInsets.only(right:i==2?0:8),
+                    child:TextField(
+                      controller:rgb[i],
+                      keyboardType:TextInputType.number,
+                      decoration:InputDecoration(
+                        isDense:true,labelText:['R','G','B'][i],
+                        border:const OutlineInputBorder()),
+                      onChanged:(value){
+                        final v=int.tryParse(value);
+                        if(v==null||v<0||v>255)return;
+                        final values=[for(final t in rgb)
+                          (int.tryParse(t.text)??0).clamp(0,255)];
+                        refresh(()=>picked=Color.fromARGB(255,
+                          values[0],values[1],values[2]));
+                        hex.text=picked.toARGB32().toRadixString(16)
+                          .padLeft(8,'0').substring(2).toUpperCase();
+                      },
+                    ),
+                  ))),
+                ]),
+                const SizedBox(height:10),
+                TextField(controller:hex,
+                  textCapitalization:TextCapitalization.characters,
+                  decoration:const InputDecoration(
+                    labelText:'HEX color',prefixText:'#',
+                    border:OutlineInputBorder(),isDense:true),
+                  onChanged:(value){
+                    final normalized=value.replaceFirst('#','');
+                    if(!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(normalized))return;
+                    final code=int.parse(normalized,radix:16);
+                    final color=Color(0xFF000000|code);
+                    refresh(()=>picked=color);
+                    for(final entry in <int>[0,1,2]){
+                      rgb[entry].text=[
+                        (color.r*255).round(),(color.g*255).round(),
+                        (color.b*255).round()][entry].toString();
+                    }
+                  }),
+              ])),
+            )),
+            actions:[
+              TextButton(onPressed:()=>Navigator.pop(dialog),
+                child:const Text('Cancel')),
+              FilledButton(onPressed:()=>Navigator.pop(dialog,picked),
+                child:const Text('Use Color')),
+            ],
+          );
+        }));
+      if(result!=null){
+        _custom=result;
+        await _replaceBackground(color:result);
+      }
+    }finally{
+      hex.dispose();
+      for(final controller in rgb)controller.dispose();
     }
   }
 
