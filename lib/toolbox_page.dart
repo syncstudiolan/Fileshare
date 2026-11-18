@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
-import 'advanced_pdf_tools_page.dart';
+import 'package:flutter/services.dart';
 import 'editor_transfer_session.dart';
 import 'main.dart' show FileTheme,fadePage;
 
@@ -36,7 +36,7 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
   void _rebuild(){if(mounted)setState((){});}
   @override void dispose(){_search.removeListener(_rebuild);_search.dispose();super.dispose();}
 
-  void _open(_ToolEntry entry){
+  Future<void> _open(_ToolEntry entry) async {
     final name=widget.sourceName??widget.sourcePath??'';
     final hasSource=widget.sourcePath!=null;
     if(entry.name=='Advanced PDF Editing Tools'){
@@ -52,8 +52,14 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
         _unsupported(name,'Advanced PDF Editing Tools');
         return;
       }
-      Navigator.of(context).push(fadePage<void>(AdvancedPdfToolsPage(
-        sourcePath:widget.sourcePath,sourceName:widget.sourceName)));
+      try {
+        await const MethodChannel('file_share.native').invokeMethod<void>(
+          'openUpstreamPdfTools', {'path': widget.sourcePath});
+      } on PlatformException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('PDF tools could not open: ${error.message ?? error.code}')));
+      }
       return;
     }
     if(!entry.available){
