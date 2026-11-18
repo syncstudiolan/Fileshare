@@ -13,7 +13,7 @@ import 'package:path_provider/path_provider.dart';
 /// 4x is two x2 stages, not an independently trained 4x model.
 class PhotoEnhancerEngine {
   static const modelUrl =
-    'https://huggingface.co/skillsafe-ai/realesrgan-x2plus/resolve/main/model.onnx';
+    'https://huggingface.co/skillsafe-ai/realesrgan-x2plus/resolve/8166b63/model.onnx';
   static const expectedSha256 =
     '7eb5e9eb507df603c0c04b49b23c86a362e0a01575bfbbac891d970f9c331888';
 
@@ -25,7 +25,7 @@ class PhotoEnhancerEngine {
     Future<bool> valid(File f) async {
       if(!await f.exists())return false;
       if(await f.length()<60000000 || await f.length()>75000000)return false;
-      return sha256.convert(await f.readAsBytes()).toString()==expectedSha256;
+      return (await sha256.bind(f.openRead()).first).toString()==expectedSha256;
     }
     if(await valid(file))return file;
     final partial=File('${file.path}.part');
