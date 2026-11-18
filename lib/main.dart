@@ -1733,6 +1733,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if(state==AppLifecycleState.resumed){
       _dashboardForeground=true;
+      if (Platform.isAndroid) unawaited(_takeSharedFiles());
       _resumeCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
