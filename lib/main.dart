@@ -12,6 +12,7 @@ import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
+import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
 import 'image_editing_storage.dart';
@@ -31,6 +32,7 @@ Future<void> main([List<String> args = const []]) async {
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
   final previousOffline = await prefs.getBool('offline_start') ?? false;
+  await TransferDownloads.instance.init();
   // CI emulator only: run the real LAN backend without first-use tapping.
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
@@ -1560,9 +1562,15 @@ class LiveTransferCard extends StatelessWidget {
         icon: Icon(icon, color: onTap == null
           ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink));
     return TransferCardActions(actions: [
-      // Sender already has the original; no Download action on sent cards.
-      if (file.incoming) action('Download', Icons.download_rounded,
-        canUse ? () => onSave(file) : null),
+      // NEW disappears only after a successful export, never after preview.
+      if (file.incoming)
+        Stack(clipBehavior: Clip.none,children: [
+          action('Download', Icons.download_rounded,
+            canUse ? () => onSave(file) : null),
+          if (file.state == TransferState.delivered)
+            Positioned(top: -8, right: -4,
+              child: NewDownloadBadge(id: 'lan_${file.id}')),
+        ]),
       action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
       action('Share', Icons.ios_share_rounded,
         canUse ? () => onShare(file) : null),
@@ -1800,8 +1808,12 @@ class CloudInboxCard extends StatelessWidget {
                       const SizedBox(height: 7),
                       Align(alignment: Alignment.centerRight,
                         child: TransferCardActions(actions: [
-                          action('Download received QR file', Icons.download_rounded,
-                            () => onSave(file)),
+                          Stack(clipBehavior: Clip.none, children: [
+                            action('Download received QR file', Icons.download_rounded,
+                              () => onSave(file)),
+                            Positioned(top: -8, right: -4,
+                              child: NewDownloadBadge(id: 'cloud_${file.id}')),
+                          ]),
                           action('Delete QR file', Icons.delete_outline_rounded,
                             () => onDelete(file)),
                           action('Share QR file externally', Icons.ios_share_rounded,
@@ -2222,21 +2234,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _saveReceived(LanFile item) async {
     if (!item.incoming || item.state != TransferState.delivered) return;
     try {
-      final downloads = await getDownloadsDirectory();
-      if (downloads == null) throw StateError('Downloads directory unavailable');
-      await downloads.create(recursive: true);
-      var target = File(downloads.path + Platform.pathSeparator +
-        LanEngine.safeFileName(item.name));
-      var index = 1;
-      while (await target.exists()) {
-        target = File(downloads.path + Platform.pathSeparator +
-          index.toString() + '_' + LanEngine.safeFileName(item.name));
-        index++;
-      }
-      await File(item.path).openRead().pipe(target.openWrite());
-      _snack('Saved to Downloads: ' + target.path);
+      final result = await TransferDownloads.instance.export(
+        File(item.path), item.name);
+      if (result == null) return; // User cancelled Windows destination picker.
+      await TransferDownloads.instance.markSaved('lan_${item.id}');
+      _snack(Platform.isAndroid
+        ? 'Downloaded to ${_isCloudImage(item.name) ? 'Gallery / DCIM' : 'Downloads'}'
+        : 'Saved: $result');
     } catch (e) {
-      _snack('Could not save to Downloads. Try external Share. ' + e.toString());
+      _snack('Download failed: $e');
     }
   }
 
@@ -2336,20 +2342,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _saveCloud(CloudFile entry) async {
     try {
       final downloaded = await PersonalCloud.instance.download(entry);
-      final downloads = await getDownloadsDirectory();
-      if (downloads == null) throw StateError('Downloads directory not available');
-      await downloads.create(recursive: true);
-      final name = LanEngine.safeFileName(entry.name);
-      var target = File(downloads.path + Platform.pathSeparator + name);
-      var suffix = 1;
-      while (await target.exists()) {
-        target = File(downloads.path + Platform.pathSeparator +
-          suffix.toString() + '_' + name);
-        suffix++;
-      }
-      await downloaded.openRead().pipe(target.openWrite());
-      _snack('Guest QR file saved to Downloads.');
-    } catch (e) { _snack('QR Download failed: ' + e.toString()); }
+      final result = await TransferDownloads.instance.export(downloaded, entry.name);
+      if (result == null) return;
+      await TransferDownloads.instance.markSaved('cloud_${entry.id}');
+      _snack(Platform.isAndroid
+        ? 'Downloaded to ${_isCloudImage(entry.name) ? 'Gallery / DCIM' : 'Downloads'}'
+        : 'Saved: $result');
+    } catch (e) { _snack('QR Download failed: $e'); }
   }
 
   Future<void> _deleteCloud(CloudFile entry) async {
