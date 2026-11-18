@@ -1483,9 +1483,11 @@ class LiveTransferCard extends StatelessWidget {
           Expanded(child: SizedBox(height: side + (active || file.state == TransferState.failed ? 26 : 0), child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                  color: FileTheme.foreground(context))),
+              InkWell(onTap:()=>_preview(context,file),
+                child:Text(file.name, maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                    color: FileTheme.foreground(context)))),
               const SizedBox(height: 4),
               Text(_formatBytes(file.size),
                 style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
