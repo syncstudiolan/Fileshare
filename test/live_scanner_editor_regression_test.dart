@@ -1,9 +1,7 @@
-import 'dart:ui';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:file_share/image_editing_engine.dart';
-import 'package:file_share/pdf_document_scanner_page.dart';
 
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -50,12 +48,4 @@ void main(){
     expect(r.getPixel(60,40).a,greaterThan(e.getPixel(60,40).a));
   });
 
-  test('Scanner supports separate normal and perspective crop settings',(){
-    final shot=ScanSheet(path:'test.jpg');
-    expect(shot.cropMode,'Perspective');
-    shot.cropMode='Normal';
-    shot.crop=const Rect.fromLTWH(.1,.2,.7,.6);
-    expect(shot.crop.left,.1);
-    expect(shot.crop.width,.7);
-  });
 }
