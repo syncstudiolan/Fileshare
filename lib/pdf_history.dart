@@ -40,7 +40,7 @@ class PdfHistory extends ChangeNotifier {
     return File('${dir.path}${Platform.pathSeparator}history.json');
   }
   static String validName(String name){
-    var value=name.trim().replaceAll(RegExp(r'[\\/:*?"<>|\\x00-\\x1f]'),'_');
+    var value=name.trim().replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'),'_');
     if(value.toLowerCase().endsWith('.pdf'))value=value.substring(0,value.length-4);
     if(value.isEmpty)value='Document';
     value=value.length>100?value.substring(0,100):value;
