@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -53,12 +54,19 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   int? _activeCropHandle;
   String _cropMode='Normal Crop';
   final List<Offset> _stroke=[];
+  final List<_LiveEraseStroke> _pendingErase=[];
+  Future<void> _eraseQueue=Future<void>.value();
+  ui.Image? _erasePreview;
+  ui.Image? _eraseRestoration;
+  double _fineAngle=0;
+  bool _straightenAutoCrop=true;
+  String? _processingAction;
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
   Color? _pendingBackgroundColor;
   Color _custom=const Color(0xFF7D5BE3);
 
-  static const _tools=['Background','Compress','Crop','Filters','Erase','Adjust'];
+  static const _tools=['Background','Erase','Crop','Straighten','Filters','Adjust','Compress'];
   static const _colors=[Colors.transparent,Colors.white,Colors.black,
     Color(0xFFE84D9F), Color(0xFF765ADB),Color(0xFFE53935),
     Color(0xFF1E88E5),Color(0xFF43A047),Color(0xFFFFEB3B)];
@@ -73,6 +81,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
   @override void dispose(){
     _magicController.dispose();
+    _erasePreview?.dispose();
+    _eraseRestoration?.dispose();
     _transformController.dispose();
     super.dispose();
   }
@@ -85,6 +95,23 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     _zoom=1.0;
     _transformController.value=Matrix4.identity();
     if(mounted)setState((){});
+  }
+  Future<void> _cacheEraseImage(Uint8List bytes,{bool original=false})async{
+    try{
+      final codec=await ui.instantiateImageCodec(bytes,targetWidth:1300);
+      final frame=await codec.getNextFrame();
+      codec.dispose();
+      if(!mounted){frame.image.dispose();return;}
+      setState((){
+        if(original){
+          _eraseRestoration?.dispose();
+          _eraseRestoration=frame.image;
+        }else{
+          _erasePreview?.dispose();
+          _erasePreview=frame.image;
+        }
+      });
+    }catch(_){/* Image.memory still renders any supported file. */}
   }
   Future<void> _load() async {
     try {
@@ -102,6 +129,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _originalBytes=Uint8List.fromList(bytes);
         _cutoutBytes=null;
       });
+      unawaited(_cacheEraseImage(bytes));
+      unawaited(_cacheEraseImage(bytes,original:true));
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
   }
@@ -154,6 +183,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _error=null;
         _showOriginal=false;
       });
+      unawaited(_cacheEraseImage(bytes));
+      unawaited(_cacheEraseImage(bytes,original:true));
       await _saveDraft();
     }catch(_){
       _message('Could not open this image. Try a JPG or PNG.');
@@ -171,12 +202,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       {String? description}) async {
     final bytes=_bytes;
     if(bytes==null||_busy)return;
+    _processingAction=action;
     setState(()=>_busy=true);
     try{
       final next=await ImageEditingEngine.edit(bytes,action,options);
       await _commit(bytes,next,description??action);
     }catch(e){_message('Editing failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+    finally{_processingAction=null;if(mounted)setState(()=>_busy=false);}
   }
 
   Future<void> _commit(Uint8List previous,Uint8List next,String step) async {
@@ -197,6 +229,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
+    await _cacheEraseImage(next);
     await _saveDraft();
   }
 
@@ -216,6 +249,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
+    await _cacheEraseImage(next);
     await _saveDraft();
   }
 
@@ -583,6 +617,26 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           ],selected:{_eraseMode},onSelectionChanged:(v)=>
             setState(()=>_eraseMode=v.first)),
         ]);
+      case 'Straighten':
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Fine rotation in 0.5° increments',
+            style:TextStyle(fontSize:12)),
+          Center(child:Text('${_fineAngle.toStringAsFixed(1)}°',
+            style:const TextStyle(fontWeight:FontWeight.w700,fontSize:19))),
+          Slider(min:-45,max:45,divisions:180,value:_fineAngle,
+            onChanged:(v)=>setState(()=>_fineAngle=v)),
+          Row(children:[
+            TextButton.icon(onPressed:()=>setState(()=>_fineAngle=0),
+              icon:const Icon(Icons.restart_alt),label:const Text('Reset')),
+            Expanded(child:SwitchListTile(dense:true,
+              title:const Text('Auto-crop corners'),
+              value:_straightenAutoCrop,
+              onChanged:(v)=>setState(()=>_straightenAutoCrop=v))),
+          ]),
+          FilledButton.icon(onPressed:_busy?null:()=>unawaited(_commitStraighten()),
+            icon:const Icon(Icons.straighten),
+            label:const Text('Apply Straighten')),
+        ]);
       case 'Adjust':
         return Column(children:[
           _slider('Brightness',_brightness,.4,1.6,
@@ -648,6 +702,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _cropCorners=[_crop.topLeft,_crop.topRight,_crop.bottomRight,
         _crop.bottomLeft];
     });
+  }
+  Future<void> _commitStraighten()async{
+    final degrees=_fineAngle;
+    if(degrees.abs()<.001)return;
+    await _apply('straighten',{'degrees':degrees,'autoCrop':_straightenAutoCrop},
+      description:'Straighten ${degrees.toStringAsFixed(1)}°');
+    if(mounted)setState(()=>_fineAngle=0);
   }
   void _commitAdjust(){
     if(_busy)return;
@@ -780,7 +841,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   /// Slider feedback uses the GPU color-matrix while dragging; final
   /// full-quality pixels are processed off the UI isolate on release.
   Widget _liveAdjustment(Widget child){
-    if(_tool!='Adjust')return child;
+    if(_brightness==1&&_contrast==1&&_saturation==1&&_exposure==0)return child;
     final saturation=_saturation;
     const lr=.2126,lg=.7152,lb=.0722;
     final scale=_brightness*_contrast*math.pow(2,_exposure).toDouble();
@@ -858,30 +919,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     'Crop'=>'Freeform Crop',
     'Erase'=>'Manual Erase',
     'Adjust'=>'Adjustments',
+    'Straighten'=>'Straighten',
     _=>tool,
   };
   IconData _toolIcon(String tool)=>switch(tool){
-    'Background'=>Icons.person_outline_rounded,
+    'Background'=>Icons.auto_fix_high_rounded,
     'Compress'=>Icons.compress_rounded,
-    'Crop'=>Icons.crop_rotate_rounded,
-    'Filters'=>Icons.filter_vintage_outlined,
-    'Erase'=>Icons.auto_fix_off,
+    'Crop'=>Icons.crop_free_rounded,
+    'Straighten'=>Icons.straighten_rounded,
+    'Filters'=>Icons.filter_rounded,
+    'Erase'=>Icons.auto_fix_off_rounded,
     _=>Icons.tune_rounded,
   };
   void _selectTool(String tool){
-    if(_busy)return;
-    if(_tool=='Background'&&tool!='Background'&&_pendingBackgroundColor!=null){
-      unawaited(_finalizeBackgroundPreview().then((_){
-        if(mounted)setState(()=>_tool=tool);
-      }));
-      return;
-    }
-    if(_tool=='Filters'&&tool!='Filters'&&_pendingFilter!=null){
-      unawaited(_finalizeFilter().then((_){
-        if(mounted)setState(()=>_tool=tool);
-      }));
-      return;
-    }
+    // UI navigation does not trigger full-quality image encoding.
     setState(()=>_tool=tool);
   }
 
@@ -912,14 +963,40 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     );
   }
 
-  Widget _toolStrip()=>SizedBox(height:62,
-    child:ListView(scrollDirection:Axis.horizontal,
-      padding:const EdgeInsets.symmetric(horizontal:12,vertical:4),
-      children:[
-        for(final tool in _tools)
-          Padding(padding:const EdgeInsets.only(right:7),
-            child:_toolTab(tool)),
-      ]));
+  Widget _toolStrip()=>Padding(
+    padding:const EdgeInsets.fromLTRB(10,4,10,10),
+    child:Container(height:78,
+      decoration:BoxDecoration(
+        color:Theme.of(context).colorScheme.surface.withValues(alpha:.94),
+        borderRadius:BorderRadius.circular(19),
+        border:Border.all(color:FileTheme.violet.withValues(alpha:.24)),
+        boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.08),
+          blurRadius:12,offset:const Offset(0,4))]),
+      child:ListView(scrollDirection:Axis.horizontal,
+        padding:const EdgeInsets.symmetric(horizontal:7,vertical:7),
+        children:[for(final tool in _tools)Padding(
+          padding:const EdgeInsets.symmetric(horizontal:3),
+          child:_professionalTool(tool))]),
+    ));
+  Widget _professionalTool(String tool){
+    final selected=_tool==tool;
+    return Material(color:selected?FileTheme.violet.withValues(alpha:.17):
+      Colors.transparent,borderRadius:BorderRadius.circular(12),
+      child:InkWell(onTap:()=>_selectTool(tool),
+        borderRadius:BorderRadius.circular(12),
+        child:Container(width:76,padding:const EdgeInsets.symmetric(
+          horizontal:3,vertical:5),
+          child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+            Icon(_toolIcon(tool),size:25,color:selected?
+              FileTheme.violet:FileTheme.foreground(context)),
+            const SizedBox(height:5),
+            Text(tool,maxLines:1,overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontSize:10.5,fontWeight:selected?
+                FontWeight.w800:FontWeight.w500,
+                color:FileTheme.foreground(context))),
+          ]))),
+    );
+  }
 
   Widget _controls()=>SingleChildScrollView(
     key:ValueKey('panel-'+_tool),
@@ -1034,6 +1111,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _commitCrop();
     }else if(_tool=='Adjust'){
       _commitAdjust();
+    }else if(_tool=='Straighten'){
+      await _commitStraighten();
     }else if(_tool=='Compress'){
       await _compress();
     }else{
