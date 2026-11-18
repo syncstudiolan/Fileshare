@@ -38,6 +38,7 @@ import kotlin.math.max
  */
 class AdvancedPdfBridge(private val context: Context) {
     private val executor = Executors.newSingleThreadExecutor()
+    private val advanced by lazy { PdfAdvancedOperations(context) }
     init { PDFBoxResourceLoader.init(context) }
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -49,6 +50,7 @@ class AdvancedPdfBridge(private val context: Context) {
                     "renderPage" -> render(required(args,"path"), number(args,"page",0), number(args,"width",900))
                     "process" -> process(args)
                     "fromImages" -> fromImages(args)
+                    "processMany" -> advanced.run(args)
                     else -> throw IllegalArgumentException("Unsupported PDF method: ${call.method}")
                 }
                 android.os.Handler(android.os.Looper.getMainLooper()).post { result.success(output) }
