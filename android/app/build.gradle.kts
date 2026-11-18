@@ -1,3 +1,5 @@
+import java.net.URL
+import java.security.MessageDigest
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,7 +16,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17
+        jvmTarget = "17"
     }
     defaultConfig {
         applicationId = "com.example.file_share"
@@ -53,7 +55,7 @@ val syncDocAlignerModel=tasks.register("syncDocAlignerModel") {
         modelPath.parentFile.mkdirs()
         val temporary=File(modelPath.absolutePath+".download")
         try {
-            java.net.URL(
+            URL(
                 "https://raw.githubusercontent.com/sammyZi/pdf-tools/6a48d60ccbbaca4dd18840b9d85f00d44b51f311/app/src/main/assets/docaligner_lc100.onnx"
             ).openConnection().apply {
                 connectTimeout=15000
@@ -65,7 +67,7 @@ val syncDocAlignerModel=tasks.register("syncDocAlignerModel") {
                 "DocAligner model size verification failed"
             }
             // Match the upstream Git blob identity, not just a size.
-            val digest=java.security.MessageDigest.getInstance("SHA-1")
+            val digest=MessageDigest.getInstance("SHA-1")
             digest.update(("blob "+temporary.length()).toByteArray())
             digest.update(byteArrayOf(0))
             temporary.inputStream().use { file ->
