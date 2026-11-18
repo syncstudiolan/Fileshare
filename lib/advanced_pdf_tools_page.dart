@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,6 +20,9 @@ class AdvancedPdfEngine {
   static Future<Uint8List> pageImage(String path,int page)async=>
     await _channel.invokeMethod<Uint8List>('pdf.renderPage',
       {'path':path,'page':page,'width':1000})??Uint8List(0);
+  static Future<String> fromImages(List<String> paths)async=>
+    await _channel.invokeMethod<String>('pdf.fromImages',{'paths':paths})??
+      (throw StateError('No scanned PDF output'));
   static Future<String> edit(String path,String tool,Map<String,dynamic> opts)async=>
     await _channel.invokeMethod<String>('pdf.process',
       {'path':path,'tool':tool,...opts})??(throw StateError('No PDF output'));
@@ -31,7 +36,7 @@ class PdfFeature {
 }
 
 const pdfFeatures=<PdfFeature>[
-  PdfFeature('scan','Scan Document','Capture',Icons.document_scanner_outlined),
+  PdfFeature('scan','Scan Document','Capture',Icons.document_scanner_outlined,active:true),
   PdfFeature('merge','Merge PDFs','Combine',Icons.layers_outlined,active:true),
   PdfFeature('alternate','Alternate & Mix','Combine',Icons.shuffle,active:true),
   PdfFeature('split','Split PDF','Combine',Icons.call_split,active:true),
@@ -42,7 +47,7 @@ const pdfFeatures=<PdfFeature>[
   PdfFeature('zip','PDF to ZIP','Combine',Icons.folder_zip_outlined,active:true),
   PdfFeature('organize','Organize Pages','Organize',Icons.view_carousel_outlined,active:true),
   PdfFeature('rotate','Rotate PDF','Organize',Icons.rotate_right,active:true),
-  PdfFeature('flip','Flip PDF','Organize',Icons.flip),
+  PdfFeature('flip','Flip PDF','Organize',Icons.flip,active:true),
   PdfFeature('nup','Multiple Pages per Sheet','Organize',Icons.grid_view),
   PdfFeature('crop','Crop & Resize','Organize',Icons.crop,active:true),
   PdfFeature('fillSign','Fill & Sign','Edit',Icons.draw_outlined),
@@ -50,7 +55,7 @@ const pdfFeatures=<PdfFeature>[
   PdfFeature('pageNumbers','Page Numbers','Edit',Icons.format_list_numbered,active:true),
   PdfFeature('redact','Redact PDF','Edit',Icons.security_outlined),
   PdfFeature('metadata','Edit PDF Details','Edit',Icons.info_outline,active:true),
-  PdfFeature('compress','Compress PDF','Secure',Icons.compress_rounded),
+  PdfFeature('compress','Compress PDF','Secure',Icons.compress_rounded,active:true),
   PdfFeature('ocr','OCR Scanned PDF','Secure',Icons.document_scanner),
   PdfFeature('password','Set Password','Secure',Icons.lock_outline,active:true),
   PdfFeature('unlock','Remove Password','Secure',Icons.lock_open_outlined,active:true),
@@ -161,7 +166,7 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
   }
   void refresh(){if(mounted)setState((){});}
   @override void dispose(){search.removeListener(refresh);search.dispose();super.dispose();}
-  Future<void> importPath(String path,String? name)async{
+  Future<void> importPath(String path,String? name,{String? initialTool})async{
     if(importing)return;
     setState(()=>importing=true);
     try{
@@ -169,22 +174,48 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
       await openDraft(await PdfHistory.instance.save(
         id:DateTime.now().microsecondsSinceEpoch.toString(),
         name:name??path.split(Platform.pathSeparator).last,
-        sourcePath:path,actions:['Imported PDF']));
+        sourcePath:path,actions:['Imported PDF']),initialTool:initialTool);
     }catch(e){
       if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));
     }finally{if(mounted)setState(()=>importing=false);}
   }
-  Future<void> pickPdf()async{
+  Future<void> pickPdf({String? initialTool})async{
     final files=await FilePicker.platform.pickFiles(type:FileType.custom,
       allowedExtensions:['pdf'],withData:false);
     final path=files?.files.singleOrNull?.path;
-    if(path!=null)await importPath(path,files!.files.first.name);
+    if(path!=null)await importPath(path,files!.files.first.name,initialTool:initialTool);
   }
-  Future<void> openDraft(PdfDraft draft)async{
+  Future<void> openDraft(PdfDraft draft,{String? initialTool})async{
     if(!mounted)return;
     await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder:(_)=>PdfWorkspacePage(draft:draft)));
+      builder:(_)=>PdfWorkspacePage(draft:draft,initialTool:initialTool)));
     refresh();
+  }
+  Future<void> scanDocument()async{
+    if(importing)return;
+    final choice=await showModalBottomSheet<String>(context:context,
+      builder:(ctx)=>SafeArea(child:Wrap(children:[
+        ListTile(leading:const Icon(Icons.camera_alt_outlined),
+          title:const Text('Take a photo'),onTap:()=>Navigator.pop(ctx,'camera')),
+        ListTile(leading:const Icon(Icons.photo_library_outlined),
+          title:const Text('Choose document photos'),onTap:()=>Navigator.pop(ctx,'gallery')),
+      ])));
+    if(choice==null)return;
+    try{
+      final picker=ImagePicker();
+      final photos=choice=='camera'
+        ?[if(await picker.pickImage(source:ImageSource.camera,imageQuality:95) case final XFile photo)photo]
+        :await picker.pickMultiImage(imageQuality:95);
+      if(photos.isEmpty)return;
+      final out=await AdvancedPdfEngine.fromImages(photos.map((e)=>e.path).toList());
+      final entry=await PdfHistory.instance.save(
+        id:DateTime.now().microsecondsSinceEpoch.toString(),
+        name:'Scan_${DateTime.now().millisecondsSinceEpoch}.pdf',sourcePath:out,
+        actions:['Scanned document']);
+      await File(out).delete();
+      await openDraft(entry);
+    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content:Text('Scanning failed: $e')));}
   }
   Future<void> rename(PdfDraft draft)async{
     final next=await askPdfName(context,draft.name);
@@ -269,7 +300,8 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
                   onTap:()async{
                     if(!t.active){ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content:Text('${t.name}: Processing integration not yet available.')));return;}
-                    await pickPdf();
+                    if(t.id=='scan')await scanDocument();
+                    else await pickPdf(initialTool:t.id);
                   },
                   borderRadius:BorderRadius.circular(16),
                   child:Padding(padding:const EdgeInsets.all(11),
@@ -289,8 +321,9 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
 }
 
 class PdfWorkspacePage extends StatefulWidget{
-  const PdfWorkspacePage({super.key,required this.draft});
+  const PdfWorkspacePage({super.key,required this.draft,this.initialTool});
   final PdfDraft draft;
+  final String? initialTool;
   @override State<PdfWorkspacePage> createState()=>_PdfWorkspacePageState();
 }
 class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
@@ -299,7 +332,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   Uint8List? preview;
   bool busy=false;
   final input=TextEditingController();
-  String tool='rotate';
+  late String tool=widget.initialTool??'rotate';
   final List<String> selectedPaths=[];
   @override void initState(){super.initState();unawaited(load());}
   @override void dispose(){input.dispose();super.dispose();}
@@ -323,6 +356,22 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     if(name==null)return;
     draft=await PdfHistory.instance.rename(draft,name);
     if(mounted)setState((){});
+  }
+  Future<void> savePdf()async{
+    if(busy)return;
+    try{
+      final bytes=await File(draft.path).readAsBytes();
+      final saved=await FilePicker.platform.saveFile(
+        dialogTitle:'Save PDF',fileName:draft.name,
+        type:FileType.custom,allowedExtensions:['pdf'],bytes:bytes);
+      if(saved!=null)message('PDF saved');
+    }catch(e){message('Save failed: $e');}
+  }
+  Future<void> sharePdf()async{
+    if(busy)return;
+    try{await SharePlus.instance.share(ShareParams(
+      files:[XFile(draft.path,name:draft.name,mimeType:'application/pdf')]));}
+    catch(e){message('Share failed: $e');}
   }
   Future<void> sendToCart()async{
     // No "Finish editing" requirement: last applied version is persisted.
@@ -359,6 +408,8 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       case 'splitText':return {'text':input.text};
       case 'password':case 'unlock':return {'password':input.text};
       case 'metadata':return {'title':input.text};
+      case 'compress':return {'quality':60};
+      case 'flip':return {'axis':'h'};
       default:return {};
     }
   }
@@ -366,6 +417,10 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     return Scaffold(
       appBar:AppBar(title:Text(draft.name,overflow:TextOverflow.ellipsis,
         style:const TextStyle(fontSize:15)),actions:[
+        IconButton(tooltip:'Save PDF',onPressed:busy?null:savePdf,
+          icon:const Icon(Icons.download_outlined)),
+        IconButton(tooltip:'Share PDF',onPressed:busy?null:sharePdf,
+          icon:const Icon(Icons.share_outlined)),
         IconButton(tooltip:'Rename PDF',onPressed:rename,
           icon:const Icon(Icons.drive_file_rename_outline)),
         IconButton(tooltip:'Send to File Share Cart',onPressed:busy?null:sendToCart,
