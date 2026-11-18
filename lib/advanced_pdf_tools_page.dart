@@ -328,6 +328,7 @@ class PdfWorkspacePage extends StatefulWidget{
 class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   late PdfDraft draft=widget.draft;
   final input=TextEditingController();
+  final author=TextEditingController(),subject=TextEditingController(),keywords=TextEditingController();
   int page=0,total=0,angle=90,nupCount=4,compressionQuality=60;
   Uint8List? preview;
   double aspect=0.72;
@@ -335,7 +336,9 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   String tool='rotate',splitMode='ranges',splitHalfMode='file',axis='h';
   String cropMode='crop',pageSize='A4',numberPosition='center',numberFormat='n';
   String compressMode='quality',sizeTarget='2';
-  double watermarkOpacity=.2;
+  double watermarkOpacity=.2,watermarkScale=1;
+  bool nupLines=false,reverseAlternating=false;
+  String deletedPages='';
   String? signaturePath;
   final selectedPaths=<String>[];
   final redactionBoxes=<Map<String,dynamic>>[];
@@ -356,7 +359,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     unawaited(load());
   }
   @override void dispose(){
-    input.dispose();
+    input.dispose();author.dispose();subject.dispose();keywords.dispose();
     for(final f in [...undoStack,...redoStack])unawaited(f.delete().catchError((Object _)=>f));
     super.dispose();
   }
@@ -515,22 +518,27 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   Map<String,dynamic> optionsFor(String id){
     final pages=input.text.trim();
     switch(id){
-      case 'merge':case 'alternate':return {'paths':[draft.path,...selectedPaths]};
+      case 'merge':case 'alternate':return {'paths':[draft.path,...selectedPaths],
+        'reverse':reverseAlternating};
       case 'rotate':return {'degrees':angle,'pages':pages};
-      case 'organize':return {'pages':pages};
+      case 'organize':return {'pages':pages,'deletePages':deletedPages.split(',')
+        .map((s)=>int.tryParse(s.trim())).whereType<int>()
+        .where((v)=>v>=1).map((v)=>v-1).toList()};
       case 'split':return {'mode':splitMode,'ranges':pages.isEmpty?'1-':pages};
       case 'splitText':return {'phrase':pages};
       case 'splitHalf':return {'mode':splitHalfMode};
       case 'splitSize':return {'maxMB':pages.isEmpty?'5':pages};
       case 'zip':return {'paths':[draft.path,...selectedPaths]};
-      case 'nup':return {'perSheet':nupCount,'lines':false};
+      case 'nup':return {'perSheet':nupCount,'lines':nupLines};
       case 'flip':return {'axis':axis};
       case 'crop':return {'pages':pages,'mode':cropMode,'size':pageSize,
         'left':horizontalCrop.start,'right':horizontalCrop.end,
         'top':verticalCrop.start,'bottom':verticalCrop.end};
-      case 'watermark':return {'text':pages.isEmpty?'DRAFT':pages,'opacity':watermarkOpacity};
+      case 'watermark':return {'text':pages.isEmpty?'DRAFT':pages,
+        'opacity':watermarkOpacity,'scale':watermarkScale};
       case 'pageNumbers':return {'position':numberPosition,'format':numberFormat};
-      case 'metadata':return {'title':pages,'author':'','subject':'','keywords':''};
+      case 'metadata':return {'title':pages,'author':author.text,
+        'subject':subject.text,'keywords':keywords.text};
       case 'compress':return {'mode':compressMode,'quality':compressionQuality,
         'targetMB':sizeTarget};
       case 'password':case 'unlock':return {'password':pages};
@@ -690,6 +698,8 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
         OutlinedButton.icon(onPressed:addMergeFiles,
           icon:const Icon(Icons.add),label:Text(
             'Choose more PDFs (${selectedPaths.length} selected)')),
+      if(tool=='alternate')SwitchListTile(title:const Text('Reverse later PDFs (duplex scanning)'),
+        value:reverseAlternating,onChanged:(v)=>setState(()=>reverseAlternating=v)),
       if(tool=='split')
         SegmentedButton<String>(segments:const [
           ButtonSegment(value:'ranges',label:Text('Page ranges')),
@@ -706,6 +716,8 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
         items:[90,180,270].map((n)=>DropdownMenuItem(
           value:n,child:Text('Rotate $n° clockwise'))).toList(),
         onChanged:(n)=>setState(()=>angle=n??90)),
+      if(tool=='nup')SwitchListTile(title:const Text('Draw page divider lines'),
+        value:nupLines,onChanged:(v)=>setState(()=>nupLines=v)),
       if(tool=='nup')DropdownButton<int>(isExpanded:true,value:nupCount,
         items:[2,4,6,9,16].map((n)=>DropdownMenuItem(
           value:n,child:Text('$n pages per sheet'))).toList(),
@@ -714,6 +726,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
         items:const [
           DropdownMenuItem(value:'h',child:Text('Flip horizontally')),
           DropdownMenuItem(value:'v',child:Text('Flip vertically')),
+          DropdownMenuItem(value:'both',child:Text('Flip both directions')),
         ],onChanged:(n)=>setState(()=>axis=n??'h')),
       if(tool=='compress')Column(children:[
         SegmentedButton<String>(segments:const [
@@ -758,8 +771,24 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
             DropdownMenuItem(value:'of',child:Text('Page N of Total'))],
           onChanged:(v)=>setState(()=>numberFormat=v??'n'))),
       ]),
-      if(tool=='watermark')Slider(min:.05,max:.5,value:watermarkOpacity,
-        onChanged:(v)=>setState(()=>watermarkOpacity=v)),
+      if(tool=='watermark')Column(children:[
+        Text('Watermark opacity ${(watermarkOpacity*100).round()}%'),
+        Slider(min:.05,max:.5,value:watermarkOpacity,
+          onChanged:(v)=>setState(()=>watermarkOpacity=v)),
+        DropdownButton<double>(value:watermarkScale,isExpanded:true,
+          items:const [DropdownMenuItem(value:.6,child:Text('Small')),
+            DropdownMenuItem(value:1.0,child:Text('Medium')),
+            DropdownMenuItem(value:1.4,child:Text('Large'))],
+          onChanged:(v)=>setState(()=>watermarkScale=v??1)),
+      ]),
+      if(tool=='organize')TextField(
+        decoration:const InputDecoration(labelText:'Delete pages (e.g. 2,5)',
+          border:OutlineInputBorder()),onChanged:(s)=>deletedPages=s),
+      if(tool=='metadata') ...[
+        TextField(controller:author,decoration:const InputDecoration(labelText:'Author')),
+        TextField(controller:subject,decoration:const InputDecoration(labelText:'Subject')),
+        TextField(controller:keywords,decoration:const InputDecoration(labelText:'Keywords')),
+      ],
       if(tool=='fillSign')Row(children:[
         TextButton.icon(onPressed:addSignatureImage,
           icon:const Icon(Icons.draw),label:const Text('Signature photo')),
