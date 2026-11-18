@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'editor_transfer_session.dart';
 
 class ImageEditingDraft {
   const ImageEditingDraft({required this.id, required this.name,
@@ -96,6 +97,7 @@ class ImageEditingHistory extends ChangeNotifier {
     drafts.removeWhere((item)=>item.id==draft.id);
     await _persist();
     try{await File(draft.filePath).delete();}catch(_){}
+    await EditorSessionStore.instance.delete('image',draft.id);
   }
 }
 
