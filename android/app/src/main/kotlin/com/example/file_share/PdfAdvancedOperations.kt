@@ -273,44 +273,10 @@ internal class PdfAdvancedOperations(private val context: Context,
         return listOf("pdf-bundle.zip" to out)
     }
 
-    private fun nup(input:File,a:Map<*,*>):File {
-        val per=num(a,"perSheet",4)
-        require(per in setOf(2,4,6,9,16)){"Choose 2,4,6,9 or 16"}
-        val cols=when(per){2->2;4->2;6->2;9->3;else->4}
-        val rows=(per+cols-1)/cols
+    private fun nup(input:File,a:Map<*,*>):File{
         val out=file()
-        ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use{fd->
-            PdfRenderer(fd).use{renderer->
-                PDDocument().use{doc->
-                    var page:PDPage?=null
-                    for(i in 0 until renderer.pageCount){
-                        if(i%per==0) {
-                            page=PDPage(PDRectangle.A4)
-                            doc.addPage(page)
-                        }
-                        renderer.openPage(i).use{original->
-                            val bitmap=renderPage(original,1200)
-                            try{
-                                val image=JPEGFactory.createFromImage(doc,bitmap,.9f)
-                                val sheet=requireNotNull(page).mediaBox
-                                val pad=16f
-                                val slotW=(sheet.width-2*pad)/cols
-                                val slotH=(sheet.height-2*pad)/rows
-                                val col=i%per%cols
-                                val row=i%per/cols
-                                val factor=min((slotW-8)/bitmap.width,(slotH-8)/bitmap.height)
-                                val w=bitmap.width*factor;val h=bitmap.height*factor
-                                val x=pad+col*slotW+(slotW-w)/2
-                                val y=sheet.height-pad-(row+1)*slotH+(slotH-h)/2
-                                PDPageContentStream(doc,page,PDPageContentStream.AppendMode.APPEND,true,true)
-                                    .use{it.drawImage(image,x,y,w,h)}
-                            }finally{bitmap.recycle()}
-                        }
-                    }
-                    doc.save(out)
-                }
-            }
-        }
+        PdfVectorLayout.nup(input,out,num(a,"perSheet",4),
+            a["lines"] as? Boolean?:false)
         return out
     }
 
