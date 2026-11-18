@@ -9,12 +9,12 @@ void main(){
     await tester.pumpWidget(const MaterialApp(home:FileShareToolboxPage()));
     expect(find.text('Search tools...'),findsOneWidget);
     expect(find.text('Image Editing'),findsOneWidget);
-    expect(find.text('Signature Editing'),findsOneWidget);
+    expect(find.text('Signature Edit'),findsOneWidget);
     expect(find.text('Advanced PDF Editing Tools'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'image');
     await tester.pump();
     expect(find.text('Image Editing'),findsOneWidget);
-    expect(find.text('Signature Editing'),findsNothing);
+    expect(find.text('Signature Edit'),findsNothing);
     expect(find.text('Advanced PDF Editing Tools'),findsNothing);
   });
 
