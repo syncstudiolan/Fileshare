@@ -16,7 +16,10 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import android.provider.MediaStore
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import android.content.ContentValues
 import android.os.Environment
 import android.webkit.MimeTypeMap
@@ -67,6 +70,37 @@ class FileShareApplication : Application() {
                     result.success(true)
                 } catch (e: Exception) {
                     result.error("PDF_TOOLS_OPEN_FAILED", e.message, null)
+                }
+                "zipSafDirectory" -> {
+                    val uriString = call.argument<String>("uri")
+                    val targetPath = call.argument<String>("target")
+                    val folderName = call.argument<String>("name")
+                    if (uriString.isNullOrBlank() || targetPath.isNullOrBlank()) {
+                        result.error("FOLDER_URI_MISSING", "Select a folder", null)
+                    } else {
+                        Thread {
+                            val target = File(targetPath)
+                            try {
+                                val tree = Uri.parse(uriString)
+                                require(tree.scheme == "content") { "Expected a SAF folder" }
+                                target.parentFile?.mkdirs()
+                                ZipOutputStream(target.outputStream().buffered()).use { zip ->
+                                    val rootName = safeZipSegment(folderName ?: "Folder")
+                                    zipSafChildren(tree,
+                                        DocumentsContract.getTreeDocumentId(tree),
+                                        "$rootName/", zip, 0, intArrayOf(0))
+                                }
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    result.success(mapOf("path" to target.absolutePath))
+                                }
+                            } catch (e: Exception) {
+                                target.delete()
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    result.error("SAF_FOLDER_FAILED", e.message, null)
+                                }
+                            }
+                        }.start()
+                    }
                 }
                 "saveReceivedFile" -> {
                     val path = call.argument<String>("path")
@@ -144,6 +178,52 @@ class FileShareApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         engine()
+    }
+
+    private fun safeZipSegment(input: String): String =
+        input.replace('/', '_').replace('\\', '_')
+            .replace("..", "_").filter { it.code >= 32 }
+            .take(120).ifBlank { "unnamed" }
+
+    /**
+     * Recursively stream SAF files into an archive, without exposing device
+     * paths or following symbolic links. Preserve nested folder structure.
+     * Bounded depth/count defend against pathological provider trees.
+     */
+    private fun zipSafChildren(tree: Uri, documentId: String,
+                               prefix: String, zip: ZipOutputStream,
+                               depth: Int, count: IntArray) {
+        require(depth < 40) { "Folder nesting too deep" }
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
+        contentResolver.query(children,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE),
+            null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                count[0]++
+                require(count[0] <= 100000) { "Too many folder items" }
+                val childId = cursor.getString(0)
+                val filename = safeZipSegment(cursor.getString(1) ?: "unnamed")
+                val mime = cursor.getString(2)
+                val childUri = DocumentsContract.buildDocumentUriUsingTree(tree, childId)
+                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val dirname = "$prefix$filename/"
+                    zip.putNextEntry(ZipEntry(dirname))
+                    zip.closeEntry()
+                    zipSafChildren(tree, childId, dirname, zip, depth + 1, count)
+                } else {
+                    zip.putNextEntry(ZipEntry("$prefix$filename"))
+                    try {
+                        val input = contentResolver.openInputStream(childUri)
+                            ?: throw IllegalStateException("Cannot read $filename")
+                        input.use { it.copyTo(zip, 256 * 1024) }
+                    } finally {
+                        zip.closeEntry()
+                    }
+                }
+            }
+        } ?: throw IllegalStateException("Cannot browse selected folder")
     }
 
     /**
