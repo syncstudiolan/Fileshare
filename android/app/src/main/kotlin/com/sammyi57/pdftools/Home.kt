@@ -69,8 +69,20 @@ fun Home() {
     SearchField(q, { q = it }, "Merge, split, compress…")
 
     if (!searching) {
-      Stagger(0) { Hero(files) { nav.scan() } }
-      if (files.isNotEmpty()) Stagger(1) { RecentPanel(files.take(3)) { nav.show(Tab.Files) } }
+      Btn("Open camera", Modifier.fillMaxWidth().padding(top = 16.dp),
+        I.cameraOutline) { nav.scan() }
+      val recentScans = remember { listDocs() }
+      if (recentScans.isNotEmpty()) {
+        GroupLabel("Resume scans · ${recentScans.size}")
+        Group {
+          recentScans.take(12).forEachIndexed { i, d ->
+            ListRow(d.name, first = i == 0, lead = { Icon(I.fileDocumentEditOutline) },
+              subtitle = "${plural(d.pages.size, "page")} · ${if (d.isDirty()) "Auto-saved draft" else "Saved PDF"}",
+              onClick = { nav.scan(d.id) })
+          }
+        }
+      }
+      if (files.isNotEmpty()) Stagger(1) { RecentPanel(files.take(12)) { nav.show(Tab.Files) } }
       Row(
         Modifier.padding(top = 22.dp).horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -150,7 +162,7 @@ private fun Hero(files: List<Saved>, onScan: () -> Unit) {
       Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         BasicText(
           String(Character.toChars(I.cameraOutline)), Modifier.offset(y = drop),
-          TextStyle(fontFamily = Mdi, fontSize = camSize, lineHeight = camSize, color = Color.White),
+          TextStyle(fontFamily = Poppins, fontSize = camSize, lineHeight = camSize, color = Color.White),
         )
       }
     },
