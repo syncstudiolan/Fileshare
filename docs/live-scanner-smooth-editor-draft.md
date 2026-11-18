@@ -1,127 +1,27 @@
-# File Share — Live Scanner + Smooth Photo Editor (Draft)
+# File Share — Android upstream PDF Tools + preserved Image Editor (Draft PR #6)
 
-## Change scope
-This is a **new Draft PR in the existing File Share repository**, not a fork or
-a second application. Existing merged image editing, PDF tools, File Share Cart,
-offline/online transfer, login and history APIs are preserved.
+## Source-of-truth decision (18 November 2026)
+- The Android PDF toolbox embeds the **actual source** of https://github.com/sammyZi/pdf-tools, retaining all original 24 tools, scanner, viewer, OCR, processing paths, input prompts and animations.
+- Android launch: Flutter Toolbox `openUpstreamPdfTools` -> Android activity `com.sammyi57.pdftools.MainActivity` -> original Jetpack Compose App. A PDF file can be passed in for import; other file types open the native tool selection interface.
+- UI colors/light-dark are adapted to File Share violet/lavender. Original PDF tool logic is not reimplemented in Flutter. File Share's onboarding precedes the native screen.
+- Windows has **no PDF editor/scanner processing code**; the Toolbox warning is exactly “These tools are only available on Android/mobile.”
+- MIT and third-party license texts are retained under `android/UPSTREAM_PDF_TOOLS_*`.
 
-## Android Document Scanner
-- Embedded Flutter Camera instead of launching the system camera activity.
-- Camera preview with Document / Book / ID Card / Business Card / Whiteboard
-  modes before capture, flash, switch camera, zoom, manual shutter, batch
-  capture and optional **auto capture when the detected border is stable**.
-- Android native `pdf.detectFrame` takes a throttled NV21 camera buffer and
-  uses the existing pinned DocAligner/OpenCV detection stack. Detection falls
-  back gracefully to manual shutter if live analysis isn't available.
-- Review has **Perspective** with 4 independent corners and **Normal /
-  Freeform** with 4 corners and 4 edge-midpoint handles. Native processing
-  uses the selected mode; normal crops use the selected rectangular ROI, while
-  perspective crops warp a quadrilateral.
-- Color, Gray, B&W, and Enhance preview uses GPU color matrices before
-  full-resolution export processing.
-- Existing local scan history, renaming, reordering, output PDF and cart
-  integration remain in place.
+## Legacy code removed from the Draft branch
+- Old Flutter PDF editor, PDF scanner, PDF history, PDF signature pad and PDF-only live camera UI.
+- Old custom Kotlin PDF bridge and PDF scanner/Office converter/advanced operations implementation.
+- Old custom PDF-only tests and obsolete Apache POI/Flutter camera dependencies.
+- Removed code is **not** reintroduced under a new file or parallel implementation.
+- The source changes exist only in this Draft PR; main is not merged.
 
-## Image Editing
-- Tool navigation does **not** finalize/encode a selected filter or background
-  swatch on every tab change.
-- A compact bottom **tool card** uses distinct category-specific icons and
-  scrollable labels: Background, Erase, Crop, Straighten, Filters, Adjust,
-  Compress.
-- **Straighten** is a continuously adjustable -45° to +45° slider at 0.5°
-  increments, with an optional safe rectangle auto-crop. Live preview uses
-  GPU rotation; final full-quality raster processing stays on a worker isolate.
-- **Normal Crop** shows an instantaneous GPU-rendered cropped preview while
-  the full-resolution crop is applied asynchronously.
-- **Manual Erase** uses a GPU-drawn alpha mask along each touch path while
-  work is queued serially off the UI thread. The full image is not redecoded
-  on every pointer move. Restore is also shown in the preview via source image
-  shader. Exports wait for queued brush operations.
-- **Background Removal** retains existing Google ML Kit and ONNX fallback.
-  A full-image sweep/sparkle painter replaces the tiny fixed corner spinner.
-  Other editing operations no longer use a full-page loading screen.
-- Camera and editor UI stay in the File Share's existing design. No backend
-  authentication, LAN or Cloudflare changes.
+## Image Editing — preserve without regression
+- Keep the existing native-feeling Flutter Photo/Image Editor on **both Android and Windows**.
+- Retain background removal, ML Kit and existing fallbacks, GPU previews, manual erase/restore, normal/perspective crop, fine straighten, filters, adjustments, compression, snapshots and Photo Cart history.
+- Image Editor uses `image_editing_page.dart`, `image_editing_engine.dart`, `image_editing_storage.dart` and `editor_transfer_session.dart`. Do not delete these shared pieces in PDF cleanup.
+- File Share LAN, online transfer, unified dashboard/cart, login, Cloudflare and account flows remain unchanged.
 
-## Known validation boundaries
-- The source has been updated and static structural checks were run in this
-  draft. GitHub Actions Flutter analyzer/widget tests are required before
-  integration, and Android physical-device testing is required for camera
-  NV21 support, edge-to-preview coordinate alignment and memory/performance.
-- Auto-capture accuracy varies by lighting and document geometry.
-- Initial AI model downloads may still take time, but the editor should not
-  freeze during background segmentation.
-- Performance targets (60/90/120 Hz) and installation size must be measured
-  on a real release APK; they cannot be guaranteed from source changes alone.
-- No APK/EXE release has been produced by this draft.
-
-## Validation-only PR check
-The existing `preview_validation` workflow runs Flutter analyzer and widget tests
-for PRs. It does **not** assemble or upload an APK, Windows EXE, or release.
-
-## Cross-tool continuation & Cart — November 18 update
-
-### Shared contracts
-- `lib/editor_transfer_session.dart` introduces `EditingFileRouter` for
-  deterministic file typing and `EditorSessionStore` for local, resumable
-  editing state. This is the intended integration contract for future tools.
-- Every staged File Share attachment is an **independent, immutable copy**:
-  sending to Cart never deletes or replaces the editable history source.
-- After successful staging, editor navigation returns to the existing unified
-  File Share dashboard/cart. No second Cart screen or cloud upload is created.
-- The session JSON is persisted in application-support storage, with a backup
-  during replacement and a local recovery read. Draft deletion clears its
-  session data.
-- Image editing history continues to own the actual edited photo bytes; PDF
-  editing history continues to own the actual PDF bytes.
-
-### Resume workflows
-- Image Editor: pending eraser strokes finish in the ordered worker queue;
-  selected filters, straighten, adjustments, crop and background swatch are
-  finalized before the queued snapshot when processing permits. The editor's
-  selected tool, crop handles/mode, brush settings, fine rotation, compression
-  preferences and other controls are serialized for reopening its history.
-- PDF Editor: before Add to Cart, persist current page, selected tool, crop
-  ranges, pending redactions and signature placements, workflow steps and
-  other editing options. A temporary PDF incorporating pending crop/signature/
-  redaction edits is staged, leaving the original history PDF unchanged. The
-  open-PDF prompt retains Current Page, Choose Page or Entire PDF.
-- Scanner: raw captured photos are copied to persistent application-support
-  storage; partial scan pages, crop rectangles/corners, filters and ordering
-  can be reopened. Add to Cart exports the current partial multipage PDF to
-  PDF history and stages a separate copy; it retains the scanner session.
-  Finishing the PDF explicitly clears the active scanner session.
-
-### Dashboard → Toolbox routing
-- LAN and Guest QR selected files already arrive at
-  `FileShareToolboxPage(sourcePath,sourceName)`, through the same dashboard
-  route. The selected file is preserved when launching an available editor.
-- Image Editing accepts image files only; incompatible videos/Office/PDF show
-  an explanation rather than opening an empty editor.
-- Advanced PDF Editing Tools accepts PDF and images. Image input first uses
-  the existing local `pdf.fromImages` pipeline and opens the result in the
-  PDF Workspace.
-- DOC/DOCX/XLS/XLSX and ODT/ODS use a new Android-only offline converter,
-  then open an editable PDF, leaving their original Office file intact.
-  The lightweight converter preserves readable text, spreadsheet cell values
-  and page breaks, but **does not promise pixel-perfect Microsoft Office
-  layout fidelity** for charts, macros, embedded media and advanced formatting.
-- Videos and unknown binary types cannot enter the PDF editor.
-- Windows/macOS still show the Android-only notice for native PDF tools.
-
-### Validation boundaries
-A successful Flutter analyzer, widget test and Kotlin compile establish source
-compatibility only; they do not verify file conversion fidelity, installation,
-native CameraX/Google ML Kit runtime, background transfers or device FPS.
-The draft is not ready for release or merge until Android device QA.
-
-### Robustness notes
-- If AI segmentation finishes after the Image Editor closes, the late result
-  is written to Image History. The already-staged Cart snapshot remains
-  immutable; the unfinished session can be reopened.
-- Offline Office import bounds source files to 30 MB and unpacked XML entries
-  to 16 MB to mitigate untrusted or malformed LAN/Guest QR attachments.
-- Native Office conversion uses Apache POI for legacy DOC/XLS only. This adds
-  Android dependencies and may affect release APK size; the size must be
-  measured at the next explicitly requested APK test build.
-- Full native compilation is checked without making or uploading an APK.
+## Validation and release gate
+- CI checks Flutter analyzer, Flutter tests, original Compose Kotlin compilation and JVM tests of the **original 24-tool catalog**.
+- Draft PR #6 additionally creates an ARM64 **debug-signed APK**, verifies its signature and uploads the APK artifact for user-side testing.
+- A successful build alone does **not** prove scanner hardware, OCR accuracy, each of the 24 tools, file import/export, third-party Drive sync, or every Android version. These need follow-up practical tests.
+- Keep PR **Draft**; do not merge, release publicly, deploy Cloudflare or claim production readiness until checks and device acceptance are complete.
