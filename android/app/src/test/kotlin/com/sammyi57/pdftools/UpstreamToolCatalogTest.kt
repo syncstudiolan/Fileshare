@@ -4,6 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 
 /** Verify the actual upstream registry, not the removed Flutter list. */
 class UpstreamToolCatalogTest {
@@ -15,6 +18,22 @@ class UpstreamToolCatalogTest {
     assertTrue(TOOLS.any { it.id == "ocr" })
     assertTrue(TOOLS.any { it.id == "fillSign" })
     assertTrue(TOOLS.any { it.id == "redact" })
+  }
+
+  @Test fun cameraScanProjectRemainsEditableWithCompressionPreference() {
+    val picture = Shot("/private/camera/original.jpg", 1200, 1600,
+      corners = listOf(0.1f, 0.2f, 0.9f, 0.2f, 0.9f, 0.9f, 0.1f, 0.9f),
+      filter = "gray")
+    val page = ScanPage("page-1", "doc", "A4-portrait", listOf(picture))
+    val document = ScanDoc(
+      "scan-1", "Invoice", 10L, 11L, listOf(page),
+      compressionTargetKb = 200,
+    )
+    val restored = Json.decodeFromString<ScanDoc>(Json.encodeToString(document))
+    assertEquals(200, restored.compressionTargetKb)
+    assertEquals("gray", restored.pages.single().shots.single().filter)
+    assertEquals(picture.corners, restored.pages.single().shots.single().corners)
+    assertEquals(picture.src, restored.pages.single().shots.single().src)
   }
 
   @Test fun pageSelectionUsesZeroBasedIndicesWithoutMutatingDocument() {
