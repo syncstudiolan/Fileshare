@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'pdf_history.dart';
 import 'editor_transfer_session.dart';
 import 'advanced_pdf_tools_page.dart' show addPdfToCart;
