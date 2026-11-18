@@ -276,7 +276,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
 
   Future<void> _commit(Uint8List previous,Uint8List next,String step) async {
-    if(!mounted)return;
+    if(!mounted){
+      // A user may send the last completed snapshot to Cart while AI is
+      // processing. The late result belongs in the draft history, not lost
+      // because the Editor route was closed.
+      final id=_draftId;
+      if(id!=null)await ImageEditingHistory.instance.save(
+        id:id,name:_name,bytes:next,steps:[..._steps,step]);
+      return;
+    }
     _undo.add(previous);
     if(_undo.length>15)_undo.removeAt(0);
     _redo.clear();
