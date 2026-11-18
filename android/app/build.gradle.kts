@@ -23,6 +23,16 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
 }
 flutter { source = "../.." }
 
