@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.PDResources
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
@@ -116,6 +117,14 @@ class AdvancedPdfBridge(private val context: Context) {
             return output.path
         } catch(e:Exception){ output.delete();throw e }
     }
+    // Adapted from upstream Pdf.kt adopt(): inherited Resources can otherwise
+    // disappear when a page is copied to a different PDF page tree.
+    private fun adopt(out:PDDocument, source:PDPage){
+        val next=out.importPage(source)
+        if(!next.cosObject.containsKey(COSName.RESOURCES))
+            next.resources=source.resources?:PDResources()
+    }
+
     private fun combine(a:Map<*,*>,dest:File,alternate:Boolean){
         val paths=(a["paths"] as? List<*>)?.filterIsInstance<String>()
             ?.takeIf{it.isNotEmpty()} ?: listOf(required(a,"path"))
@@ -125,8 +134,8 @@ class AdvancedPdfBridge(private val context: Context) {
                 if(alternate){
                     val maxPages=sources.maxOf{it.numberOfPages}
                     for(i in 0 until maxPages)for(src in sources)
-                        if(i<src.numberOfPages)out.importPage(src.getPage(i))
-                }else for(src in sources)for(p in src.pages)out.importPage(p)
+                        if(i<src.numberOfPages)adopt(out,src.getPage(i))
+                }else for(src in sources)for(p in src.pages)adopt(out,p)
                 require(out.numberOfPages>0){"No pages"}
                 out.save(dest)
             }
@@ -153,7 +162,7 @@ class AdvancedPdfBridge(private val context: Context) {
                 listOf(number(a,"page",0)) else pages(doc,a)
             require(selected.isNotEmpty()){"Select at least one page"}
             PDDocument().use { out ->
-                selected.forEach{ require(it in 0 until doc.numberOfPages){"Invalid page"};out.importPage(doc.getPage(it)) }
+                selected.forEach{ require(it in 0 until doc.numberOfPages){"Invalid page"};adopt(out,doc.getPage(it)) }
                 out.save(dest)
             }
         }
@@ -171,7 +180,7 @@ class AdvancedPdfBridge(private val context: Context) {
             val selection=pages(doc,a)
             val deleted=(a["deletePages"] as? List<*>)?.mapNotNull{(it as? Number)?.toInt()}?.toSet()?:emptySet()
             PDDocument().use { out ->
-                selection.filterNot{it in deleted}.forEach{out.importPage(doc.getPage(it))}
+                selection.filterNot{it in deleted}.forEach{adopt(out,doc.getPage(it))}
                 require(out.numberOfPages>0){"Cannot delete every page"}
                 out.save(dest)
             }
@@ -245,7 +254,7 @@ class AdvancedPdfBridge(private val context: Context) {
                 stripper.getText(doc).lowercase().contains(phrase)
             }?:error("Phrase not found. OCR this document first.")
             PDDocument().use{ out ->
-                for(i in first until doc.numberOfPages)out.importPage(doc.getPage(i))
+                for(i in first until doc.numberOfPages)adopt(out,doc.getPage(i))
                 out.save(dest)
             }
         }
@@ -340,7 +349,7 @@ class AdvancedPdfBridge(private val context: Context) {
             val half=(doc.numberOfPages+1)/2
             val range=if(start==0)0 until half else half until doc.numberOfPages
             PDDocument().use{out->
-                for(i in range)out.importPage(doc.getPage(i))
+                for(i in range)adopt(out,doc.getPage(i))
                 out.save(dest)
             }
         }
@@ -360,7 +369,7 @@ class AdvancedPdfBridge(private val context: Context) {
             require(marks.isNotEmpty()){"PDF has no top-level bookmarks"}
             val start=marks.distinct().sorted().first()
             PDDocument().use{out->
-                for(i in start until doc.numberOfPages)out.importPage(doc.getPage(i))
+                for(i in start until doc.numberOfPages)adopt(out,doc.getPage(i))
                 out.save(dest)
             }
         }
@@ -374,7 +383,7 @@ class AdvancedPdfBridge(private val context: Context) {
             PDDocument().use{out->
                 var last:ByteArray?=null
                 for(page in doc.pages){
-                    out.importPage(page)
+                    adopt(out,page)
                     val bytes=ByteArrayOutputStream().use{stream->
                         out.save(stream);stream.toByteArray()
                     }
