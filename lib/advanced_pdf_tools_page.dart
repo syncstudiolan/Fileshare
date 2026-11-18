@@ -372,7 +372,62 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     super.initState();
     tool=widget.initialTool??'rotate';
     page=widget.draft.page;
-    unawaited(load());
+    unawaited(load().then((_)=>_restoreSession()));
+  }
+  Future<void> _saveSession()async{
+    await EditorSessionStore.instance.save('pdf',draft.id,{
+      'tool':tool,'page':page,'input':input.text,
+      'angle':angle,'nupCount':nupCount,
+      'cropMode':cropMode,'pageSize':pageSize,
+      'horizontalCrop':[horizontalCrop.start,horizontalCrop.end],
+      'verticalCrop':[verticalCrop.start,verticalCrop.end],
+      'signItems':signItems,'redactionBoxes':redactionBoxes,
+      'workflowSteps':workflowSteps,'selectedPaths':selectedPaths,
+      'compressionQuality':compressionQuality,'compressionMode':compressMode,
+      'splitMode':splitMode,'sizeTarget':sizeTarget,
+      'watermarkOpacity':watermarkOpacity,
+    });
+  }
+  Future<void> _restoreSession()async{
+    final state=await EditorSessionStore.instance.load('pdf',draft.id);
+    if(state==null||!mounted)return;
+    double value(dynamic x,double fallback)=>
+      x is num?x.toDouble():fallback;
+    final h=state['horizontalCrop'],v=state['verticalCrop'];
+    setState((){
+      tool=state['tool'] as String? ??tool;
+      page=(state['page'] as num?)?.toInt()?.clamp(0,math.max(0,total-1))??page;
+      input.text=state['input'] as String? ??'';
+      angle=(state['angle'] as num?)?.toInt()??angle;
+      nupCount=(state['nupCount'] as num?)?.toInt()??nupCount;
+      cropMode=state['cropMode'] as String? ??cropMode;
+      pageSize=state['pageSize'] as String? ??pageSize;
+      if(h is List&&h.length==2)horizontalCrop=RangeValues(
+        value(h[0],0),value(h[1],1));
+      if(v is List&&v.length==2)verticalCrop=RangeValues(
+        value(v[0],0),value(v[1],1));
+      signItems
+        ..clear()
+        ..addAll((state['signItems'] as List? ??[])
+          .whereType<Map>().map((x)=>Map<String,dynamic>.from(x)));
+      redactionBoxes
+        ..clear()
+        ..addAll((state['redactionBoxes'] as List? ??[])
+          .whereType<Map>().map((x)=>Map<String,dynamic>.from(x)));
+      workflowSteps
+        ..clear()
+        ..addAll((state['workflowSteps'] as List? ??[])
+          .whereType<Map>().map((x)=>Map<String,dynamic>.from(x)));
+      selectedPaths
+        ..clear()
+        ..addAll((state['selectedPaths'] as List? ??[]).whereType<String>());
+      compressionQuality=(state['compressionQuality'] as num?)?.toInt()
+        ??compressionQuality;
+      compressMode=state['compressionMode'] as String? ??compressMode;
+      splitMode=state['splitMode'] as String? ??splitMode;
+      sizeTarget=state['sizeTarget'] as String? ??sizeTarget;
+      watermarkOpacity=value(state['watermarkOpacity'],watermarkOpacity);
+    });
   }
   @override void dispose(){
     input.dispose();author.dispose();subject.dispose();keywords.dispose();
@@ -424,42 +479,48 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     }catch(e){message('Share failed: $e');}
   }
   Future<void> sendToCart()async{
-    // Pending on-screen annotations must not be lost when the user sends
-    // before Apply. Produce an isolated export; do not alter edit history.
+    // A resumable session is persisted regardless of page scope or whether
+    // full-resolution processing is still underway.
+    try{await _saveSession();}catch(e){
+      message('Cannot preserve the unfinished PDF session: $e');
+      return;
+    }
     final pendingSign=tool=='fillSign'&&signItems.isNotEmpty;
     final pendingRedact=tool=='redact'&&redactionBoxes.isNotEmpty;
     final pendingCrop=tool=='crop'&&cropMode=='crop'&&
       (horizontalCrop.start>0||horizontalCrop.end<1||
        verticalCrop.start>0||verticalCrop.end<1);
+    bool accepted=false;
     if(busy){
-      message('Processing is running; sending the last saved draft.');
-      await addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
-      return;
-    }
-    if(!pendingSign&&!pendingRedact&&!pendingCrop){
-      await addPdfToCart(context,draft,editorOpen:true,page:page,pageCount:total);
-      return;
-    }
-    File? temporary;
-    try{
-      if(pendingSign||pendingRedact){
-        final files=await AdvancedPdfEngine.multiple(
-          draft.path,tool,optionsFor(tool));
-        if(files.isEmpty)throw StateError('The pending edit produced no PDF');
-        temporary=File(files.first['path']!);
-      }else{
-        temporary=File(await AdvancedPdfEngine.edit(
-          draft.path,'crop',optionsFor('crop')));
+      message('Processing is still running; the last completed PDF is being staged.');
+      accepted=await addPdfToCart(context,draft,editorOpen:true,
+        page:page,pageCount:total);
+    }else if(!pendingSign&&!pendingRedact&&!pendingCrop){
+      accepted=await addPdfToCart(context,draft,editorOpen:true,
+        page:page,pageCount:total);
+    }else{
+      File? temporary;
+      try{
+        if(pendingSign||pendingRedact){
+          final files=await AdvancedPdfEngine.multiple(
+            draft.path,tool,optionsFor(tool));
+          if(files.isEmpty)throw StateError('Unapplied PDF edit failed');
+          temporary=File(files.first['path']!);
+        }else{
+          temporary=File(await AdvancedPdfEngine.edit(
+            draft.path,'crop',optionsFor('crop')));
+        }
+        final snapshot=PdfDraft(id:draft.id,name:draft.name,
+          path:temporary.path,updated:DateTime.now(),
+          actions:[...draft.actions,'Pending preview'],page:page);
+        if(mounted)accepted=await addPdfToCart(context,snapshot,
+          editorOpen:true,page:page,pageCount:total);
+      }catch(e){message('Cannot stage unfinished edits: $e');}
+      finally{
+        if(temporary!=null)try{await temporary.delete();}catch(_){}
       }
-      final previewDraft=PdfDraft(id:draft.id,name:draft.name,
-        path:temporary.path,updated:DateTime.now(),
-        actions:[...draft.actions,'Unapplied preview'],page:page);
-      if(mounted)await addPdfToCart(context,previewDraft,
-        editorOpen:true,page:page,pageCount:total);
-    }catch(e){message('Cannot send these pending edits: $e');}
-    finally{
-      if(temporary!=null)try{await temporary.delete();}catch(_){}
     }
+    if(accepted&&mounted)returnToFileShareCart(context);
   }
   Future<File> _snapshot()async{
     final cache=await getTemporaryDirectory();
