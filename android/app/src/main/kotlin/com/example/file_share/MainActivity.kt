@@ -101,6 +101,31 @@ class FileShareApplication : Application() {
         engine()
     }
 
+    /** Copies an internally created PDF to the same persistent staging queue as incoming files.
+     * The user must still press Send. No network transfer starts here.
+     */
+    @Synchronized
+    fun stagePdfFromTools(source: File, suggestedName: String): Boolean {
+        if (!source.isFile || !source.canRead() ||
+            !source.extension.equals("pdf", ignoreCase = true)) return false
+        val safe = suggestedName.replace('/', '_').replace('\\\\', '_')
+            .filter { it.code >= 32 }.take(140).ifBlank { "document.pdf" }
+        val name = if (safe.endsWith(".pdf", ignoreCase = true)) safe else "$safe.pdf"
+        val folder = File(filesDir, "fileshare_inbox").apply { mkdirs() }
+        val copy = File(folder, "pdf_cart_" + System.nanoTime() + "_" + name)
+        return try {
+            source.copyTo(copy)
+            synchronized(shared) {
+                shared.add(mapOf("name" to name, "path" to copy.absolutePath))
+            }
+            notifySharedToUi()
+            true
+        } catch (_: Exception) {
+            copy.delete()
+            false
+        }
+    }
+
     fun notifySharedToUi() {
         channel?.invokeMethod("sharesReceived", true)
     }
