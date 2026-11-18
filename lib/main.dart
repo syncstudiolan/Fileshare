@@ -1430,7 +1430,7 @@ class LiveTransferCard extends StatelessWidget {
             onTap: () => _preview(context, file),
             child: SizedBox(width: side, height: side, child: _visual(file))),
           const SizedBox(width: 12),
-          Expanded(child: SizedBox(height: side, child: Column(
+          Expanded(child: SizedBox(height: side + (active || file.state == TransferState.failed ? 26 : 0), child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis,
@@ -1519,8 +1519,11 @@ class LiveTransferCard extends StatelessWidget {
               style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
             const SizedBox(width: 4),
             if (!incoming) Icon(
-              delivered ? Icons.done_all_rounded : Icons.done_rounded,
-              // Double tick means acknowledged as delivered, never merely queued.
+              delivered ? Icons.done_all_rounded
+                : queued ? Icons.schedule_rounded
+                : first.state == TransferState.failed
+                  ? Icons.error_outline_rounded : Icons.done_rounded,
+              // Double tick only after the receiver's durable ACK.
               size: 17, color: delivered ? FileTheme.violet
                 : FileTheme.muted(context)),
             if (incoming && delivered)
