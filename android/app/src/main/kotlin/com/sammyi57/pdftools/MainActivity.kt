@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
 
   private fun takeIncoming(intent: Intent) {
     Incoming.uri = when (intent.action) {
-      Intent.ACTION_VIEW -> intent.data
+      Intent.ACTION_VIEW -> intent.getStringExtra("fileshare.pdf.path")?.let { Uri.fromFile(java.io.File(it)) } ?: intent.data
       Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
       else -> null
     }
