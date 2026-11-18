@@ -1,15 +1,8 @@
 name: Android PR6 compact signed test release
 
+# Manually triggered only after the user authorizes the combined release.
 on:
-  push:
-    branches:
-      - draft/live-scanner-smooth-editor-tools
-    paths:
-      - ".github/workflows/android-pr6-compact-release.yml"
-      - "lib/**"
-      - "android/**"
-      - "pubspec.yaml"
-      - "test/**"
+  workflow_dispatch:
 
 permissions:
   contents: write
