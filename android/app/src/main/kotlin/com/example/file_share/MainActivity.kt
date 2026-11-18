@@ -16,6 +16,10 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.OpenableColumns
+import android.provider.MediaStore
+import android.content.ContentValues
+import android.os.Environment
+import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -63,6 +67,27 @@ class FileShareApplication : Application() {
                     result.success(true)
                 } catch (e: Exception) {
                     result.error("PDF_TOOLS_OPEN_FAILED", e.message, null)
+                }
+                "saveReceivedFile" -> {
+                    val path = call.argument<String>("path")
+                    val name = call.argument<String>("name")
+                    val image = call.argument<Boolean>("image") ?: false
+                    if (path.isNullOrEmpty() || name.isNullOrEmpty()) {
+                        result.error("INVALID_FILE", "File path or name missing", null)
+                    } else {
+                        Thread {
+                            try {
+                                val uri = saveReceivedToPublicCollection(File(path), name, image)
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    result.success(uri.toString())
+                                }
+                            } catch (e: Exception) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    result.error("SAVE_FAILED", e.message, null)
+                                }
+                            }
+                        }.start()
+                    }
                 }
                 "convertDocxToPdf" -> {
                     val path = call.argument<String>("path")
@@ -120,6 +145,60 @@ class FileShareApplication : Application() {
         super.onCreate()
         engine()
     }
+
+    /**
+     * On Android 10+ use public MediaStore, not the private downloads cache:
+     * photographs go into DCIM/FileShare and are immediately gallery-visible;
+     * other MIME types go into public Download/FileShare.
+     * IS_PENDING hides incomplete copies. On failure the row is removed.
+     */
+    private fun saveReceivedToPublicCollection(source: File, originalName: String,
+                                               image: Boolean): Uri {
+        require(source.isFile && source.canRead()) { "Received file unavailable" }
+        val clean = originalName.replace('/', '_').replace('\\', '_')
+            .filter { it.code >= 32 }.takeLast(160).ifBlank { "received_file" }
+        val ext = clean.substringAfterLast('.', "").lowercase()
+        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+            ?: if (image) "image/jpeg" else "application/octet-stream"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val target = if (image) MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                         else MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val subdir = if (image) Environment.DIRECTORY_DCIM + "/FileShare"
+                         else Environment.DIRECTORY_DOWNLOADS + "/FileShare"
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, clean)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, subdir)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(target, values)
+                ?: throw IllegalStateException("Could not create public destination")
+            try {
+                contentResolver.openOutputStream(uri)?.use { stream ->
+                    source.inputStream().use { input -> input.copyTo(stream, 256 * 1024) }
+                } ?: throw IllegalStateException("Could not open destination stream")
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+                return uri
+            } catch (e: Exception) {
+                contentResolver.delete(uri, null, null)
+                throw e
+            }
+        }
+        // Old Android versions lack scoped-storage MediaStore downloads APIs.
+        // Preserve data in the app's external files, rather than silently fail.
+        val dir = File(getExternalFilesDir(
+            if (image) Environment.DIRECTORY_PICTURES
+            else Environment.DIRECTORY_DOWNLOADS), "FileShare").apply { mkdirs() }
+        var target = File(dir, clean)
+        var i = 1
+        while (target.exists()) target = File(dir, "${i++}_$clean")
+        source.copyTo(target)
+        return Uri.fromFile(target)
+    }
+
+
 
     /** Copies an internally created PDF to the same persistent staging queue as incoming files.
      * The user must still press Send. No network transfer starts here.
