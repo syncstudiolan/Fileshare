@@ -332,37 +332,58 @@ internal class PdfAdvancedOperations(private val context: Context,
             ?:error("Select redaction areas")
         require(marks.isNotEmpty()){"Select at least one redaction area"}
         val out=file()
+        val byPage=marks.groupBy{(it["page"] as? Number)?.toInt()?:0}
         ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use{fd->
             PdfRenderer(fd).use{renderer->
-                PDDocument().use{doc->
-                    val black=Paint().apply{color=Color.BLACK;style=Paint.Style.FILL}
-                    for(i in 0 until renderer.pageCount){
-                        renderer.openPage(i).use{p->
-                            val bitmap=renderPage(p,3000)
-                            try{
-                                val canvas=android.graphics.Canvas(bitmap)
-                                for(mark in marks){
-                                    val target=(mark["page"] as? Number)?.toInt()?:0
-                                    if(target!=i)continue
-                                    val x=(mark["x"] as? Number)?.toFloat()?:0f
-                                    val y=(mark["y"] as? Number)?.toFloat()?:0f
-                                    val w=(mark["w"] as? Number)?.toFloat()?:0f
-                                    val h=(mark["h"] as? Number)?.toFloat()?:0f
-                                    canvas.drawRect(x*bitmap.width,y*bitmap.height,
-                                        (x+w)*bitmap.width,(y+h)*bitmap.height,black)
-                                }
-                                val newPage=PDPage(PDRectangle(p.width.toFloat(),p.height.toFloat()))
-                                doc.addPage(newPage)
-                                val img=JPEGFactory.createFromImage(doc,bitmap,.95f)
-                                PDPageContentStream(doc,newPage).use{
-                                    it.drawImage(img,0f,0f,newPage.mediaBox.width,newPage.mediaBox.height)
-                                }
-                            }finally{bitmap.recycle()}
+                PDDocument.load(input).use{source->
+                    PDDocument().use{doc->
+                        val black=Paint().apply{
+                            color=Color.BLACK;style=Paint.Style.FILL
                         }
+                        for(i in 0 until source.numberOfPages){
+                            val selections=byPage[i]
+                            if(selections.isNullOrEmpty()){
+                                adopt(doc,source.getPage(i))
+                                // Avoid keeping annotations that may reference redacted
+                                // sections or other pages in the original document.
+                                doc.getPage(doc.numberOfPages-1).cosObject
+                                    .removeItem(COSName.ANNOTS)
+                                continue
+                            }
+                            renderer.openPage(i).use{p->
+                                val bitmap=renderPage(p,3000)
+                                try{
+                                    val canvas=android.graphics.Canvas(bitmap)
+                                    for(mark in selections){
+                                        val x=(mark["x"] as? Number)?.toFloat()?:0f
+                                        val y=(mark["y"] as? Number)?.toFloat()?:0f
+                                        val w=(mark["w"] as? Number)?.toFloat()?:0f
+                                        val h=(mark["h"] as? Number)?.toFloat()?:0f
+                                        require(w>0&&h>0){"Empty redaction box"}
+                                        canvas.drawRect(x*bitmap.width,y*bitmap.height,
+                                            (x+w)*bitmap.width,
+                                            (y+h)*bitmap.height,black)
+                                    }
+                                    val newPage=PDPage(PDRectangle(
+                                        p.width.toFloat(),p.height.toFloat()))
+                                    doc.addPage(newPage)
+                                    val img=JPEGFactory.createFromImage(doc,bitmap,.95f)
+                                    PDPageContentStream(doc,newPage).use{
+                                        it.drawImage(img,0f,0f,
+                                            newPage.mediaBox.width,newPage.mediaBox.height)
+                                    }
+                                }finally{bitmap.recycle()}
+                            }
+                        }
+                        // Rebuild the PDF rather than drawing black overlays
+                        // over hidden text. All original redacted page streams
+                        // and their annotation layers are discarded.
+                        doc.documentInformation=PDDocumentInformation()
+                        val catalog=doc.documentCatalog.cosObject
+                        for(name in listOf("AcroForm","StructTreeRoot","MarkInfo","Metadata"))
+                            catalog.removeItem(COSName.getPDFName(name))
+                        doc.save(out)
                     }
-                    doc.documentInformation=PDDocumentInformation()
-                    doc.documentCatalog.cosObject.removeItem(COSName.METADATA)
-                    doc.save(out)
                 }
             }
         }
