@@ -419,6 +419,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     double value(dynamic x,double fallback)=>
       x is num?x.toDouble():fallback;
     final h=state['horizontalCrop'],v=state['verticalCrop'];
+    final previousPage=page;
     setState((){
       tool=state['tool'] as String? ??tool;
       page=(state['page'] as num?)?.toInt()?.clamp(0,math.max(0,total-1))??page;
@@ -464,6 +465,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
       splitHalfMode=state['splitHalfMode'] as String? ??splitHalfMode;
       axis=state['axis'] as String? ??axis;
     });
+    if(page!=previousPage)unawaited(load());
   }
   @override void dispose(){
     input.dispose();author.dispose();subject.dispose();keywords.dispose();
