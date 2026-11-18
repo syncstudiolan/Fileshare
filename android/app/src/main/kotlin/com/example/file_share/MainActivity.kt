@@ -44,7 +44,7 @@ class FileShareApplication : Application() {
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL_NAME)
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
-                "pdf.countPages", "pdf.renderPage", "pdf.process" -> {
+                "pdf.countPages", "pdf.renderPage", "pdf.process", "pdf.fromImages" -> {
                     pdf.handle(MethodCall(call.method.removePrefix("pdf."), call.arguments), result)
                 }
                 "takeSharedFiles" -> {
