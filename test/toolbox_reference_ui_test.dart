@@ -25,10 +25,13 @@ void main(){
     expect(find.text('Choose an image'),findsOneWidget);
     expect(find.text('Camera'),findsOneWidget);
     expect(find.text('Browse images'),findsOneWidget);
-    expect(find.text('Send to File Share Cart'),findsOneWidget);
-    final button=tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton,'Send to File Share Cart'));
-    expect(button.onPressed,isNull);
+    expect(find.text('Send to File Share Cart'),findsNothing);
+    final cart=find.byTooltip('Send to File Share Cart');
+    expect(cart,findsOneWidget);
+    expect(tester.widget<IconButton>(cart).onPressed,isNull);
+    expect(find.byTooltip('Apply'),findsOneWidget);
+    expect(find.byTooltip('Undo'),findsOneWidget);
+    expect(find.byTooltip('Redo'),findsOneWidget);
   });
 
   testWidgets('Future Toolbox entries explain availability, never dead taps',
