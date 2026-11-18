@@ -38,7 +38,7 @@ import kotlin.math.max
  */
 class AdvancedPdfBridge(private val context: Context) {
     private val executor = Executors.newSingleThreadExecutor()
-    private val advanced by lazy { PdfAdvancedOperations(context) }
+    private val advanced by lazy { PdfAdvancedOperations(context){ args -> process(args) } }
     private val scanner by lazy { AndroidDocumentScanner(context) }
     init { PDFBoxResourceLoader.init(context) }
 
