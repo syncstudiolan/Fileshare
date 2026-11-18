@@ -200,7 +200,7 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
     }finally{if(mounted)setState(()=>importing=false);}
   }
   Future<void> pickPdf({String? initialTool})async{
-    final files=await FilePicker.platform.pickFiles(type:FileType.custom,
+    final files=await FilePicker().pickFiles(type:FileType.custom,
       allowedExtensions:['pdf'],withData:false);
     final path=files?.files.singleOrNull?.path;
     if(path!=null)await importPath(path,files!.files.first.name,initialTool:initialTool);
@@ -395,7 +395,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
   }
   Future<void> savePdf()async{
     try{
-      final saved=await FilePicker.platform.saveFile(
+      final saved=await FilePicker().saveFile(
         dialogTitle:'Save PDF',fileName:draft.name,type:FileType.custom,
         allowedExtensions:['pdf'],bytes:await File(draft.path).readAsBytes());
       if(saved!=null)message('PDF saved');
@@ -476,7 +476,7 @@ class _PdfWorkspacePageState extends State<PdfWorkspacePage>{
     finally{if(mounted)setState(()=>busy=false);}
   }
   Future<void> addMergeFiles()async{
-    final result=await FilePicker.platform.pickFiles(
+    final result=await FilePicker().pickFiles(
       type:FileType.custom,allowedExtensions:['pdf'],allowMultiple:true,
       withData:false);
     if(result==null)return;
