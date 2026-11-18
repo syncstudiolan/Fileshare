@@ -69,8 +69,8 @@ fun Home() {
   val searching = tokens.isNotEmpty()
   val tools = if (searching) TOOLS.filter { matches("${it.title} ${it.desc}", tokens) } else TOOLS
   val found = if (searching) files.filter { matches(it.name, tokens) } else emptyList()
-  // Sections with something to show besides the camera (the hero card already opens it).
-  val sections = remember { SECTIONS.indices.filter { si -> TOOLS.any { it.section == si && it.id != "scan" } } }
+  // Camera lives inside Combine & split and launches the existing scanner.
+  val sections = remember { SECTIONS.indices.filter { si -> TOOLS.any { it.section == si } } }
   var section by rememberSaveable { mutableStateOf(-1) } // -1: every section
 
   Screen {
@@ -78,8 +78,6 @@ fun Home() {
     SearchField(q, { q = it }, "Merge, split, compress…")
 
     if (!searching) {
-      Btn("Open camera", Modifier.fillMaxWidth().padding(top = 16.dp),
-        I.cameraOutline) { nav.scan() }
       val recentScans = remember(Store.version) { listDocs() }
       if (recentScans.isNotEmpty()) {
         GroupLabel("Resume scans · ${recentScans.size}")
@@ -159,7 +157,7 @@ fun Home() {
 
     SECTIONS.forEachIndexed { si, name ->
       if (!searching && section != -1 && section != si) return@forEachIndexed
-      val items = tools.filter { it.section == si && (searching || it.id != "scan") }
+      val items = tools.filter { it.section == si }
       if (items.isEmpty()) return@forEachIndexed
       Stagger(si + 3) {
         Column {
