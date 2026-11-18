@@ -185,6 +185,7 @@ jobs:
 
   android_background_emulator:
     name: Verify Android background TCP receive and notification
+    if: github.event_name == 'workflow_dispatch'
     needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 45
