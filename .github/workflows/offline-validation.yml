@@ -34,6 +34,9 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Run Toolbox UI and image processing regression tests
         run: flutter test
+      - name: Compile native Android scanner and PDF bridge (no APK)
+        working-directory: android
+        run: ./gradlew :app:compileDebugKotlin --no-daemon --console=plain
   android:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
