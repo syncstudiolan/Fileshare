@@ -1578,7 +1578,7 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
     onTap:widget.onOpen,
     borderRadius:BorderRadius.circular(10),
     child:ClipRRect(borderRadius:BorderRadius.circular(10),
-      child:SizedBox(width:60,height:60,
+      child:SizedBox.expand(
         child:_image==null
           ?const Icon(Icons.insert_drive_file_outlined,
               color:FileTheme.pink,size:30)
@@ -1587,7 +1587,7 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
               builder:(context,snapshot){
                 if(snapshot.hasData){
                   return Image.file(snapshot.data!,fit:BoxFit.cover,
-                    cacheWidth:160,
+                    cacheWidth:240,
                     errorBuilder:(_,__,___)=>const Icon(
                       Icons.broken_image_outlined,color:FileTheme.pink));
                 }
