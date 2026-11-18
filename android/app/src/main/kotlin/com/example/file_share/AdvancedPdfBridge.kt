@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.YuvImage
 import android.graphics.ImageFormat
 import android.graphics.Rect
-import android.graphics.Matrix
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
@@ -93,7 +92,7 @@ class AdvancedPdfBridge(private val context: Context) {
         val rotation=number(a,"rotation",0)%360
         val oriented=if(rotation==0)original else Bitmap.createBitmap(
             original,0,0,original.width,original.height,
-            Matrix().apply{postRotate(rotation.toFloat())},true)
+            android.graphics.Matrix().apply{postRotate(rotation.toFloat())},true)
         val file=temporary("jpg")
         return try{
             file.outputStream().use{oriented.compress(Bitmap.CompressFormat.JPEG,75,it)}
