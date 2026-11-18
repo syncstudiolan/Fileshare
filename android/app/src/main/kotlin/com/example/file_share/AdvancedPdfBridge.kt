@@ -237,21 +237,41 @@ class AdvancedPdfBridge(private val context: Context) {
         val format=select(a,"format","n")
         PDDocument.load(File(path)).use{doc->
             val font=PDType1Font.HELVETICA
-            val total=doc.numberOfPages
-            for(i in 0 until total){
-                val p=doc.getPage(i);val box=p.cropBox
-                val label=if(format=="of")"Page ${i+1} of $total" else "${i+1}"
-                val width=font.getStringWidth(label)/1000f*10
-                val x=when(position){
-                    "left"->box.lowerLeftX+28f
-                    "right"->box.lowerLeftX+box.width-28f-width
-                    else->box.lowerLeftX+(box.width-width)/2f
+            val count=doc.numberOfPages
+            for(i in 0 until count){
+                val page=doc.getPage(i);val box=page.cropBox
+                val rotation=((page.rotation%360)+360)%360
+                val (displayW,displayH)=if(rotation%180!=0)
+                    box.height to box.width else box.width to box.height
+                val label=if(format=="of")"Page ${i+1} of $count" else "${i+1}"
+                val textWidth=font.getStringWidth(label)/1000f*10f
+                val left=when(position){
+                    "left"->28f
+                    "right"->displayW-28f-textWidth
+                    else->(displayW-textWidth)/2f
                 }
-                PDPageContentStream(doc,p,PDPageContentStream.AppendMode.APPEND,true,true).use{stream->
+                val x=left/displayW
+                val y=(displayH-20f-10f*.79f)/displayH
+                val h=10f*.79f/displayH
+                val fractions=when(rotation){
+                    90->listOf(y,x,h,0f)
+                    180->listOf(1f-x,y,0f,h)
+                    270->listOf(1f-y-h,1f-x,h,0f)
+                    else->listOf(x,1f-y-h,0f,h)
+                }
+                val startX=fractions[0]*box.width
+                val startY=fractions[1]*box.height
+                val rw=fractions[2]*box.width
+                val rh=fractions[3]*box.height
+                val originX=when(rotation){90,180->startX+rw;else->startX}
+                val originY=when(rotation){180,270->startY+rh;else->startY}
+                PDPageContentStream(doc,page,PDPageContentStream.AppendMode.APPEND,true,true).use{stream->
                     stream.beginText()
                     stream.setFont(font,10f)
                     stream.setNonStrokingColor(.2f,.2f,.2f)
-                    stream.newLineAtOffset(x,box.lowerLeftY+20f)
+                    stream.setTextMatrix(Matrix.getRotateInstance(
+                        Math.toRadians(rotation.toDouble()),
+                        box.lowerLeftX+originX,box.lowerLeftY+originY))
                     stream.showText(label)
                     stream.endText()
                 }
