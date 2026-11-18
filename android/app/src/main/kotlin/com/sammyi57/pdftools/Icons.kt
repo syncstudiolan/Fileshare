@@ -1,31 +1,131 @@
 package com.sammyi57.pdftools
 
-import com.example.file_share.R
 
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
-// Material Design Icons, drawn from the same font the Expo app used, so every icon looks exactly as before.
-val Mdi = FontFamily(Font(R.font.mdi))
-
+// Vector icons are bundled with the Android app. The previous mdi.ttf file was
+// a zero-byte Git blob, so codepoint-based glyphs rendered tofu boxes.
 @Composable
 fun Icon(glyph: Int, size: Dp = 22.dp, color: Color = c.ink, modifier: Modifier = Modifier, label: String? = null) {
-  val px = size.value
-  BasicText(
-    text = String(Character.toChars(glyph)),
-    modifier = if (label != null) modifier.semantics { contentDescription = label } else modifier,
-    style = TextStyle(fontFamily = Mdi, fontSize = px.sp, lineHeight = px.sp, color = color, textAlign = TextAlign.Center),
+  val vector = when (glyph) {
+    I.accountOffOutline -> Icons.Filled.PersonOff
+    I.accountSwitchOutline -> Icons.Filled.ManageAccounts
+    I.airplane -> Icons.Filled.Flight
+    I.alertCircleOutline -> Icons.Filled.ErrorOutline
+    I.arrowLeft -> Icons.Filled.ArrowBack
+    I.arrowRight -> Icons.Filled.ArrowForward
+    I.arrowUpRight -> Icons.Filled.NorthEast
+    I.autoFix -> Icons.Filled.AutoFixHigh
+    I.brush -> Icons.Filled.Brush
+    I.cameraIris -> Icons.Filled.Camera
+    I.cameraOffOutline -> Icons.Filled.NoPhotography
+    I.cameraOutline -> Icons.Filled.CameraAlt
+    I.cameraFlipOutline -> Icons.Filled.FlipCameraAndroid
+    I.cameraPlusOutline -> Icons.Filled.AddAPhoto
+    I.cameraRetakeOutline -> Icons.Filled.FlipCameraAndroid
+    I.cellphone -> Icons.Filled.Smartphone
+    I.cellphoneArrowDown -> Icons.Filled.InstallMobile
+    I.cellphoneLock -> Icons.Filled.PhonelinkLock
+    I.cellphoneRemove -> Icons.Filled.PhonelinkErase
+    I.check -> Icons.Filled.Check
+    I.checkboxBlankOutline -> Icons.Filled.CheckBoxOutlineBlank
+    I.checkboxMarked -> Icons.Filled.CheckBox
+    I.chevronDown -> Icons.Filled.KeyboardArrowDown
+    I.chevronLeft -> Icons.Filled.ChevronLeft
+    I.chevronRight -> Icons.Filled.ChevronRight
+    I.chevronUp -> Icons.Filled.KeyboardArrowUp
+    I.close -> Icons.Filled.Close
+    I.closeCircle -> Icons.Filled.Cancel
+    I.cloudSyncOutline -> Icons.Filled.CloudSync
+    I.cloudUploadOutline -> Icons.Filled.CloudUpload
+    I.codeTags -> Icons.Filled.Code
+    I.cogOutline -> Icons.Filled.Settings
+    I.contentSaveOutline -> Icons.Filled.Save
+    I.crop -> Icons.Filled.Crop
+    I.deleteOutline -> Icons.Filled.DeleteOutline
+    I.deleteSweepOutline -> Icons.Filled.DeleteSweep
+    I.dotsVertical -> Icons.Filled.MoreVert
+    I.downloadOutline -> Icons.Filled.Download
+    I.drag -> Icons.Filled.DragIndicator
+    I.draw -> Icons.Filled.Draw
+    I.drawPen -> Icons.Filled.Create
+    I.ellipseOutline -> Icons.Filled.Circle
+    I.eraser -> Icons.Filled.AutoFixOff
+    I.eyedropper -> Icons.Filled.Colorize
+    I.imageOutline -> Icons.Filled.Image
+    I.eyeOffOutline -> Icons.Filled.VisibilityOff
+    I.eyeOutline -> Icons.Filled.Visibility
+    I.fileDocumentEditOutline -> Icons.Filled.EditDocument
+    I.fileDocumentOutline -> Icons.Filled.Description
+    I.fileImageOutline -> Icons.Filled.InsertPhoto
+    I.filePdfBox -> Icons.Filled.PictureAsPdf
+    I.fileWordOutline -> Icons.Filled.Description
+    I.flash -> Icons.Filled.FlashOn
+    I.flashAuto -> Icons.Filled.FlashAuto
+    I.flashOff -> Icons.Filled.FlashOff
+    I.folderMoveOutline -> Icons.Filled.DriveFileMove
+    I.folderOutline -> Icons.Filled.FolderOpen
+    I.folderPlusOutline -> Icons.Filled.CreateNewFolder
+    I.folderZipOutline -> Icons.Filled.FolderZip
+    I.formatFontSizeDecrease -> Icons.Filled.TextDecrease
+    I.formatFontSizeIncrease -> Icons.Filled.TextIncrease
+    I.formatText -> Icons.Filled.TextFields
+    I.textRecognition -> Icons.Filled.DocumentScanner
+    I.fullscreen -> Icons.Filled.Fullscreen
+    I.gestureTap -> Icons.Filled.TouchApp
+    I.googleDrive -> Icons.Filled.Cloud
+    I.harddisk -> Icons.Filled.Storage
+    I.history -> Icons.Filled.History
+    I.homeOutline -> Icons.Filled.Home
+    I.imageFilterBlackWhite -> Icons.Filled.FilterBAndW
+    I.imageMultipleOutline -> Icons.Filled.Collections
+    I.informationOutline -> Icons.Filled.Info
+    I.lineScan -> Icons.Filled.DocumentScanner
+    I.magnify -> Icons.Filled.Search
+    I.menuDown -> Icons.Filled.ArrowDropDown
+    I.messageTextOutline -> Icons.Filled.Message
+    I.openInNew -> Icons.Filled.OpenInNew
+    I.pin -> Icons.Filled.PushPin
+    I.heart -> Icons.Filled.Favorite
+    I.heartOutline -> Icons.Filled.FavoriteBorder
+    I.star -> Icons.Filled.Star
+    I.paperclip -> Icons.Filled.AttachFile
+    I.pinOffOutline -> Icons.Filled.PushPin
+    I.pinOutline -> Icons.Filled.PushPin
+    I.pencilOutline -> Icons.Filled.Edit
+    I.play -> Icons.Filled.PlayArrow
+    I.plus -> Icons.Filled.Add
+    I.plusBoxMultipleOutline -> Icons.Filled.LibraryAdd
+    I.qrcode -> Icons.Filled.QrCode
+    I.rectangle -> Icons.Filled.Rectangle
+    I.rectangleOutline -> Icons.Filled.CropSquare
+    I.resize -> Icons.Filled.AspectRatio
+    I.restore -> Icons.Filled.Restore
+    I.rotateLeft -> Icons.Filled.RotateLeft
+    I.rotateRight -> Icons.Filled.RotateRight
+    I.shareVariantOutline -> Icons.Filled.Share
+    I.shieldCheckOutline -> Icons.Filled.VerifiedUser
+    I.swapHorizontal -> Icons.Filled.SwapHoriz
+    I.sync -> Icons.Filled.Sync
+    I.trashCanOutline -> Icons.Filled.DeleteOutline
+    I.tuneVariant -> Icons.Filled.Tune
+    I.undo -> Icons.Filled.Undo
+    I.viewGridOutline -> Icons.Filled.GridView
+    I.wifiOff -> Icons.Filled.WifiOff
+    else -> Icons.Filled.Description
+  }
+  androidx.compose.material3.Icon(
+    imageVector = vector,
+    contentDescription = label,
+    tint = color,
+    modifier = modifier.size(size),
   )
 }
 
