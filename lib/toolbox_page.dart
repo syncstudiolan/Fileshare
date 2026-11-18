@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
+import 'signature_edit_page.dart';
 import 'package:flutter/services.dart';
 import 'editor_transfer_session.dart';
 import 'main.dart' show FileTheme,fadePage;
@@ -24,8 +25,8 @@ class _ToolEntry {
 const _entries=[
   _ToolEntry('Image Editing','Background removal, crop, filters, compression',
     Icons.photo_filter_outlined,available:true,acceptsImages:true),
-  _ToolEntry('Signature Editing','Crop, clean and enhance handwritten signatures',
-    Icons.draw_outlined),
+  _ToolEntry('Signature Edit','Camera, crop, signature filters and exact-KB export',
+    Icons.draw_outlined,available:true,acceptsImages:true),
   _ToolEntry('Advanced PDF Editing Tools','Android-only PDF processing, scanner, OCR and history',
     Icons.picture_as_pdf_outlined,available:true),
 ];
@@ -63,6 +64,15 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('PDF tools could not open: ${error.message ?? error.code}')));
       }
+      return;
+    }
+    if(entry.name=='Signature Edit'){
+      if(hasSource&&!EditingFileRouter.acceptsImageTool(name)){
+        _unsupported(name,'Signature Edit');
+        return;
+      }
+      await Navigator.of(context).push(fadePage<void>(SignatureEditPage(
+        sourcePath:widget.sourcePath,sourceName:widget.sourceName)));
       return;
     }
     if(!entry.available){
