@@ -139,9 +139,14 @@ class AdvancedPdfBridge(private val context: Context) {
         try{
             PDDocument().use { out ->
                 if(alternate){
+                    val reverse=a["reverse"] as? Boolean?:false
                     val maxPages=sources.maxOf{it.numberOfPages}
-                    for(i in 0 until maxPages)for(src in sources)
-                        if(i<src.numberOfPages)adopt(out,src.getPage(i))
+                    for(i in 0 until maxPages)for((index,src) in sources.withIndex()){
+                        if(i<src.numberOfPages){
+                            val p=if(reverse&&index>0)src.numberOfPages-i-1 else i
+                            adopt(out,src.getPage(p))
+                        }
+                    }
                 }else for(src in sources)for(p in src.pages)adopt(out,p)
                 require(out.numberOfPages>0){"No pages"}
                 out.save(dest)
@@ -201,7 +206,8 @@ class AdvancedPdfBridge(private val context: Context) {
             val font=PDType1Font.HELVETICA_BOLD
             for(p in doc.pages){
                 val box=p.cropBox
-                val size=min(box.width,box.height)/10f
+                val scale=(a["scale"] as? Number)?.toFloat()?.coerceIn(.5f,2f)?:1f
+                val size=min(box.width,box.height)/10f*scale
                 val width=font.getStringWidth(text)/1000f*size
                 val rad=Math.toRadians(-32.0)
                 val x=box.lowerLeftX+box.width/2-
