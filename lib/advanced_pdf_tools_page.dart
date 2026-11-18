@@ -1,3 +1,4 @@
+import 'pdf_document_scanner_page.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -47,26 +48,26 @@ const pdfFeatures=<PdfFeature>[
   PdfFeature('merge','Merge PDFs','Combine',Icons.layers_outlined,active:true),
   PdfFeature('alternate','Alternate & Mix','Combine',Icons.shuffle,active:true),
   PdfFeature('split','Split PDF','Combine',Icons.call_split,active:true),
-  PdfFeature('splitText','Split by Text','Combine',Icons.text_snippet_outlined),
-  PdfFeature('splitBookmarks','Split by Bookmarks','Combine',Icons.bookmark_outline),
-  PdfFeature('splitHalf','Split in Half','Combine',Icons.splitscreen),
-  PdfFeature('splitSize','Split by Size','Combine',Icons.data_usage_outlined),
-  PdfFeature('zip','PDF to ZIP','Combine',Icons.folder_zip_outlined),
+  PdfFeature('splitText','Split by Text','Combine',Icons.text_snippet_outlined,active:true),
+  PdfFeature('splitBookmarks','Split by Bookmarks','Combine',Icons.bookmark_outline,active:true),
+  PdfFeature('splitHalf','Split in Half','Combine',Icons.splitscreen,active:true),
+  PdfFeature('splitSize','Split by Size','Combine',Icons.data_usage_outlined,active:true),
+  PdfFeature('zip','PDF to ZIP','Combine',Icons.folder_zip_outlined,active:true),
   PdfFeature('organize','Organize Pages','Organize',Icons.view_carousel_outlined,active:true),
   PdfFeature('rotate','Rotate PDF','Organize',Icons.rotate_right,active:true),
   PdfFeature('flip','Flip PDF','Organize',Icons.flip,active:true),
-  PdfFeature('nup','Multiple Pages per Sheet','Organize',Icons.grid_view),
+  PdfFeature('nup','Multiple Pages per Sheet','Organize',Icons.grid_view,active:true),
   PdfFeature('crop','Crop & Resize','Organize',Icons.crop,active:true),
-  PdfFeature('fillSign','Fill & Sign','Edit',Icons.draw_outlined),
+  PdfFeature('fillSign','Fill & Sign','Edit',Icons.draw_outlined,active:true),
   PdfFeature('watermark','Watermark','Edit',Icons.branding_watermark_outlined,active:true),
   PdfFeature('pageNumbers','Page Numbers','Edit',Icons.format_list_numbered,active:true),
-  PdfFeature('redact','Redact PDF','Edit',Icons.security_outlined),
+  PdfFeature('redact','Redact PDF','Edit',Icons.security_outlined,active:true),
   PdfFeature('metadata','Edit PDF Details','Edit',Icons.info_outline,active:true),
   PdfFeature('compress','Compress PDF','Secure',Icons.compress_rounded,active:true),
-  PdfFeature('ocr','OCR Scanned PDF','Secure',Icons.document_scanner),
+  PdfFeature('ocr','OCR Scanned PDF','Secure',Icons.document_scanner,active:true),
   PdfFeature('password','Set Password','Secure',Icons.lock_outline,active:true),
   PdfFeature('unlock','Remove Password','Secure',Icons.lock_open_outlined,active:true),
-  PdfFeature('workflow','Workflow Builder','Automate',Icons.account_tree_outlined),
+  PdfFeature('workflow','Workflow Builder','Automate',Icons.account_tree_outlined,active:true),
 ];
 
 String pdfDisplayName(String s)=>PdfHistory.validName(s);
@@ -208,32 +209,9 @@ class _AdvancedPdfToolsPageState extends State<AdvancedPdfToolsPage>{
     refresh();
   }
   Future<void> scanDocument()async{
-    if(importing)return;
-    final choice=await showModalBottomSheet<String>(context:context,
-      builder:(ctx)=>SafeArea(child:Wrap(children:[
-        ListTile(leading:const Icon(Icons.camera_alt_outlined),
-          title:const Text('Take a photo'),onTap:()=>Navigator.pop(ctx,'camera')),
-        ListTile(leading:const Icon(Icons.photo_library_outlined),
-          title:const Text('Choose document photos'),onTap:()=>Navigator.pop(ctx,'gallery')),
-      ])));
-    if(choice==null)return;
-    try{
-      final picker=ImagePicker();
-      final photos=choice=='camera'
-        ?[if(await picker.pickImage(source:ImageSource.camera,imageQuality:95) case final XFile photo)photo]
-        :await picker.pickMultiImage(imageQuality:95);
-      if(photos.isEmpty)return;
-      final out=await AdvancedPdfEngine.fromImages(photos.map((e)=>e.path).toList());
-      final suggested='Scan_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final named=mounted?await askPdfName(context,suggested):null;
-      final entry=await PdfHistory.instance.save(
-        id:DateTime.now().microsecondsSinceEpoch.toString(),
-        name:named??suggested,sourcePath:out,
-        actions:['Scanned document']);
-      await File(out).delete();
-      await openDraft(entry);
-    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content:Text('Scanning failed: $e')));}
+    final result=await Navigator.of(context).push<PdfDraft>(MaterialPageRoute(
+      builder:(_)=>const PdfDocumentScannerPage()));
+    if(result!=null && mounted)await openDraft(result);
   }
   Future<void> rename(PdfDraft draft)async{
     final next=await askPdfName(context,draft.name);
