@@ -91,6 +91,24 @@ fun Home() {
           }
         }
       }
+      val editSessions = Drafts.history
+      if (editSessions.isNotEmpty()) {
+        GroupLabel("Continue PDF editing · ${editSessions.size}")
+        Group {
+          editSessions.take(15).forEachIndexed { i, draft ->
+            ListRow(
+              draft.files.firstOrNull()?.name ?: "PDF draft",
+              first = i == 0,
+              lead = { Icon(I.fileDocumentEditOutline) },
+              subtitle = "${toolById(draft.tool)?.title ?: draft.tool} · Autosaved",
+              onClick = {
+                Drafts.resume(draft)
+                nav.tool(draft.tool, resume = true)
+              },
+            )
+          }
+        }
+      }
       if (files.isNotEmpty()) Stagger(1) {
         RecentPanel(files.take(12), { nav.show(Tab.Files) },
           onShare = { file ->
