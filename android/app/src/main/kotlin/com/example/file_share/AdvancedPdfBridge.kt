@@ -322,25 +322,60 @@ class AdvancedPdfBridge(private val context: Context) {
 
     private fun fromImages(a:Map<*,*>):String {
         val paths=(a["paths"] as? List<*>)?.filterIsInstance<String>()
-            ?.takeIf{it.isNotEmpty()}?:error("Choose at least one camera or gallery image")
+            ?.takeIf{it.isNotEmpty()}?:error("Choose document photos")
+        val mode=select(a,"mode","Document")
         val dest=temporary()
         try {
             PDDocument().use{doc->
-                for(path in paths){
-                    val bitmap=BitmapFactory.decodeFile(path)
-                        ?:error("Cannot read image: $path")
-                    try {
-                        val page=PDPage(PDRectangle.A4)
-                        doc.addPage(page)
-                        val image=JPEGFactory.createFromImage(doc,bitmap,0.9f)
-                        val width=page.mediaBox.width;val height=page.mediaBox.height
-                        val scale=min((width-24f)/bitmap.width,(height-24f)/bitmap.height)
-                        val dw=bitmap.width*scale;val dh=bitmap.height*scale
-                        PDPageContentStream(doc,page).use{
-                            it.drawImage(image,(width-dw)/2,(height-dh)/2,dw,dh)
-                        }
-                    }finally{bitmap.recycle()}
+                val photos=paths.map{p->
+                    BitmapFactory.decodeFile(p)?:error("Cannot read photo: $p")
                 }
+                try {
+                    val frames=if(mode=="Book")photos.flatMap{image->
+                        val mid=image.width/2
+                        listOf(Bitmap.createBitmap(image,0,0,mid,image.height),
+                            Bitmap.createBitmap(image,mid,0,image.width-mid,image.height))
+                    }else photos
+                    try{
+                        if(mode=="ID Card"){
+                            for(group in frames.chunked(2)){
+                                val page=PDPage(PDRectangle.A4)
+                                doc.addPage(page)
+                                PDPageContentStream(doc,page).use{stream->
+                                    group.forEachIndexed{slot,img->
+                                        val maxW=page.mediaBox.width-80
+                                        val maxH=page.mediaBox.height/2-70
+                                        val factor=min(maxW/img.width,maxH/img.height)
+                                        val w=img.width*factor;val h=img.height*factor
+                                        val x=(page.mediaBox.width-w)/2
+                                        val y=page.mediaBox.height-(slot+1)*page.mediaBox.height/2+(
+                                            page.mediaBox.height/2-h)/2
+                                        val image=JPEGFactory.createFromImage(doc,img,.92f)
+                                        stream.drawImage(image,x,y,w,h)
+                                    }
+                                }
+                            }
+                        }else {
+                            for(bmp in frames){
+                                val paper=if(mode=="Business Card")
+                                    PDRectangle(252f,144f) else PDRectangle.A4
+                                val page=PDPage(paper)
+                                doc.addPage(page)
+                                val image=JPEGFactory.createFromImage(doc,bmp,.93f)
+                                val width=paper.width;val height=paper.height
+                                val margin=if(mode=="Business Card")5f else 12f
+                                val factor=min((width-margin*2)/bmp.width,
+                                    (height-margin*2)/bmp.height)
+                                val dw=bmp.width*factor;val dh=bmp.height*factor
+                                PDPageContentStream(doc,page).use{
+                                    it.drawImage(image,(width-dw)/2,(height-dh)/2,dw,dh)
+                                }
+                            }
+                        }
+                    }finally{
+                        if(mode=="Book")frames.forEach{it.recycle()}
+                    }
+                }finally{photos.forEach{it.recycle()}}
                 doc.save(dest)
             }
             return dest.path
