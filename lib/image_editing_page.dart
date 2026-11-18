@@ -1036,7 +1036,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
 
   void _startGesture(DragStartDetails d,Size size){
-    final point=Offset(d.localPosition.dx/size.width,d.localPosition.dy/size.height);
+    final point=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0),
+      (d.localPosition.dy/size.height).clamp(0.0,1.0));
     if(_tool=='Crop'){
       _activeCropHandle=null;
       final corners=_cropCorners;
@@ -1181,6 +1182,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           onPanStart:(d)=>_startGesture(d,size),
           onPanUpdate:(d)=>_changeGesture(d,size),
           onPanEnd:(_)=>_finishGesture(),
+          onPanCancel:_finishGesture,
           child:canvas,
         );
       }else{
@@ -1642,6 +1644,7 @@ class _RealtimeEraserPainter extends CustomPainter {
     final bounds=Offset.zero & size;
     final imageRect=Rect.fromLTWH(0,0,image.width.toDouble(),image.height.toDouble());
     canvas.saveLayer(bounds,Paint());
+    canvas.clipRect(bounds);
     canvas.drawImageRect(image,imageRect,bounds,Paint()..filterQuality=FilterQuality.medium);
     void stroke(List<Offset> points,String operation,double r,double feather){
       if(points.isEmpty)return;
@@ -1666,11 +1669,9 @@ class _RealtimeEraserPainter extends CustomPainter {
         }
       }else{
         final p=Paint()..blendMode=BlendMode.clear
-          ..color=Colors.black
+          ..isAntiAlias=true..color=Colors.black
           ..strokeWidth=width..strokeCap=StrokeCap.round
-          ..strokeJoin=StrokeJoin.round..style=PaintingStyle.stroke
-          ..maskFilter=ui.MaskFilter.blur(ui.BlurStyle.normal,
-            math.max(.1,width*feather*.15));
+          ..strokeJoin=StrokeJoin.round..style=PaintingStyle.stroke;
         if(points.length==1){
           canvas.drawCircle(Offset(points.first.dx*size.width,
             points.first.dy*size.height),width/2,p..style=PaintingStyle.fill);
