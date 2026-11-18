@@ -265,6 +265,10 @@ class AdvancedPdfBridge(private val context: Context) {
         }
     }
     private fun crop(path:String,a:Map<*,*>,dest:File){
+        if(select(a,"mode","crop")=="resize"){
+            PdfVectorLayout.resize(File(path),dest,select(a,"size","A4"))
+            return
+        }
         PDDocument.load(File(path)).use{doc->
             val left=(a["left"] as? Number)?.toFloat()?:0f
             val top=(a["top"] as? Number)?.toFloat()?:0f
@@ -457,35 +461,7 @@ class AdvancedPdfBridge(private val context: Context) {
     }
 
     private fun flip(path:String,a:Map<*,*>,dest:File) {
-        // Re-render each page into a new image-backed PDF to ensure the page
-        // is visually mirrored. Users should know selectable text is lost.
-        val vertical=select(a,"axis","h")=="v"
-        val input=File(path)
-        ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use{fd->
-            PdfRenderer(fd).use{renderer->
-                PDDocument().use{doc->
-                    for(i in 0 until renderer.pageCount){
-                        renderer.openPage(i).use{page->
-                            val bitmap=Bitmap.createBitmap(page.width*2,page.height*2,Bitmap.Config.ARGB_8888)
-                            try {
-                                bitmap.eraseColor(Color.WHITE)
-                                page.render(bitmap,null,null,PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
-                                val matrix=android.graphics.Matrix().apply{
-                                    if(vertical)postScale(1f,-1f)else postScale(-1f,1f)
-                                }
-                                val mirror=Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,matrix,true)
-                                try{
-                                    val p=PDPage(PDRectangle(page.width.toFloat(),page.height.toFloat()))
-                                    doc.addPage(p)
-                                    val img=JPEGFactory.createFromImage(doc,mirror,0.9f)
-                                    PDPageContentStream(doc,p).use{it.drawImage(img,0f,0f,p.mediaBox.width,p.mediaBox.height)}
-                                }finally{mirror.recycle()}
-                            }finally{bitmap.recycle()}
-                        }
-                    }
-                    doc.save(dest)
-                }
-            }
-        }
+        PdfVectorLayout.flip(File(path),dest,select(a,"axis","h"))
     }
+
 }
