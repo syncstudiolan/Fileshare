@@ -1001,7 +1001,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
                           .padLeft(8,'0').substring(2).toUpperCase();
                       },
                     ),
-                  ))),
+                  )),
                 ]),
                 const SizedBox(height:10),
                 TextField(controller:hex,
@@ -1021,7 +1021,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
                         (color.b*255).round()][entry].toString();
                     }
                   }),
-              ])),
+              ]),
             )),
             actions:[
               TextButton(onPressed:()=>Navigator.pop(dialog),
