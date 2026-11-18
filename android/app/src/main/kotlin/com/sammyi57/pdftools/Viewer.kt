@@ -170,6 +170,10 @@ fun PdfViewerScreen(path: String, name: String) {
           IconBtn(I.arrowLeft, label = "Back") { nav.back() }
           Marquee(stem(name), Type.bold.copy(fontSize = Type.bold.fontSize * 1.1f), c.ink, Modifier.weight(1f).padding(horizontal = 4.dp))
           IconBtn(I.magnify, label = "Search", enabled = doc != null) { searching = true }
+          IconBtn(I.fileDocumentEditOutline, label = "Edit PDF") {
+            PdfImportBridge.pending = Picked(name, path, File(path).length())
+            nav.tool("organize")
+          }
           IconBtn(I.pencilOutline, label = "Rename") { renameOpen = true }
           IconBtn(I.shareVariantOutline, label = "Share") { sendMode = "share" }
           IconBtn(I.plusBoxMultipleOutline, label = "Add to Cart") { sendMode = "cart" }
