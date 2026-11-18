@@ -2874,6 +2874,24 @@ class FeatureDesignPage extends StatelessWidget {
     ),
     const SizedBox(height: 14),
     if (Platform.isWindows) ...[
+      _section(c, 'Windows Download Destination',
+        'Choose a destination each time, or make Downloads the permanent default. '
+        'The last successful folder selection is remembered.',
+        FutureBuilder<bool>(
+          future: TransferDownloads.instance.windowsAlwaysDownloads(),
+          builder:(context,snapshot) => SwitchListTile(
+            title: const Text('Always save into Downloads'),
+            subtitle: Text(snapshot.data==true
+              ? 'Do not ask again — save everything to Windows Downloads'
+              : 'Ask for a folder on every download; remember last folder'),
+            value:snapshot.data??false,
+            onChanged: snapshot.hasData ? (value) async {
+              await TransferDownloads.instance.setWindowsAlwaysDownloads(value);
+              if(c.mounted) (c as Element).markNeedsBuild();
+            }:null,
+          ),
+        )),
+      const SizedBox(height:14),
       _section(c, 'Windows Background Receiver',
         'Closing the window hides File Share in the tray. The LAN engine keeps receiving while Windows is awake.',
         Column(children: [
