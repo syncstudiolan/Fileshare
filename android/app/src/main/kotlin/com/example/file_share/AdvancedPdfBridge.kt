@@ -2,6 +2,7 @@ package com.example.file_share
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -18,6 +19,8 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.cos.COSStream
+import com.tom_roush.pdfbox.cos.COSArray
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -44,6 +47,7 @@ class AdvancedPdfBridge(private val context: Context) {
                     "countPages" -> PDDocument.load(File(required(args,"path"))).use { it.numberOfPages }
                     "renderPage" -> render(required(args,"path"), number(args,"page",0), number(args,"width",900))
                     "process" -> process(args)
+                    "fromImages" -> fromImages(args)
                     else -> throw IllegalArgumentException("Unsupported PDF method: ${call.method}")
                 }
                 android.os.Handler(android.os.Looper.getMainLooper()).post { result.success(output) }
@@ -101,6 +105,11 @@ class AdvancedPdfBridge(private val context: Context) {
                 "crop" -> crop(path,a,output)
                 "zip" -> zipPdf(path,output)
                 "compress" -> compress(path,a,output)
+                "flip" -> flip(path,a,output)
+                "splitHalf" -> splitHalf(path,a,output)
+                "splitBookmarks" -> splitBookmarks(path,a,output)
+                "splitSize" -> splitSize(path,a,output)
+                "fillSign" -> fillSign(path,a,output)
                 else -> error("This tool's Android processing engine is not available yet: $mode")
             }
             require(output.exists() && output.length()>0){"PDF engine produced an empty output"}
@@ -264,9 +273,170 @@ class AdvancedPdfBridge(private val context: Context) {
             zip.closeEntry()
         }
     }
-    private fun compress(path:String,a:Map<*,*>,dest:File){
-        // Conservative lossless re-save. Deliberately not advertised as
-        // JPEG recompression until image-stream tests are in place.
-        PDDocument.load(File(path)).use{doc->doc.save(dest)}
+
+    private fun compress(path:String,a:Map<*,*>,dest:File) {
+        val quality=number(a,"quality",60).coerceIn(20,95)
+        PDDocument.load(File(path)).use { doc ->
+            for(obj in doc.document.objects) {
+                val stream=obj.getObject() as? COSStream ?: continue
+                if(stream.getCOSName(COSName.SUBTYPE)!=COSName.IMAGE)continue
+                val filter=stream.getDictionaryObject(COSName.FILTER)
+                val jpeg=filter==COSName.DCT_DECODE ||
+                    (filter is COSArray && filter.size()==1 &&
+                    filter.getObject(0)==COSName.DCT_DECODE)
+                if(!jpeg)continue
+                try {
+                    val raw=stream.createRawInputStream().use{it.readBytes()}
+                    val bitmap=BitmapFactory.decodeByteArray(raw,0,raw.size)?:continue
+                    val output=ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG,quality,output)
+                    bitmap.recycle()
+                    val next=output.toByteArray()
+                    if(next.size>=raw.size)continue
+                    stream.createRawOutputStream().use{it.write(next)}
+                    stream.setItem(COSName.FILTER,COSName.DCT_DECODE)
+                    stream.setItem(COSName.COLORSPACE,COSName.DEVICERGB)
+                    stream.setInt(COSName.BITS_PER_COMPONENT,8)
+                    stream.removeItem(COSName.DECODE_PARMS)
+                }catch(_:Exception){ /* retain unsupported image encodings */ }
+            }
+            doc.save(dest)
+        }
+        // Never return a needlessly larger file.
+        if(dest.length()>=File(path).length())File(path).copyTo(dest,overwrite=true)
+    }
+
+    private fun fromImages(a:Map<*,*>):String {
+        val paths=(a["paths"] as? List<*>)?.filterIsInstance<String>()
+            ?.takeIf{it.isNotEmpty()}?:error("Choose at least one camera or gallery image")
+        val dest=temporary()
+        try {
+            PDDocument().use{doc->
+                for(path in paths){
+                    val bitmap=BitmapFactory.decodeFile(path)
+                        ?:error("Cannot read image: $path")
+                    try {
+                        val page=PDPage(PDRectangle.A4)
+                        doc.addPage(page)
+                        val image=JPEGFactory.createFromImage(doc,bitmap,0.9f)
+                        val width=page.mediaBox.width;val height=page.mediaBox.height
+                        val scale=min((width-24f)/bitmap.width,(height-24f)/bitmap.height)
+                        val dw=bitmap.width*scale;val dh=bitmap.height*scale
+                        PDPageContentStream(doc,page).use{
+                            it.drawImage(image,(width-dw)/2,(height-dh)/2,dw,dh)
+                        }
+                    }finally{bitmap.recycle()}
+                }
+                doc.save(dest)
+            }
+            return dest.path
+        }catch(e:Exception){dest.delete();throw e}
+    }
+
+    private fun splitHalf(path:String,a:Map<*,*>,dest:File) {
+        PDDocument.load(File(path)).use{doc->
+            require(doc.numberOfPages>=2){"Need at least two pages"}
+            val start=number(a,"half",0).coerceIn(0,1)
+            val half=(doc.numberOfPages+1)/2
+            val range=if(start==0)0 until half else half until doc.numberOfPages
+            PDDocument().use{out->
+                for(i in range)out.importPage(doc.getPage(i))
+                out.save(dest)
+            }
+        }
+    }
+
+    private fun splitBookmarks(path:String,a:Map<*,*>,dest:File) {
+        PDDocument.load(File(path)).use{doc->
+            var bookmark=doc.documentCatalog.documentOutline?.firstChild
+            val marks=mutableListOf<Int>()
+            while(bookmark!=null){
+                bookmark.findDestinationPage(doc)?.let{p->
+                    val index=doc.pages.indexOf(p)
+                    if(index>=0)marks.add(index)
+                }
+                bookmark=bookmark.nextSibling
+            }
+            require(marks.isNotEmpty()){"PDF has no top-level bookmarks"}
+            val start=marks.distinct().sorted().first()
+            PDDocument().use{out->
+                for(i in start until doc.numberOfPages)out.importPage(doc.getPage(i))
+                out.save(dest)
+            }
+        }
+    }
+
+    private fun splitSize(path:String,a:Map<*,*>,dest:File) {
+        // Single result is the largest leading segment that fits. The
+        // multi-part mode will require a list-output API in a later stage.
+        val limit=number(a,"maxMB",5).coerceAtLeast(1)*1024L*1024L
+        PDDocument.load(File(path)).use{doc->
+            PDDocument().use{out->
+                var last:ByteArray?=null
+                for(page in doc.pages){
+                    out.importPage(page)
+                    val bytes=ByteArrayOutputStream().use{stream->
+                        out.save(stream);stream.toByteArray()
+                    }
+                    if(bytes.size>limit && last!=null)break
+                    last=bytes
+                }
+                require(last!=null){"Cannot split PDF by that size"}
+                dest.writeBytes(last)
+            }
+        }
+    }
+
+    private fun fillSign(path:String,a:Map<*,*>,dest:File) {
+        val text=required(a,"text").filter{it.code in 32..126}
+        require(text.isNotEmpty()){"Enter supported text to place"}
+        PDDocument.load(File(path)).use{doc->
+            val index=number(a,"page",0)
+            require(index in 0 until doc.numberOfPages)
+            val p=doc.getPage(index)
+            val b=p.cropBox
+            PDPageContentStream(doc,p,PDPageContentStream.AppendMode.APPEND,true,true).use{stream->
+                stream.beginText()
+                stream.setFont(PDType1Font.HELVETICA,14f)
+                stream.setNonStrokingColor(0,0,0)
+                stream.newLineAtOffset(b.lowerLeftX+30f,b.lowerLeftY+b.height*.55f)
+                stream.showText(text)
+                stream.endText()
+            }
+            doc.save(dest)
+        }
+    }
+
+    private fun flip(path:String,a:Map<*,*>,dest:File) {
+        // Re-render each page into a new image-backed PDF to ensure the page
+        // is visually mirrored. Users should know selectable text is lost.
+        val vertical=select(a,"axis","h")=="v"
+        val input=File(path)
+        ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use{fd->
+            PdfRenderer(fd).use{renderer->
+                PDDocument().use{doc->
+                    for(i in 0 until renderer.pageCount){
+                        renderer.openPage(i).use{page->
+                            val bitmap=Bitmap.createBitmap(page.width*2,page.height*2,Bitmap.Config.ARGB_8888)
+                            try {
+                                bitmap.eraseColor(Color.WHITE)
+                                page.render(bitmap,null,null,PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+                                val matrix=android.graphics.Matrix().apply{
+                                    if(vertical)postScale(1f,-1f)else postScale(-1f,1f)
+                                }
+                                val mirror=Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,matrix,true)
+                                try{
+                                    val p=PDPage(PDRectangle(page.width.toFloat(),page.height.toFloat()))
+                                    doc.addPage(p)
+                                    val img=JPEGFactory.createFromImage(doc,mirror,0.9f)
+                                    PDPageContentStream(doc,p).use{it.drawImage(img,0f,0f,p.mediaBox.width,p.mediaBox.height)}
+                                }finally{mirror.recycle()}
+                            }finally{bitmap.recycle()}
+                        }
+                    }
+                    doc.save(dest)
+                }
+            }
+        }
     }
 }
