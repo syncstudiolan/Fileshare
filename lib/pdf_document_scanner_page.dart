@@ -34,6 +34,16 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
   String mode='Document';
   String? problem;
   final picker=ImagePicker();
+  bool _cameraOpened=false;
+  @override void initState(){
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_){
+      if(mounted&&!_cameraOpened){
+        _cameraOpened=true;
+        unawaited(add(camera:true));
+      }
+    });
+  }
   ScanSheet? get current=>sheets.isEmpty?null:sheets[selected.clamp(0,sheets.length-1)];
 
   Future<double> aspect(String path)async{
@@ -182,10 +192,15 @@ class _PdfDocumentScannerPageState extends State<PdfDocumentScannerPage>{
                   Offset(corners[i*2],corners[i*2+1]));
                 Widget preview=Image.file(File(shot.path),fit:BoxFit.fill,
                   cacheWidth:1300,gaplessPlayback:true);
-                if(shot.filter=='Gray'||shot.filter=='B&W'){
-                  preview=ColorFiltered(colorFilter:ColorFilter.matrix(
-                    const [.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,
+                if(shot.filter=='Gray'){
+                  preview=ColorFiltered(colorFilter:const ColorFilter.matrix(
+                    [.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,
                     .2126,.7152,.0722,0,0,0,0,0,1,0]),child:preview);
+                }else if(shot.filter=='B&W'){
+                  // Fast GPU approximation of the native adaptive threshold.
+                  preview=ColorFiltered(colorFilter:const ColorFilter.matrix(
+                    [2.5,5.3,.7,0,-800,2.5,5.3,.7,0,-800,
+                     2.5,5.3,.7,0,-800,0,0,0,1,0]),child:preview);
                 }else if(shot.filter=='Enhance'){
                   preview=ColorFiltered(colorFilter:const ColorFilter.matrix(
                     [1.13,0,0,0,-8,0,1.13,0,0,-8,0,0,1.13,0,-8,0,0,0,1,0]),
