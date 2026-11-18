@@ -55,6 +55,15 @@ private fun matches(target: String, tokens: List<String>) = target.lowercase().l
 fun Home() {
   val nav = LocalNav.current
   var q by rememberSaveable { mutableStateOf("") }
+  var sendTarget by remember { mutableStateOf<Pair<Saved, Boolean>?>(null) }
+  var targetPages by remember { mutableStateOf(0) }
+  androidx.compose.runtime.LaunchedEffect(sendTarget) {
+    val f = sendTarget?.first ?: return@LaunchedEffect
+    targetPages = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      runCatching { com.tom_roush.pdfbox.pdmodel.PDDocument.load(java.io.File(f.path))
+        .use { it.numberOfPages } }.getOrDefault(0)
+    }
+  }
   val files = remember(Store.version) { listAllFiles() }
   val tokens = q.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
   val searching = tokens.isNotEmpty()
@@ -71,7 +80,7 @@ fun Home() {
     if (!searching) {
       Btn("Open camera", Modifier.fillMaxWidth().padding(top = 16.dp),
         I.cameraOutline) { nav.scan() }
-      val recentScans = remember { listDocs() }
+      val recentScans = remember(Store.version) { listDocs() }
       if (recentScans.isNotEmpty()) {
         GroupLabel("Resume scans · ${recentScans.size}")
         Group {
@@ -82,7 +91,14 @@ fun Home() {
           }
         }
       }
-      if (files.isNotEmpty()) Stagger(1) { RecentPanel(files.take(12)) { nav.show(Tab.Files) } }
+      if (files.isNotEmpty()) Stagger(1) {
+        RecentPanel(files.take(12), { nav.show(Tab.Files) },
+          onShare = { file ->
+            if (file.name.endsWith(".pdf", ignoreCase = true)) sendTarget = file to false
+            else share(file.path, file.name)
+          },
+          onCart = { file -> sendTarget = file to true })
+      }
       Row(
         Modifier.padding(top = 22.dp).horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -99,7 +115,15 @@ fun Home() {
           ListRow(
             stem(f.name), first = i == 0, lead = { DocGlyph(kindOf(f.name)) }, marquee = true,
             subtitle = "${fmtSize(f.size)} · ${fmtDate(f.modified)}", onClick = { openFile(f.path, f.name) },
-          ) { IconBtn(I.shareVariantOutline, 18.dp, c.sub, "Share") { share(f.path, f.name) } }
+          ) {
+              IconBtn(I.plusBoxMultipleOutline, 18.dp, c.accent, "Add to Cart") {
+                sendTarget = f to true
+              }
+              IconBtn(I.shareVariantOutline, 18.dp, c.sub, "Share") {
+                if (f.name.endsWith(".pdf", ignoreCase = true)) sendTarget = f to false
+                else share(f.path, f.name)
+              }
+            }
         }
       }
     }
@@ -130,6 +154,11 @@ fun Home() {
     if (tools.isEmpty() && found.isEmpty()) {
       T("No tools or files match \"${q.trim()}\". Try \"merge\", \"split\" or \"compress\".", Type.body, c.sub, Modifier.fillMaxWidth().padding(top = 40.dp, start = 24.dp, end = 24.dp), align = TextAlign.Center)
     }
+  }
+  sendTarget?.let { target ->
+    if (targetPages > 0) PdfSendPicker(
+      target.first.path, target.first.name, 1, targetPages,
+      target.second, onClose = { sendTarget = null })
   }
 }
 
@@ -244,7 +273,10 @@ private fun Stat(label: String, value: String) {
 // The quiet card under the loud one: Cool Blue with Black Cherry type, kept compact: small label, one line per file,
 // a small round share button.
 @Composable
-private fun RecentPanel(recent: List<Saved>, onAll: () -> Unit) {
+private fun RecentPanel(
+  recent: List<Saved>, onAll: () -> Unit,
+  onShare: (Saved) -> Unit, onCart: (Saved) -> Unit,
+) {
   val shape = RoundedCornerShape(Radius.card)
   val ink = Brand.cherry
   val dim = ink.copy(alpha = 0.62f)
@@ -263,7 +295,10 @@ private fun RecentPanel(recent: List<Saved>, onAll: () -> Unit) {
           T("${kindOf(f.name).name.uppercase()} · ${fmtSize(f.size)} · ${fmtDate(f.modified)}", Type.small.copy(fontSize = 11.5.sp, lineHeight = 15.sp), dim, maxLines = 1)
         }
         Spacer(Modifier.size(8.dp))
-        RoundBtn(I.shareVariantOutline, ink, Brand.cool, 34.dp, "Share") { share(f.path, f.name) }
+        if (f.name.endsWith(".pdf", ignoreCase = true)) {
+          RoundBtn(I.plusBoxMultipleOutline, ink, Brand.cool, 34.dp, "Add to Cart") { onCart(f) }
+        }
+        RoundBtn(I.shareVariantOutline, ink, Brand.cool, 34.dp, "Share") { onShare(f) }
       }
     }
   }
