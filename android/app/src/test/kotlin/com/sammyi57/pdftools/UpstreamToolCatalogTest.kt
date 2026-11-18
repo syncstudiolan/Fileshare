@@ -18,7 +18,7 @@ class UpstreamToolCatalogTest {
   }
 
   @Test fun eachCategoryAndInputTypeRemainAvailable() {
-    assertTrue(TOOLS.map { it.section }.toSet().containsAll(0..5))
+    assertTrue(TOOLS.map { it.section }.toSet().containsAll((0..5).toList()))
     assertTrue(TOOLS.any { it.input == Input.Pdf })
     assertTrue(TOOLS.any { it.input == Input.Pdfs })
     assertTrue(TOOLS.any { it.input == Input.Images })
