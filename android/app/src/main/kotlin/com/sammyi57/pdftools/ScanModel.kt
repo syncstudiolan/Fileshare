@@ -141,6 +141,22 @@ fun loadDoc(id: String): ScanDoc? = try {
 fun listDocs(): List<ScanDoc> = (scansRoot().listFiles() ?: emptyArray()).filter { it.isDirectory }
   .mapNotNull { loadDoc(it.name) }.filter { it.pages.isNotEmpty() }.sortedByDescending { it.modified }
 
+/**
+ * Resolve a saved PDF back to the exact editable scanner project that created it.
+ * Uses canonical paths, not names: multiple scanned files can share a name and
+ * a renamed/moved PDF must still reopen the correct original photos and edits.
+ * Imported PDF files without a scan project remain regular PDF documents.
+ */
+fun scanProjectForPdf(pdfPath: String): ScanDoc? {
+  val target = runCatching { File(pathOf(pdfPath)).canonicalPath }.getOrNull()
+    ?: return null
+  return listDocs().firstOrNull { doc ->
+    val savedPath = doc.pdf?.path ?: return@firstOrNull false
+    runCatching { File(pathOf(savedPath)).canonicalPath == target }.getOrDefault(false)
+  }
+}
+
+
 fun deleteDoc(id: String) {
   runCatching { File(scansRoot(), id).deleteRecursively() }
 }
