@@ -26,11 +26,18 @@ lateinit var appContext: Context
 var hostActivity: MainActivity? = null
   private set
 
+/** True only when PDF Tools was opened from File Share's own dashboard. */
+object EmbeddedPdfSession {
+  var fromFileShare = false
+  fun exitToDashboard() { hostActivity?.finish() }
+}
+
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     appContext = applicationContext
     hostActivity = this
+    EmbeddedPdfSession.fromFileShare = intent.getBooleanExtra("fileshare.pdf.embedded", false)
     intent.getStringExtra("fileshare.pdf.theme")?.let { preference ->
       ThemeState.set(when (preference) {
         "dark" -> ThemePref.Dark
@@ -51,6 +58,7 @@ class MainActivity : ComponentActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    EmbeddedPdfSession.fromFileShare = intent.getBooleanExtra("fileshare.pdf.embedded", false)
     takeIncoming(intent)
   }
 
@@ -70,7 +78,10 @@ class MainActivity : ComponentActivity() {
   }
 
   override fun onDestroy() {
-    if (hostActivity === this) hostActivity = null
+    if (hostActivity === this) {
+      hostActivity = null
+      EmbeddedPdfSession.fromFileShare = false
+    }
     super.onDestroy()
   }
 
