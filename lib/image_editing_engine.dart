@@ -148,8 +148,11 @@ class ImageEditingEngine {
             *output.height).round();
           final previous=samples.isEmpty?null:samples.last;
           if(previous!=null){
-            final gap=math.sqrt(math.pow(px-previous.x,2)+
-              math.pow(py-previous.y,2)).toDouble();
+            final dx=px-previous.x,dy=py-previous.y;
+            final gap=math.sqrt(dx*dx+dy*dy);
+            // Dense 120 Hz pointer samples already overlap substantially.
+            // Avoid applying the same large brush to near-identical pixels.
+            if(gap<math.max(1.0,radius*.28))continue;
             final steps=(gap/math.max(1.0,radius*.35)).ceil().clamp(1,128);
             for(var k=1;k<steps;k++){
               final t=k/steps;
@@ -163,8 +166,10 @@ class ImageEditingEngine {
           final x=point.x,y=point.y;
           for(var py=math.max(0,y-radius);py<=math.min(output.height-1,y+radius);py++){
             for(var px=math.max(0,x-radius);px<=math.min(output.width-1,x+radius);px++){
-              final distance=math.sqrt((px-x)*(px-x)+(py-y)*(py-y));
-              if(distance>radius)continue;
+              final dx=px-x,dy=py-y;
+              final distanceSq=dx*dx+dy*dy;
+              if(distanceSq>radius*radius)continue;
+              final distance=math.sqrt(distanceSq);
               final feather=((radius-distance)/(radius*softness)).clamp(0.0,1.0);
               final pixel=output.getPixel(px,py);
               final alpha=erase?pixel.a*(1-feather):
