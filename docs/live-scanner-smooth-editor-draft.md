@@ -114,3 +114,14 @@ A successful Flutter analyzer, widget test and Kotlin compile establish source
 compatibility only; they do not verify file conversion fidelity, installation,
 native CameraX/Google ML Kit runtime, background transfers or device FPS.
 The draft is not ready for release or merge until Android device QA.
+
+### Robustness notes
+- If AI segmentation finishes after the Image Editor closes, the late result
+  is written to Image History. The already-staged Cart snapshot remains
+  immutable; the unfinished session can be reopened.
+- Offline Office import bounds source files to 30 MB and unpacked XML entries
+  to 16 MB to mitigate untrusted or malformed LAN/Guest QR attachments.
+- Native Office conversion uses Apache POI for legacy DOC/XLS only. This adds
+  Android dependencies and may affect release APK size; the size must be
+  measured at the next explicitly requested APK test build.
+- Full native compilation is checked without making or uploading an APK.
