@@ -9,3 +9,5 @@ This is a **testing** package, not a production-distribution build.
 - APK artifact: `file-share-arm64-signed-test-apk` produced by `.github/workflows/offline-validation.yml`.
 - After extracting the artifact ZIP, install `FileShare-ARM64-Signed-Test.apk` on an ARM64 Android phone. Enable installation from the file manager only if Android prompts.
 - This does not establish feature correctness; PDF, document scanner, image editing and transfers still need device-level functional testing.
+
+- Standard push builds skip the separate emulator job; the emulator verification runs only during an explicit `workflow_dispatch` when its debug APK is requested. This prevents an unrelated missing-artifact error from marking a signed release APK run as failed.
