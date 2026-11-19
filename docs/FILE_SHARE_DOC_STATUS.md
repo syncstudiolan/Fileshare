@@ -16,6 +16,7 @@ Status: **Draft PR #6: source integrated, NOT fully implemented or device-valida
   - PPTX/PPTM/PPSX/POTX slide text.
   - ODT/ODS/ODP paragraphs and text.
   - HTML/HTM, Markdown, TXT, CSV, JSON, XML, SVG and source/text formats as text.
+- Basic DOCX whole-paragraph **Bold / Italic / Underline** controls stored in actual WordprocessingML runs. Mixed formatting within edited paragraphs may still change.
 - Find/Replace, search, word count, non-destructive `_edited` copies, ZIP package
   re-encoding, basic ZIP integrity verification, Android public Downloads and
   Windows folder-picker export, LAN queue send to unified dashboard.
@@ -25,10 +26,11 @@ Status: **Draft PR #6: source integrated, NOT fully implemented or device-valida
   or Windows WebView2, avoiding WebView2's 2MB NavigateToString limit.
   All external origins blocked by CSP and WebView URL navigation policy;
   iframe creation sandboxed before document rendering.
+- HTML and Markdown have a separate sanitized in-app preview using exact Gander-vendored `marked` and `DOMPurify` JavaScript (non-HTML resources and remote links blocked).
 - Existing image editing and Android PDF tools are retained; ZIP/EPUB archive
   listing is built in; audio/video/legacy files may require an installed
   platform viewer.
-- Gander, docx-preview and JSZip third-party licenses copied to
+- Gander, docx-preview, JSZip, marked and DOMPurify third-party licenses copied to
   `third_party/GANDER_VIEWER_LICENSES.md`.
 - Source regression tests: `test/file_share_doc_engine_test.dart` for basic
   Word, Excel, PowerPoint, HTML, OpenDocument and file-copy preservation.
@@ -39,8 +41,8 @@ Status: **Draft PR #6: source integrated, NOT fully implemented or device-valida
   bridge are **not** ported. The current document preview runs unmodified
   docx-preview and may differ from Gander/Word in pagination.
 - The edit interface currently changes existing text containers only.
-  It does **not** provide true Word ribbon, insert/delete paragraphs, styles,
-  headers formatting, comments, shapes, live spellcheck, tracked changes,
+  It does **not** provide a complete Word ribbon, insert/delete paragraphs, advanced styles,
+  complete header/footer formatting, comments, shapes, live spellcheck, tracked changes,
   robust WYSIWYG or multi-user editing.
 - XLSX is a cell-text editor, **not** a formula engine, Excel-style grid,
   chart editor, pivot-table editor or complete sheet reflow.
