@@ -311,8 +311,12 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   Widget _controls(){
     if(_tool=='Crop'){
       return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        const Text('Crop Signature',style:TextStyle(
-          fontWeight:FontWeight.w800,fontSize:16)),
+        const Row(children:[
+          Icon(Icons.crop_free_rounded,color:FileTheme.violet,size:19),
+          SizedBox(width:8),
+          Text('Crop Signature',style:TextStyle(
+            fontWeight:FontWeight.w800,fontSize:16)),
+        ]),
         const SizedBox(height:6),
         const Text('Drag corners, side-midpoints or the selection interior. '
           'Perspective moves each corner independently.'),
@@ -338,13 +342,30 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     }
     if(_tool=='Compress'){
       return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        const Text('Exact Export Size',style:TextStyle(
-          fontWeight:FontWeight.w800,fontSize:16)),
+        const Row(children:[
+          Icon(Icons.compress_rounded,color:FileTheme.violet,size:19),
+          SizedBox(width:8),
+          Text('Exact Export Size',style:TextStyle(
+            fontWeight:FontWeight.w800,fontSize:16)),
+        ]),
         const SizedBox(height:7),
+        Row(children:[
+          Expanded(child:Slider(min:5,max:200,divisions:39,
+            value:_target.clamp(5,200).toDouble(),
+            label:'$_target KB',
+            onChanged:_busy?null:(value){
+              final size=(value/5).round()*5;
+              _targetController.text=size.toString();
+              setState(()=>_target=size);
+            })),
+          Text('$_target KB',style:const TextStyle(
+            color:FileTheme.violet,fontWeight:FontWeight.w700)),
+        ]),
         TextField(controller:_targetController,
           keyboardType:TextInputType.number,
           decoration:const InputDecoration(
-            labelText:'Target size in KB',hintText:'20',
+            prefixIcon:Icon(Icons.edit_note_rounded),
+            labelText:'Custom target',hintText:'20',
             suffixText:'KB',border:OutlineInputBorder()),
           onChanged:(value)=>setState(()=>_target=int.tryParse(value)??20)),
         const SizedBox(height:10),
@@ -364,8 +385,12 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       ]);
     }
     return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      const Text('Signature Filters',style:TextStyle(
-        fontWeight:FontWeight.w800,fontSize:16)),
+      const Row(children:[
+        Icon(Icons.filter_rounded,color:FileTheme.violet,size:19),
+        SizedBox(width:8),
+        Text('Signature Filters',style:TextStyle(
+          fontWeight:FontWeight.w800,fontSize:16)),
+      ]),
       const Text('Crop handles remain active while applying filters.'),
       const SizedBox(height:10),
       Wrap(spacing:9,runSpacing:9,children:[
