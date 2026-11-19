@@ -39,6 +39,37 @@ class FileShareDocEngine {
       return node.name.local=='p'||node.name.local=='h';
     }).toList();
 
+  /// Create a minimal valid DOCX package with correct OOXML relationships.
+  static Future<File> createBlankDocx(Directory folder) async {
+    await folder.create(recursive:true);
+    final stamp=DateTime.now().microsecondsSinceEpoch.toString();
+    final file=File(folder.path+Platform.pathSeparator+'new_document_'+stamp+'.docx');
+    const types='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      '<Default Extension="xml" ContentType="application/xml"/>'
+      '<Override PartName="/word/document.xml" '
+      'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      '</Types>';
+    const relations='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      '<Relationship Id="rId1" '
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+      'Target="word/document.xml"/></Relationships>';
+    const document='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body><w:p><w:r><w:t>New document</w:t></w:r></w:p>'
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>'
+      '</w:sectPr></w:body></w:document>';
+    final archive=Archive()
+      ..add(ArchiveFile.string('[Content_Types].xml',types))
+      ..add(ArchiveFile.string('_rels/.rels',relations))
+      ..add(ArchiveFile.string('word/document.xml',document));
+    await file.writeAsBytes(ZipEncoder().encodeBytes(archive),flush:true);
+    return file;
+  }
+
   static Future<FileShareDocEngine> open(File file) async {
     if(!await file.exists())throw StateError('File unavailable');
     if(await file.length()>32*1024*1024)
