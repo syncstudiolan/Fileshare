@@ -1267,7 +1267,9 @@ class FileCardOpenRouter {
 
   static Future<bool> openEditor(
     BuildContext context,String path,String name) async {
-    if(FileShareDocEngine.canEdit(name)){
+    if(FileShareDocEngine.canEdit(name) ||
+      (FileShareDocEngine.canView(name) &&
+        !isImage(name) && (!isPdf(name)||Platform.isWindows))){
       await Navigator.of(context).push(MaterialPageRoute<void>(
         builder:(_)=>FileShareDocPage(
           sourcePath:path,sourceName:name)));
