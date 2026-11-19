@@ -166,13 +166,17 @@ class ImageEditingEngine {
             data.length != maskWidth * maskHeight) {
           throw const FormatException('Subject mask is unavailable');
         }
-        for (var y = 0; y < output.height; y++) {
-          final my = (y * maskHeight ~/ output.height).clamp(0, maskHeight - 1).toInt();
-          for (var x = 0; x < output.width; x++) {
-            final mx = (x * maskWidth ~/ output.width).clamp(0, maskWidth - 1).toInt();
-            final px = output.getPixel(x, y);
-            final alpha = (px.a * data[my * maskWidth + mx] / 255).round();
-            output.setPixelRgba(x, y, px.r, px.g, px.b, alpha);
+        final maskColumns=Int32List(output.width);
+        for(var x=0;x<maskColumns.length;x++){
+          maskColumns[x]=math.min(maskWidth-1,x*maskWidth~/output.width);
+        }
+        for(var y=0;y<output.height;y++){
+          final row=math.min(maskHeight-1,
+            y*maskHeight~/output.height)*maskWidth;
+          for(var x=0;x<output.width;x++){
+            final px=output.getPixel(x,y);
+            final alpha=(px.a*data[row+maskColumns[x]]/255).round();
+            output.setPixelRgba(x,y,px.r,px.g,px.b,alpha);
           }
         }
       case 'erase':
@@ -359,9 +363,9 @@ class ImageEditingEngine {
       final index = queue[head++];
       final x = index % width, y = index ~/ width;
       final pixel = source.getPixel(x, y);
-      final delta = math.sqrt(math.pow(pixel.r - referenceR, 2) +
-          math.pow(pixel.g - referenceG, 2) + math.pow(pixel.b - referenceB, 2));
-      if (delta > tolerance) continue;
+      final dr=pixel.r-referenceR,dg=pixel.g-referenceG,
+        db=pixel.b-referenceB;
+      if(dr*dr+dg*dg+db*db>tolerance*tolerance)continue;
       alpha[index] = 0;
       void add(int other) {
         if (visited[other] == 0) { visited[other] = 1; queue[tail++] = other; }
