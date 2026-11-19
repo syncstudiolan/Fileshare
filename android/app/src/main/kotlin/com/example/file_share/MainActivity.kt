@@ -450,7 +450,6 @@ class LanKeepAliveService : Service() {
     private var multicast: WifiManager.MulticastLock? = null
     override fun onCreate() {
         super.onCreate()
-        (application as FileShareApplication).engine()
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(
             NotificationChannel("fileshare_lan", "Background LAN",
@@ -469,6 +468,9 @@ class LanKeepAliveService : Service() {
         if (Build.VERSION.SDK_INT >= 29) startForeground(
             4732, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         else startForeground(4732, notification)
+        // Promote to foreground BEFORE starting Flutter: Android requires a
+        // boot-started FGS to call startForeground promptly.
+        (application as FileShareApplication).engine()
         try {
             val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             multicast = wifi.createMulticastLock("fileshare_discovery").apply {
