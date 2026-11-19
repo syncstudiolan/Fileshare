@@ -273,6 +273,63 @@ class FileShareDocEngine {
     }
   }
 
+  /// Update page dimensions and margins for every Word section. Exact
+  /// measurements are stored in OOXML twips (1/1440 inch).
+  void applyWordPageLayout({
+    String paper='A4',
+    bool landscape=false,
+    int marginsTwips=1440,
+  }){
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    if(!{'A4','Letter','Legal'}.contains(paper)){
+      throw ArgumentError.value(paper,'paper','Unsupported Word page');
+    }
+    if(marginsTwips<0||marginsTwips>4320){
+      throw ArgumentError.value(marginsTwips,'marginsTwips');
+    }
+    final document=parts['word/document.xml'];
+    if(document==null)return;
+    final body=document.descendants.whereType<xml.XmlElement>()
+      .where((node)=>node.name.local=='body'&&node.name.prefix=='w')
+      .firstOrNull;
+    if(body==null)return;
+    final dimensions=switch(paper){
+      'Letter'=><int>[12240,15840],
+      'Legal'=><int>[12240,20160],
+      _=><int>[11906,16838],
+    };
+    final width=landscape?dimensions[1]:dimensions[0];
+    final height=landscape?dimensions[0]:dimensions[1];
+    final sections=document.descendants.whereType<xml.XmlElement>()
+      .where((node)=>node.name.local=='sectPr'&&node.name.prefix=='w')
+      .toList();
+    if(sections.isEmpty){
+      final newSection=xml.XmlElement(xml.XmlName('sectPr','w'));
+      body.children.add(newSection);
+      sections.add(newSection);
+    }
+    for(final section in sections){
+      var size=section.childElements
+        .where((n)=>n.name.local=='pgSz'&&n.name.prefix=='w').firstOrNull;
+      if(size==null){
+        size=xml.XmlElement(xml.XmlName('pgSz','w'));
+        section.children.insert(0,size);
+      }
+      size.setAttribute('w:w',width.toString());
+      size.setAttribute('w:h',height.toString());
+      size.setAttribute('w:orient',landscape?'landscape':'portrait');
+      var margins=section.childElements
+        .where((n)=>n.name.local=='pgMar'&&n.name.prefix=='w').firstOrNull;
+      if(margins==null){
+        margins=xml.XmlElement(xml.XmlName('pgMar','w'));
+        section.children.add(margins);
+      }
+      for(final side in ['top','bottom','left','right']){
+        margins.setAttribute('w:'+side,marginsTwips.toString());
+      }
+    }
+  }
+
   /// Structural Word edits: insert paragraphs after an existing paragraph,
   /// delete the selected paragraph, or both. Reverse index order ensures
   /// changes do not shift the indices of blocks not processed yet.
@@ -320,7 +377,10 @@ class FileShareDocEngine {
       {Map<String,Set<String>> formatChanges=const {},
        Map<String,String> alignmentChanges=const {},
        Map<String,List<String>> insertedAfter=const {},
-       Set<String> deletedParagraphs=const {}}) async {
+       Set<String> deletedParagraphs=const {},
+       String? pagePaper,
+       bool pageLandscape=false,
+       int pageMarginTwips=1440}) async {
     await dir.create(recursive:true);
     final filename=displayName;
     final dot=filename.lastIndexOf('.');
@@ -343,6 +403,9 @@ class FileShareDocEngine {
     if(insertedAfter.isNotEmpty||deletedParagraphs.isNotEmpty){
       applyWordStructure(insertedAfter:insertedAfter,deleted:deletedParagraphs);
     }
+    if(pagePaper!=null)applyWordPageLayout(
+      paper:pagePaper,landscape:pageLandscape,
+      marginsTwips:pageMarginTwips);
     final rebuilt=Archive();
     for(final part in archive!){
       if(!part.isFile){
