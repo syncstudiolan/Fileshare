@@ -2868,9 +2868,19 @@ class FeatureDesignPage extends StatelessWidget {
     _section(c, 'Connect your personal Cloudflare',
       'A user connects their own account once through Account ID and restricted API token.',
       Column(children: [
-        _line(c, Icons.cloud_off_outlined, 'Cloud connection',
-          'Not connected · no Cloudflare requests are being made',
-          trailing: const DesignTag('Offline')),
+        ListenableBuilder(
+          listenable:PersonalCloud.instance,
+          builder:(context,_) {
+            final cloud=PersonalCloud.instance;
+            return _line(c,cloud.connected
+                ?Icons.cloud_done_outlined:Icons.cloud_off_outlined,
+              'Cloud connection',cloud.connected
+                ?'Cloud connected · '+(cloud.workerOrigin??'Personal Worker')
+                :cloud.cloudSetupSaved
+                  ?'Cloud configured · sign in to reconnect'
+                  :'Cloud not connected',
+              trailing:DesignTag(cloud.connected?'CONNECTED':'OFFLINE'));
+          }),
         const SizedBox(height: 10),
         const TextField(enabled: false, decoration: InputDecoration(
           labelText: 'Cloudflare Account ID', hintText: 'Your Account ID',
@@ -2886,7 +2896,7 @@ class FeatureDesignPage extends StatelessWidget {
     ),
     const SizedBox(height: 14),
     _section(c, 'Automatic setup · proposed steps',
-      'The provisioning engine will run later; no live resources exist.',
+      'Account and personal Worker connection status is shown above.',
       Column(children: [
         _line(c, Icons.verified_user_outlined, '1. Verify token',
           'Check account, scope and permissions'),
