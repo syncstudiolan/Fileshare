@@ -98,6 +98,34 @@ void main(){
     expect(await original.readAsString(),'<h1>Original</h1>');
   });
 
+  test('creates standard minimal DOCX and opens it offline',()async{
+    final file=await FileShareDocEngine.createBlankDocx(temporary);
+    final engine=await FileShareDocEngine.open(file);
+    expect(engine.blocks.single.original,'New document');
+    final archive=ZipDecoder().decodeBytes(await file.readAsBytes());
+    expect(archive.findFile('_rels/.rels'),isNotNull);
+    expect(archive.findFile('[Content_Types].xml'),isNotNull);
+    expect(archive.findFile('word/document.xml'),isNotNull);
+  });
+
+  test('ODT paragraph text is editable without stripping package media',()async{
+    final file=await office('odt',{
+      'content.xml':'<office:document-content '
+        'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+        'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+        '<office:body><office:text>'
+        '<text:p>Before <text:span>Text</text:span></text:p>'
+        '</office:text></office:body></office:document-content>'
+    });
+    final engine=await FileShareDocEngine.open(file);
+    expect(engine.blocks.single.original,'Before Text');
+    final out=await engine.saveCopy({engine.blocks.single.id:'After'},
+      Directory(temporary.path+'/edited'));
+    final archive=ZipDecoder().decodeBytes(await out.readAsBytes());
+    expect(utf8.decode(archive.findFile('content.xml')!.content),contains('After'));
+    expect(archive.findFile('word/media/image.png')!.content,[1,2,3,4]);
+  });
+
   test('unknown format correctly rejects editing',(){
     expect(FileShareDocEngine.canEdit('scan.pdf'),false);
     expect(FileShareDocEngine.canView('scan.pdf'),true);
