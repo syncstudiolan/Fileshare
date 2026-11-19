@@ -144,6 +144,23 @@ void main(){
     expect(archive.findFile('word/media/image.png')!.content,[1,2,3,4]);
   });
 
+  test('LAN cache path without suffix can be edited by original filename',()async{
+    final original=await office('docx',{
+      'word/document.xml':'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:p><w:r><w:t>LAN document</w:t></w:r></w:p>'
+        '</w:body></w:document>'
+    });
+    final cache=File(temporary.path+'/opaque_transfer_cache');
+    await original.copy(cache.path);
+    final opened=await FileShareDocEngine.open(cache,
+      filename:'customer_letter.docx');
+    expect(opened.kind,'docx');
+    expect(opened.blocks.single.original,'LAN document');
+    final saved=await opened.saveCopy({opened.blocks.single.id:'Changed'},
+      Directory(temporary.path+'/saved'));
+    expect(saved.uri.pathSegments.last,'customer_letter_edited.docx');
+  });
+
   test('unknown format correctly rejects editing',(){
     expect(FileShareDocEngine.canEdit('scan.pdf'),false);
     expect(FileShareDocEngine.canView('scan.pdf'),true);
