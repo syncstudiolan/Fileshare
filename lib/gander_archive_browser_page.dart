@@ -164,15 +164,16 @@ class _GanderArchiveBrowserPageState
     if(_busy)return;
     try{
       final result=await FilePicker.pickFiles(
-        type:FileType.any,allowMultiple:true);
+        type:FileType.any);
       var count=0;
       for(final item in result){
-        if(item.size>16*1024*1024){
-          _noticeUser('Skipped oversized file: '+item.name);continue;
-        }
         final name=_safe(item.name),target=_folder+_safe(item.name);
         if(name.isEmpty||_children.contains(target))continue;
-        _added[target]=await item.readAsBytes();
+        final bytes=await item.readAsBytes();
+        if(bytes.length>16*1024*1024){
+          _noticeUser('Skipped oversized file: '+item.name);continue;
+        }
+        _added[target]=bytes;
         count++;
       }
       if(mounted)setState((){
@@ -251,7 +252,7 @@ class _GanderArchiveBrowserPageState
                     Icons.insert_drive_file_outlined),
                   title:Text(path.substring(_folder.length)),
                   onTap:()=>_open(path),
-                  trailing:dir?null:Wrap(mainAxisSize:MainAxisSize.min,
+                  trailing:dir?null:Row(mainAxisSize:MainAxisSize.min,
                     children:[
                       IconButton(tooltip:'Rename',onPressed:_busy?null:
                         ()=>_rename(path),
