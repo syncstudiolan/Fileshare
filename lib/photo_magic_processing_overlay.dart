@@ -82,7 +82,7 @@ class _MagicPainter extends CustomPainter {
       final twinkle=.3+.7*(.5+.5*math.sin(phase*math.pi*4+i*2.39));
       final radius=math.max(1.5,shortest*.009)*twinkle;
       final color=Color.lerp(const Color(0xFF75F6EF),
-        const Color(0xFFF2D5FF),i.isEven?.65:.20)!;
+        const Color(0xFFF2D5FF),i.isEven ? .65 : .20)!;
       final paint=Paint()..color=color.withValues(alpha:twinkle*.83)
         ..strokeWidth=math.max(.75,radius*.28)
         ..strokeCap=StrokeCap.round;
