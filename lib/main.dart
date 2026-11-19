@@ -1323,16 +1323,25 @@ class FileCardOpenRouter {
       return true;
     }
     if (!isPdf(name))return false;
-    if (!Platform.isAndroid) {
-      if (isPdf(name)) {
-        await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
-          title:const Text('PDF editing on Android'),
-          content:const Text('These tools are only available on Android/mobile.'),
-          actions:[TextButton(onPressed:()=>Navigator.pop(dialog),
-            child:const Text('OK'))]));
-        return true;
+    if (Platform.isIOS) {
+      try {
+        await const MethodChannel('file_share.ios_pdf').invokeMethod<void>(
+          'open',{'path':path});
+      } on PlatformException catch(e) {
+        if(context.mounted){
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:Text('iPhone PDF editor could not open: ${e.message ?? e.code}')));
+        }
       }
-      return false;
+      return true;
+    }
+    if (!Platform.isAndroid) {
+      await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
+        title:const Text('PDF tools not available on Windows'),
+        content:const Text('These tools are available on Android and iPhone.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(dialog),
+          child:const Text('OK'))]));
+      return true;
     }
     try{
       final theme=Theme.of(context).brightness==Brightness.dark?'dark':'light';
