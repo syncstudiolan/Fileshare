@@ -48,6 +48,24 @@ void main(){
     expect(document.innerText,contains('World'));
   });
 
+  test('Word bold italic and underline persist as OOXML run properties',()async{
+    final file=await office('docx',{
+      'word/document.xml':'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:p><w:r><w:t>Format me</w:t></w:r></w:p>'
+        '</w:body></w:document>'
+    });
+    final engine=await FileShareDocEngine.open(file);
+    final id=engine.blocks.single.id;
+    final out=await engine.saveCopy({},Directory(temporary.path+'/styles'),
+      formatChanges:{id:{'bold','italic','underline'}});
+    final zip=ZipDecoder().decodeBytes(await out.readAsBytes());
+    final document=xml.XmlDocument.parse(utf8.decode(
+      zip.findFile('word/document.xml')!.content));
+    expect(document.findAllElements('b').length,1);
+    expect(document.findAllElements('i').length,1);
+    expect(document.findAllElements('u').length,1);
+  });
+
   test('XLSX shared string cell becomes independent inline text',()async{
     final file=await office('xlsx',{
       'xl/sharedStrings.xml':'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
