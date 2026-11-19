@@ -256,7 +256,9 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
         child:Center(child:ConstrainedBox(
           constraints:const BoxConstraints(maxWidth:560),
           child:ListView(padding:const EdgeInsets.all(20),children:[
-            const Icon(Icons.system_update_alt_rounded,size:48),
+            ClipRRect(borderRadius:BorderRadius.circular(14),
+              child:Image.asset('assets/branding/file_share_icon.webp',
+                width:56,height:56,fit:BoxFit.cover)),
             const SizedBox(height:14),
             Text('File Share · ${updates.currentLabel}',
               textAlign:TextAlign.center,
@@ -338,8 +340,9 @@ class FileShareUpdateBanner extends StatelessWidget {
               child:Column(mainAxisSize:MainAxisSize.min,
                 crossAxisAlignment:CrossAxisAlignment.start,children:[
                 Row(children:[
-                  const Icon(Icons.system_update_alt_rounded,
-                    color:Color(0xFF765ADB),size:30),
+                  ClipRRect(borderRadius:BorderRadius.circular(8),
+                    child:Image.asset('assets/branding/file_share_icon.webp',
+                      width:34,height:34,fit:BoxFit.cover)),
                   const SizedBox(width:10),
                   Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
                     children:[
