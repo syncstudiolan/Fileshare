@@ -318,20 +318,30 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                 const SizedBox(height:14),
                 if(doc.blocks.isEmpty)
                   const Text('No supported editable text was found in this file.'),
-                for(final block in blocks)...[
-                  Card(child:Padding(padding:const EdgeInsets.all(12),
-                    child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-                      Text(block.title,style:theme.textTheme.labelMedium),
-                      const SizedBox(height:7),
-                      TextField(
-                        controller:_controllers[block.id],
-                        enabled:!_busy,
-                        maxLines:null,minLines:1,
-                        decoration:const InputDecoration(
-                          isDense:true,border:OutlineInputBorder())),
-                    ]))),
-                  const SizedBox(height:6),
-                ],
+                if(blocks.isNotEmpty)
+                  SizedBox(height:(MediaQuery.sizeOf(context).height*.63)
+                    .clamp(280.0,760.0).toDouble(),
+                    child:ListView.builder(
+                      keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                      itemCount:blocks.length,
+                      itemBuilder:(context,index){
+                        final block=blocks[index];
+                        return Padding(padding:const EdgeInsets.only(bottom:7),
+                          child:Card(child:Padding(padding:const EdgeInsets.all(12),
+                            child:Column(
+                              crossAxisAlignment:CrossAxisAlignment.start,
+                              children:[
+                                Text(block.title,style:theme.textTheme.labelMedium),
+                                const SizedBox(height:7),
+                                TextField(
+                                  controller:_controllers[block.id],
+                                  enabled:!_busy,
+                                  maxLines:null,minLines:1,
+                                  decoration:const InputDecoration(
+                                    isDense:true,border:OutlineInputBorder())),
+                              ]))));
+                      })),
               ]else...[
                 const SizedBox(height:24),
                 const Icon(Icons.visibility_outlined,size:54),
