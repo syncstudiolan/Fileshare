@@ -6,8 +6,10 @@ import 'package:xml/xml.dart' as xml;
 /// An offline non-destructive editor of existing OOXML text containers.
 /// It never writes over the original and leaves non-text package entries intact.
 class FileShareDocEngine {
-  FileShareDocEngine._(this.source,this.kind,this.blocks,this.archive,this.parts);
+  FileShareDocEngine._(this.source,this.displayName,this.kind,
+    this.blocks,this.archive,this.parts);
   final File source;
+  final String displayName;
   final String kind;
   final List<DocBlock> blocks;
   final Archive? archive;
@@ -70,13 +72,13 @@ class FileShareDocEngine {
     return file;
   }
 
-  static Future<FileShareDocEngine> open(File file) async {
+  static Future<FileShareDocEngine> open(File file,{String? filename}) async {
     if(!await file.exists())throw StateError('File unavailable');
     if(await file.length()>32*1024*1024)
       throw StateError('File is larger than 32 MB safety limit');
-    final type=ext(file.path);
+    final type=ext(filename??file.path);
     if(textFormats.contains(type)){
-      return FileShareDocEngine._(file,type,[
+      return FileShareDocEngine._(file,filename??file.uri.pathSegments.last,type,[
         DocBlock('text','Document',await file.readAsString(),'text',0)
       ],null,{});
     }
@@ -150,7 +152,8 @@ class FileShareDocEngine {
         }
       }
     }
-    return FileShareDocEngine._(file,type,blocks,zip,parts);
+    return FileShareDocEngine._(file,filename??file.uri.pathSegments.last,
+      type,blocks,zip,parts);
   }
 
   void apply(Map<String,String> changed){
@@ -249,7 +252,7 @@ class FileShareDocEngine {
   Future<File> saveCopy(Map<String,String> changed,Directory dir,
       {Map<String,Set<String>> formatChanges=const {}}) async {
     await dir.create(recursive:true);
-    final filename=source.uri.pathSegments.last;
+    final filename=displayName;
     final dot=filename.lastIndexOf('.');
     final basename=(dot<0?filename:filename.substring(0,dot))
       .replaceAll(RegExp(r'[^a-zA-Z0-9._ -]'),'_');
