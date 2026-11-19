@@ -19,6 +19,7 @@ import 'toolbox_page.dart';
 import 'file_share_doc_page.dart';
 import 'file_share_doc_engine.dart';
 import 'profile_avatar.dart';
+import 'android_lan_background_setting.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
@@ -43,7 +44,7 @@ Future<void> main([List<String> args = const []]) async {
   final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
   final offline = ciLanTest || previousOffline || windowsSmoke ||
     Platform.isWindows || (Platform.isAndroid &&
-      (await prefs.getBool('android_receive_background') ?? false));
+      (await prefs.getBool('android_receive_background') ?? true));
   appLan.onReceived = (file) => Platform.isAndroid
       ? const MethodChannel('file_share.native').invokeMethod<void>(
           'notifyReceived', {'name': file.name, 'sender': file.peer})
@@ -52,11 +53,13 @@ Future<void> main([List<String> args = const []]) async {
           : Future<void>.value();
   if (Platform.isWindows) {
     // Exit a second Windows process before it can bind the same LAN port.
-    if (!await WindowsBackground.instance.acquireSingleInstance()) {
+    if (!await WindowsBackground.instance.acquireSingleInstance(
+        showExisting:!args.contains('--background'))) {
       exit(0);
     }
     try {
-      await WindowsBackground.instance.initialize();
+      await WindowsBackground.instance.initialize(
+        launchHidden:args.contains('--background'));
       await WindowsBackground.instance.enableDefaultStart(prefs);
     }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
   }
@@ -93,7 +96,7 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   /// A private OS file lock prevents two copies of the Windows EXE from
   /// owning the fixed LAN TCP listener. If a copy is already active, ask it
   /// to open its tray window rather than showing a second broken dashboard.
-  Future<bool> acquireSingleInstance() async {
+  Future<bool> acquireSingleInstance({bool showExisting=true}) async {
     if (!Platform.isWindows) return true;
     final folder = await getApplicationSupportDirectory();
     final lockFile = File(folder.path + Platform.pathSeparator +
@@ -106,15 +109,17 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
       _instanceLock = handle;
     } on FileSystemException {
       await handle?.close();
-      try {
-        final existing = await Socket.connect(
-          InternetAddress.loopbackIPv4, 49312,
-          timeout: const Duration(milliseconds: 600));
-        existing.write('SHOW\n');
-        await existing.flush();
-        existing.destroy();
-      } catch (e) {
-        debugPrint('Existing File Share window could not be focused: $e');
+      if(showExisting){
+        try {
+          final existing = await Socket.connect(
+            InternetAddress.loopbackIPv4, 49312,
+            timeout: const Duration(milliseconds: 600));
+          existing.write('SHOW\\n');
+          await existing.flush();
+          existing.destroy();
+        } catch (e) {
+          debugPrint('Existing File Share window could not be focused: $e');
+        }
       }
       return false;
     }
@@ -131,11 +136,15 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     return true;
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize({bool launchHidden=false}) async {
     if (!Platform.isWindows) return;
     await windowManager.ensureInitialized();
-    // Maximize the normal Windows window; do not hide the system taskbar.
-    await windowManager.maximize();
+    // Startup uses the tray only; avoid maximizing a window behind the user.
+    if(launchHidden){
+      try { await windowManager.hide(); } catch (_) {}
+    }else{
+      await windowManager.maximize();
+    }
     final icon = await _writeTrayIcon();
     await desktop_tray.trayManager.setIcon(icon.path);
     await desktop_tray.trayManager.setToolTip('File Share — LAN receiver');
@@ -1964,8 +1973,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           _native.setMethodCallHandler((call) async {
             if(call.method=='sharesReceived') await _takeSharedFiles();
           });
-          try { await _native.invokeMethod<bool>('startLanService'); }
-          catch(e){ _snack('Background LAN limited: '+e.toString()); }
+          try {
+            final enabled=await _native.invokeMethod<bool>('getLanBootReceiver')??true;
+            if(enabled){
+              await _native.invokeMethod<bool>('startLanService');
+              await SharedPreferencesAsync()
+                .setBool('android_receive_background',true);
+            }
+          }catch(e){ _snack('Background LAN limited: '+e.toString()); }
           await _takeSharedFiles();
         }
         if (mounted) setState(() {});
@@ -2961,21 +2976,9 @@ class FeatureDesignPage extends StatelessWidget {
     ],
     if (Platform.isAndroid) ...[
       _section(c, 'Android Background Receiver',
-        'A visible connected-device foreground notification keeps the LAN engine available after leaving the app.',
-        const Column(children: [
-          ListTile(
-            leading: Icon(Icons.wifi_rounded),
-            title: Text('Background LAN receiving'),
-            subtitle: Text('Active while the File Share foreground service is running'),
-          ),
-          ListTile(
-            leading: Icon(Icons.notifications_active_outlined),
-            title: Text('File received notifications'),
-            subtitle: Text('Allow notifications in Android app settings'),
-          ),
-          Text('Force Stop, OEM battery optimization, Wi-Fi disconnect and reboot can still interrupt receiving.'),
-        ]),
-      ),
+        'File Share can receive nearby LAN transfers while the screen is closed. '
+        'Android may restrict background services after reboot.',
+        const AndroidLanBackgroundSetting()),
       const SizedBox(height: 14),
     ],
     _section(c, 'Appearance', 'Light, dark and follow-system for Android and Windows.',
