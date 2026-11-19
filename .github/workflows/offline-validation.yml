@@ -215,6 +215,8 @@ jobs:
             if (-not (Test-Path $required)) { throw "ONNX dependency not ready: $required" }
           }
       - name: Build optimized Windows release bundle
+        env:
+          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: flutter build windows --release
       - name: Record Windows release bundle size
         shell: pwsh
