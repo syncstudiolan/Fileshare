@@ -21,7 +21,9 @@ class FileShareDocEngine {
     'pptx','pptm','ppsx','potx','odt','ods','odp'};
   static const viewOnly={'pdf','doc','rtf','xls','xlsb','ppt','epub',
     'zip','jpg','jpeg','png','webp','gif','bmp','heic','mp3','wav',
-    'mp4','mkv','mov','flac','ogg'};
+    'mp4','mkv','mov','flac','ogg','stl','heif','avif','ico',
+    '3gp','avi','m4v','webm','mpeg','mpg','ts','m4a','aac','amr',
+    'opus','srt','vtt','nfo'};
   static String ext(String path)=>path.toLowerCase().split('.').last;
   static bool canEdit(String path)=>textFormats.contains(ext(path))||
     officeFormats.contains(ext(path));
