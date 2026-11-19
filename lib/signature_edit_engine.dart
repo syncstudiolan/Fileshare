@@ -42,6 +42,13 @@ class SignatureEditEngine {
       'filter':'Original','cropOnly':true,'quad':crop.quad,
     });
 
+  /// Create every filter thumbnail from one tiny source in a single worker.
+  /// No full-size image decode or per-card ONNX/image operations during build.
+  static Future<Map<String,Uint8List>> thumbnails(Uint8List bytes,
+      List<String> filters)=>compute(_buildSignatureThumbnails,{
+        'bytes':bytes,'filters':filters,
+      });
+
   /// JPEG comments are standards-compliant and do not alter image pixels.
   /// This guarantees exactly N * 1024 bytes IF the actual compressed signature
   /// can fit in that target. Otherwise we throw; never silently make 19/21 KB.
@@ -226,4 +233,29 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   throw StateError(
     'Exact ${(target/1024).round()} KB is not achievable without '
     'making this signature unreadable. Increase the target or crop more.');
+}
+
+/// Fast filter previews from exactly the same transform as real export.
+/// Only a 160px mini-image enters each filter calculation, so results are
+/// inexpensive even for large camera photographs.
+Map<String,Uint8List> _buildSignatureThumbnails(
+    Map<String,Object?> request){
+  final source=img.decodeImage(request['bytes'] as Uint8List);
+  if(source==null)throw const FormatException('Invalid signature source');
+  const maxSide=160;
+  final biggest=math.max(source.width,source.height);
+  final small=biggest>maxSide?img.copyResize(source,
+    width:math.max(1,(source.width*maxSide/biggest).round()),
+    height:math.max(1,(source.height*maxSide/biggest).round()),
+    interpolation:img.Interpolation.average):source;
+  final png=Uint8List.fromList(img.encodePng(small,level:1));
+  final output=<String,Uint8List>{};
+  for(final name in request['filters'] as List<String>){
+    output[name]=_signatureTransform({
+      'bytes':png,'crop':<double>[0,0,1,1],
+      'filter':name,'intensity':1.0,
+      'preview':true,
+    });
+  }
+  return output;
 }
