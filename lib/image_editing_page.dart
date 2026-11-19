@@ -14,6 +14,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
+import 'app_top_notice.dart';
+import 'photo_magic_processing_overlay.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
@@ -38,13 +40,16 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
+  bool _cropDirty=false;
+  bool _exporting=false;
+  final _targetKbController=TextEditingController(text:'500');
   String? _selectedFilter;
   String? _pendingFilter;
   Uint8List? _filterBase;
   final TransformationController _transformController=TransformationController();
   double _zoom=1.0;
   String _tool='Background';
-  String _format='PNG';
+  String _format='JPEG';
   String? _draftId;
   late String _name;
   final List<Uint8List> _undo=[], _redo=[];
@@ -90,12 +95,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   void initState(){
     super.initState();
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
+    if(_name.toLowerCase().endsWith('.png'))_format='PNG';
     unawaited(_load());
     unawaited(_loadRecentColors());
   }
   @override void dispose(){
     _erasePreview?.dispose();
     _eraseRestoration?.dispose();
+    _targetKbController.dispose();
     _transformController.dispose();
     _controlScroll.dispose();
     _strokeRepaint.dispose();
@@ -143,7 +150,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       final path=widget.draft?.filePath??widget.sourcePath;
       if(path==null)return; // Empty canvas: Camera and Browse stay visible.
       final bytes=await File(path).readAsBytes();
-      final dimensions=await ImageEditingEngine.dimensions(bytes);
+      final working=widget.draft==null
+        ?await ImageEditingEngine.prepareWorkingImage(bytes):bytes;
+      final dimensions=await ImageEditingEngine.dimensions(working);
       _draftId=widget.draft?.id??
         DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       _steps.addAll(widget.draft?.steps??[]);
@@ -154,12 +163,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         original=await File(savedOriginal).readAsBytes();
       }
       if(mounted)setState((){
-        _bytes=Uint8List.fromList(bytes);
-        _originalBytes=Uint8List.fromList(original);
+        _bytes=working;
+        _originalBytes=original;
         _cutoutBytes=null;
       });
-      unawaited(_cacheEraseImage(bytes));
-      unawaited(_cacheEraseImage(bytes,original:true));
+      unawaited(_cacheEraseImage(working));
+      unawaited(_cacheEraseImage(original,original:true));
       await _restoreSession();
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
@@ -221,24 +230,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       }
       if(path==null)throw StateError('No file selected');
       final bytes=await File(path).readAsBytes();
-      final dimensions=await ImageEditingEngine.dimensions(bytes);
+      final working=await ImageEditingEngine.prepareWorkingImage(bytes);
+      final dimensions=await ImageEditingEngine.dimensions(working);
       if(!mounted)return;
       setState((){
-        _bytes=Uint8List.fromList(bytes);
-        _originalBytes=Uint8List.fromList(bytes);
+        _bytes=working;
+        _originalBytes=bytes;
         _ratio=dimensions[0]/dimensions[1];
         _name=name??'image.png';
+        _format=_name.toLowerCase().endsWith('.png')?'PNG':'JPEG';
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
         _undo.clear();_redo.clear();_steps.clear();
         _pendingFilter=null;_selectedFilter=null;_pendingBackgroundColor=null;
         _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropDirty=false;
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
         _error=null;
         _showOriginal=false;
       });
-      unawaited(_cacheEraseImage(bytes));
+      unawaited(_cacheEraseImage(working));
       unawaited(_cacheEraseImage(bytes,original:true));
+      if(working.length!=bytes.length){
+        _message('Large photo optimized for smooth editing; original preserved.');
+      }
       await _saveDraft();
     }catch(_){
       _message('Could not open this image. Try a JPG or PNG.');
@@ -251,6 +266,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     await EditorSessionStore.instance.save('image',id,{
       'tool':_tool,'format':_format,
       'cropMode':_cropMode,'crop':[_crop.left,_crop.top,_crop.right,_crop.bottom],
+      'cropDirty':_cropDirty,
       'cropRatio':_cropRatio,
       'cropCorners':[for(final p in _cropCorners)[p.dx,p.dy]],
       'eraseRadius':_eraseRadius,'softness':_softness,'eraseMode':_eraseMode,
@@ -279,6 +295,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(tool!=null&&_tools.contains(tool))_tool=tool;
       _format=state['format'] as String? ??_format;
       _cropMode=state['cropMode'] as String? ??_cropMode;
+      _cropDirty=state['cropDirty'] as bool? ??false;
       _cropRatio=state['cropRatio'] as String? ??_cropRatio;
       final crop=state['crop'];
       if(crop is List&&crop.length==4)_crop=Rect.fromLTRB(
@@ -302,8 +319,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _enhanceStrength=(state['enhanceStrength'] as num?)?.toDouble() ?? .8;
       _enhanceFaceMode=state['enhanceFaceMode'] as bool? ?? false;
       _faceUseCrop=state['faceUseCrop'] as bool? ?? false;
-      _quality=(state['quality'] as num?)?.toInt()??_quality;
-      _targetKb=(state['targetKb'] as num?)?.toInt()??_targetKb;
+      _quality=((state['quality'] as num?)?.toInt()??_quality).clamp(35,100);
+      _targetKb=((state['targetKb'] as num?)?.toInt()??_targetKb)
+        .clamp(5,500000);
+      _targetKbController.text=_targetKb.toString();
       _brightness=number(state['brightness'],_brightness);
       _contrast=number(state['contrast'],_contrast);
       _saturation=number(state['saturation'],_saturation);
@@ -354,7 +373,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       return;
     }
     _undo.add(previous);
-    if(_undo.length>15)_undo.removeAt(0);
+    while(_undo.length>8 ||
+        _undo.fold<int>(0,(sum,bytes)=>sum+bytes.length)>48*1024*1024){
+      _undo.removeAt(0);
+    }
     _redo.clear();
     _steps.add(step);
     if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
@@ -374,6 +396,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       if(dimensions!=null)_ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropDirty=false;
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
@@ -402,6 +425,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       _ratio=size[0]/size[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropDirty=false;
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
@@ -429,7 +453,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         }
         final dir=await getTemporaryDirectory();
         final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
-        await temporary.writeAsBytes(data,flush:true);
+        final bounded=await ImageEditingEngine.segmentationInput(data);
+        await temporary.writeAsBytes(bounded,flush:true);
         final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
         try {
           final result=await segmenter.processImage(
@@ -454,23 +479,27 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         engine='U²-NetP (ONNX)';
       }
       Future<void> plain() async {
-        final dimensions=await ImageEditingEngine.dimensions(data);
+        final bounded=await ImageEditingEngine.segmentationInput(data);
+        final dimensions=await ImageEditingEngine.dimensions(bounded);
         width=dimensions[0];height=dimensions[1];
         mask=await ImageEditingEngine.simpleBackgroundMask(
-          data,tolerance:_tolerance);
+          bounded,tolerance:_tolerance);
         engine='Plain-color edge segmentation';
       }
       if(_backgroundEngine=='Google ML Kit'){
         await mlKit();
       }else if(_backgroundEngine=='U²-NetP (ONNX)'){
-        await u2NetP();
+        // Android's native ONNX backend can terminate the process before
+        // Dart catches an exception. Use stable ML Kit there instead.
+        if(Platform.isAndroid)await mlKit();
+        else {try{await u2NetP();}catch(_){await plain();}}
       }else if(_backgroundEngine=='Plain-color'){
         await plain();
       }else if(Platform.isAndroid){
         try{await mlKit();}
-        catch(_){await u2NetP();}
+        catch(_){await plain();}
       }else if(Platform.isWindows){
-        await u2NetP();
+        try{await u2NetP();}catch(_){await plain();}
       }else{
         await plain();
       }
@@ -531,9 +560,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _processingAction='background';
     setState(()=>_busy=true);
     try {
-      final dimensions=await ImageEditingEngine.dimensions(data);
+      final bounded=await ImageEditingEngine.segmentationInput(data);
+      final dimensions=await ImageEditingEngine.dimensions(bounded);
       final mask=await ImageEditingEngine.simpleBackgroundMask(
-        data,tolerance:_tolerance);
+        bounded,tolerance:_tolerance);
       final result=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':dimensions[0],'maskHeight':dimensions[1],
       });
@@ -616,6 +646,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _compress()async{
     final bytes=_bytes;
     if(bytes==null||_busy)return;
+    _processingAction='compress';
     setState(()=>_busy=true);
     try{
       final result=await ImageEditingEngine.compress(bytes,
@@ -627,39 +658,72 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       await _commit(bytes,result,'Compress $_targetKb KB ($_format)');
       _message('Exported ${(result.length/1024).toStringAsFixed(1)} KB');
     }catch(e){_message('Compression failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+    finally{
+      _processingAction=null;
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _export(String action)async {
     final cart=action=='cart';
-    if(_bytes==null)return;
+    if(_bytes==null||_exporting)return;
+    _exporting=true;
     try{
+      // The cart remains tappable during AI processing. Wait for the edit
+      // to commit rather than accidentally exporting the pre-edit original.
+      if(_busy){
+        final deadline=DateTime.now().add(const Duration(seconds:90));
+        while(_busy && mounted && DateTime.now().isBefore(deadline)){
+          await Future<void>.delayed(const Duration(milliseconds:80));
+        }
+        if(!mounted)return;
+        if(_busy){
+          _message('Editing is still running. Please retry after it completes.');
+          return;
+        }
+      }
       // Do not lose a live brush stroke if Send is pressed mid-edit.
       if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
       await _eraseQueue;
       if(!_busy){
         if(_pendingFilter!=null)await _finalizeFilter();
+        if(_pendingFilter!=null){
+          _message('Filter still pending. Retry Apply before exporting.');return;
+        }
         if(_fineAngle.abs()>=.001)await _commitStraighten();
+        if(_fineAngle.abs()>=.001){
+          _message('Rotation not finished. Retry Apply before exporting.');return;
+        }
         if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-        if(_tool=='Crop'&&(_cropMode=='Perspective Crop'||
-            _crop!=const Rect.fromLTWH(.06,.06,.88,.88))){
-          await _commitCrop();
+        if(_pendingBackgroundColor!=null){
+          _message('Background change still pending. Retry before exporting.');return;
+        }
+        if(_cropDirty)await _commitCrop();
+        if(_cropDirty){
+          _message('Crop not finished. Retry Apply before exporting.');return;
         }
         if(_brightness!=1||_contrast!=1||
             _saturation!=1||_exposure!=0){
           await _commitAdjust();
+        }
+        if(_brightness!=1||_contrast!=1||
+            _saturation!=1||_exposure!=0){
+          _message('Adjustments not finished. Retry before exporting.');return;
         }
       }
       if(cart){
         await _saveDraft();
         await _saveSession();
       }
-      // Sharing uses the untouched imported photo. Edited pixels stay in History.
-      final data=(cart||action=='share')?(_originalBytes??_bytes):_bytes;
+      // Every outgoing action must use the LAST COMMITTED EDITED snapshot.
+      // The original is preserved separately only for Restore Original.
+      // If a processing operation is underway, use the most recent finished
+      // snapshot rather than selecting the untouched import.
+      final data=_bytes;
       if(data==null)return;
       final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8
         ?'jpg':'png';
-      final name='${cart||action=='share'?'original':'edited'}_${DateTime.now().millisecondsSinceEpoch}.$type';
+      final name='edited_${DateTime.now().microsecondsSinceEpoch}.$type';
       if(cart){
         final directory=await getApplicationSupportDirectory();
         final folder=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
@@ -680,12 +744,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         if(saved!=null)_message('Image saved successfully');
       }
     }catch(e){_message('Export failed: $e');}
+    finally{_exporting=false;}
   }
 
   void _message(String value){
     if(!mounted)return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content:Text(value),duration:const Duration(seconds:3)));
+    FileShareTopNotice.show(context,value);
   }
 
   Widget _slider(String title,double value,double min,double max,
@@ -804,7 +868,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             FilledButton.tonalIcon(
               onPressed:_busy?null:_customColorDialog,
               icon:const Icon(Icons.palette_outlined),
-              label:const Text('RGB Color Picker')),
+              label:const Text('Full Spectrum Color Picker')),
           ]),
         ]);
       case 'Photo Enhancer':
@@ -877,29 +941,83 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
               ? 'Restore Face' : 'Enhance Photo'))),
         ]);
       case 'Compress':
-        return Column(children:[
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           Row(children:[
-            const Text('Format'),const SizedBox(width:20),
-            DropdownButton<String>(value:_format,
-              items:const ['PNG','JPEG'].map((x)=>DropdownMenuItem(
-                value:x,child:Text(x))).toList(),
-              onChanged:(x){if(x!=null)setState(()=>_format=x);}),
+            const Icon(Icons.high_quality_rounded,color:FileTheme.violet,size:20),
+            const SizedBox(width:8),
+            Expanded(child:Text('Balance quality & file size',
+              style:Theme.of(context).textTheme.titleSmall
+                ?.copyWith(fontWeight:FontWeight.w700))),
           ]),
-          _slider('Quality',_quality.toDouble(),5,100,
+          const SizedBox(height:9),
+          SegmentedButton<String>(showSelectedIcon:false,
+            segments:const [
+              ButtonSegment(value:'JPEG',icon:Icon(Icons.photo_outlined,size:17),
+                label:Text('JPEG · Small')),
+              ButtonSegment(value:'PNG',icon:Icon(Icons.layers_outlined,size:17),
+                label:Text('PNG · Lossless')),
+            ],
+            selected:{_format},
+            onSelectionChanged:_busy?null:(value)=>
+              setState(()=>_format=value.first)),
+          const SizedBox(height:12),
+          _slider('Quality',_quality.toDouble(),35,100,
             (v)=>setState(()=>_quality=v.round()),(){}),
-          TextFormField(
-            initialValue:_targetKb.toString(),
+          Row(children:[
+            const Icon(Icons.data_usage_rounded,size:18,color:FileTheme.violet),
+            const SizedBox(width:8),
+            Expanded(child:Text('Target size',style:TextStyle(
+              fontWeight:FontWeight.w700,
+              color:FileTheme.foreground(context)))),
+            Text('${_targetKb} KB',style:const TextStyle(
+              fontWeight:FontWeight.w700,color:FileTheme.violet)),
+          ]),
+          Slider(value:_targetKb.clamp(5,2000).toDouble(),
+            min:5,max:2000,divisions:399,
+            label:'${_targetKb} KB',
+            onChanged:_busy?null:(value){
+              final kb=(value/5).round()*5;
+              setState(()=>_targetKb=kb.clamp(5,500000));
+              _targetKbController.text=_targetKb.toString();
+            }),
+          Wrap(spacing:6,runSpacing:6,children:[
+            for(final kb in const [25,50,100,200,500,1024])
+              ChoiceChip(
+                label:Text(kb==1024?'1 MB':'$kb KB'),
+                selected:_targetKb==kb,
+                avatar:_targetKb==kb
+                    ?const Icon(Icons.check_rounded,size:15):null,
+                onSelected:_busy?null:(_){
+                  setState(()=>_targetKb=kb);
+                  _targetKbController.text=kb.toString();
+                }),
+          ]),
+          const SizedBox(height:10),
+          TextField(controller:_targetKbController,
+            enabled:!_busy,
             keyboardType:TextInputType.number,
-            decoration:const InputDecoration(
-              labelText:'Target file size (KB)',
-              helperText:'Enter any value from 1 to 500000 KB; quality may need to decrease.'),
-            onChanged:(v){
-              final n=int.tryParse(v);
-              if(n!=null && n>=1 && n<=500000)_targetKb=n;
+            decoration:InputDecoration(
+              prefixIcon:const Icon(Icons.edit_note_rounded),
+              labelText:'Custom target',
+              suffixText:'KB',
+              helperText:'5–500,000 KB · original kept separately',
+              border:OutlineInputBorder(
+                borderRadius:BorderRadius.circular(14))),
+            onChanged:(value){
+              final parsed=int.tryParse(value);
+              if(parsed!=null&&parsed>=5&&parsed<=500000){
+                setState(()=>_targetKb=parsed);
+              }
             }),
           const SizedBox(height:12),
-          FilledButton.icon(onPressed:_busy?null:_compress,
-            icon:const Icon(Icons.compress_rounded),label:const Text('Compress')),
+          SizedBox(width:double.infinity,child:FilledButton.icon(
+            onPressed:_busy?null:_compress,
+            icon:const Icon(Icons.compress_rounded),
+            label:const Text('Optimize & compress'))),
+          const SizedBox(height:6),
+          Text('JPEG preserves more detail at tight targets. Transparent '
+            'backgrounds require PNG. Very small files may lose resolution.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
         ]);
       case 'Crop':
         return Column(children:[
@@ -981,12 +1099,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         ]);
       case 'Straighten':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          const Text('Fine rotation in 0.5° increments',
-            style:TextStyle(fontSize:12)),
-          Center(child:Text('${_fineAngle.toStringAsFixed(1)}°',
-            style:const TextStyle(fontWeight:FontWeight.w700,fontSize:19))),
-          Slider(min:-45,max:45,divisions:180,value:_fineAngle,
-            onChanged:(v)=>setState(()=>_fineAngle=v)),
+          Row(children:[
+            const Icon(Icons.rotate_90_degrees_ccw_rounded,
+              size:19,color:FileTheme.violet),
+            const SizedBox(width:8),
+            Expanded(child:Text('Live rotation · 0.5° steps',
+              style:TextStyle(fontSize:12,
+                color:FileTheme.muted(context)))),
+            Text('${_fineAngle.toStringAsFixed(1)}°',
+              style:const TextStyle(fontWeight:FontWeight.w700,fontSize:17,
+                color:FileTheme.violet)),
+          ]),
+          Row(children:[
+            IconButton(tooltip:'Rotate 0.5° left',
+              onPressed:_busy?null:()=>setState(()=>
+                _fineAngle=(_fineAngle-.5).clamp(-45.0,45.0)),
+              icon:const Icon(Icons.remove_circle_outline_rounded)),
+            Expanded(child:Slider(min:-45,max:45,divisions:180,
+              value:_fineAngle,
+              onChanged:_busy?null:(v)=>setState(()=>_fineAngle=v))),
+            IconButton(tooltip:'Rotate 0.5° right',
+              onPressed:_busy?null:()=>setState(()=>
+                _fineAngle=(_fineAngle+.5).clamp(-45.0,45.0)),
+              icon:const Icon(Icons.add_circle_outline_rounded)),
+          ]),
           Row(children:[
             TextButton.icon(onPressed:()=>setState(()=>_fineAngle=0),
               icon:const Icon(Icons.restart_alt),label:const Text('Reset')),
@@ -1054,6 +1190,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   void _setCropRatio(String ratio){
     setState((){
       _cropRatio=ratio;
+      _cropDirty=true;
       final value=switch(ratio){
         '1:1'=>1.0,'4:3'=>4/3,'16:9'=>16/9,'A4'=>210/297,
         _=>_ratio,
@@ -1068,12 +1205,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _commitStraighten()async{
     final degrees=_fineAngle;
     if(degrees.abs()<.001)return;
+    final previous=_bytes;
     await _apply('straighten',{'degrees':degrees,'autoCrop':_straightenAutoCrop},
       description:'Straighten ${degrees.toStringAsFixed(1)}°');
-    if(mounted)setState(()=>_fineAngle=0);
+    // Do not discard the live rotation if its raster export failed.
+    if(mounted && !identical(previous,_bytes))setState(()=>_fineAngle=0);
   }
   Future<void> _commitAdjust()async{
     if(_busy)return;
+    final previous=_bytes;
     final options=<String,Object?>{
       'brightness':_brightness,'contrast':_contrast,
       'saturation':_saturation,'exposure':_exposure,
@@ -1082,6 +1222,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _brightness=1;_contrast=1;_saturation=1;_exposure=0;
     });
     await _apply('adjust',options);
+    if(mounted && identical(previous,_bytes)){
+      // Failed operation: keep the adjustments visible, not silently lost.
+      setState((){
+        _brightness=options['brightness'] as double;
+        _contrast=options['contrast'] as double;
+        _saturation=options['saturation'] as double;
+        _exposure=options['exposure'] as double;
+      });
+    }
   }
   Future<void> _commitCrop()async{
     if(_busy)return;
@@ -1114,98 +1263,137 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   Future<void> _customColorDialog() async {
-    Color picked=_custom;
-    final hex=TextEditingController(
-      text:picked.toARGB32().toRadixString(16).substring(2).toUpperCase());
-    final rgb=[picked.r,picked.g,picked.b].map((x)=>
-      TextEditingController(text:(x*255).round().toString())).toList();
+    var picked=_custom;
+    var mode='HSV';
+    final hex=TextEditingController();
+    final rgb=List.generate(3,(_)=>TextEditingController());
+    final hsvFields=List.generate(3,(_)=>TextEditingController());
+    void syncFields(Color color){
+      hex.text=color.toARGB32().toRadixString(16).padLeft(8,'0')
+        .substring(2).toUpperCase();
+      final channels=[color.r,color.g,color.b];
+      for(var i=0;i<3;i++)rgb[i].text=(channels[i]*255).round().toString();
+      final v=HSVColor.fromColor(color);
+      final values=[v.hue,v.saturation*100,v.value*100];
+      for(var i=0;i<3;i++)hsvFields[i].text=values[i].toStringAsFixed(i==0?1:0);
+    }
+    syncFields(picked);
     try {
-      final result=await showDialog<Color>(context:context,
-        builder:(dialog)=>StatefulBuilder(builder:(dialog,refresh){
-          void choose(Color color){
+      final selected=await showDialog<Color>(context:context,
+        builder:(dialog)=>StatefulBuilder(builder:(context,refresh){
+          void choose(Color color,{bool updateText=true}){
             refresh(()=>picked=color);
-            hex.text=color.toARGB32().toRadixString(16)
-              .padLeft(8,'0').substring(2).toUpperCase();
-            final values=[color.r,color.g,color.b];
-            for(var i=0;i<3;i++){
-              rgb[i].text=(values[i]*255).round().toString();
-            }
+            if(updateText)syncFields(color);
           }
           final hsv=HSVColor.fromColor(picked);
           return AlertDialog(
-            title:const Text('RGB Background Color Picker'),
-            content:SizedBox(width:330,child:SingleChildScrollView(
-              child:Column(mainAxisSize:MainAxisSize.min,
-                crossAxisAlignment:CrossAxisAlignment.start,children:[
-                Container(height:44,decoration:BoxDecoration(
-                  color:picked,borderRadius:BorderRadius.circular(12),
-                  border:Border.all(color:Colors.grey.shade400))),
-                const SizedBox(height:15),
-                const Text('Choose saturation and brightness'),
-                const SizedBox(height:8),
-                LayoutBuilder(builder:(context,limits)=>GestureDetector(
-                  onPanDown:(d)=>choose(hsv.withSaturation(
-                    (d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
-                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
-                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked)
-                    .withSaturation((d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
-                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
-                  child:CustomPaint(
-                    painter:_SaturationValuePicker(hsv),
-                    child:const SizedBox(height:150,width:double.infinity)),
-                )),
-                const SizedBox(height:13),
-                const Text('Hue'),
-                const SizedBox(height:6),
-                LayoutBuilder(builder:(context,limits)=>GestureDetector(
-                  onPanDown:(d)=>choose(HSVColor.fromColor(picked).withHue(
-                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
-                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked).withHue(
-                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
-                  child:CustomPaint(painter:_HueColorPicker(hsv.hue),
-                    child:const SizedBox(height:26,width:double.infinity)),
-                )),
-                const SizedBox(height:14),
-                Row(children:[
-                  for(var i=0;i<3;i++)Expanded(child:Padding(
-                    padding:EdgeInsets.only(right:i==2?0:8),
-                    child:TextField(
-                      controller:rgb[i],
-                      keyboardType:TextInputType.number,
-                      decoration:InputDecoration(
-                        isDense:true,labelText:['R','G','B'][i],
-                        border:const OutlineInputBorder()),
-                      onChanged:(value){
-                        final v=int.tryParse(value);
-                        if(v==null||v<0||v>255)return;
-                        final values=[for(final t in rgb)
-                          (int.tryParse(t.text)??0).clamp(0,255)];
-                        refresh(()=>picked=Color.fromARGB(255,
-                          values[0],values[1],values[2]));
-                        hex.text=picked.toARGB32().toRadixString(16)
-                          .padLeft(8,'0').substring(2).toUpperCase();
-                      },
-                    ),
-                  )),
-                ]),
+            title:const Text('Full Spectrum Color Picker'),
+            insetPadding:const EdgeInsets.symmetric(horizontal:14,vertical:20),
+            content:SizedBox(width:340,child:SingleChildScrollView(
+              child:Column(mainAxisSize:MainAxisSize.min,children:[
+                Container(height:44,decoration:BoxDecoration(color:picked,
+                  borderRadius:BorderRadius.circular(9),
+                  border:Border.all(color:Colors.white54))),
                 const SizedBox(height:10),
-                TextField(controller:hex,
+                AspectRatio(aspectRatio:1.1,
+                  child:LayoutBuilder(builder:(context,box){
+                    final side=math.min(box.maxWidth,box.maxHeight);
+                    void at(Offset p){
+                      final center=Offset(side/2,side/2);
+                      final dx=p.dx-center.dx,dy=p.dy-center.dy;
+                      final radius=side*.46;
+                      final distance=math.sqrt(dx*dx+dy*dy);
+                      final hue=(math.atan2(dy,dx)*180/math.pi+360)%360;
+                      final saturation=(distance/radius).clamp(0.0,1.0).toDouble();
+                      choose(HSVColor.fromAHSV(hsv.alpha,hue,saturation,
+                        hsv.value).toColor());
+                    }
+                    return Center(child:SizedBox(width:side,height:side,
+                      child:GestureDetector(
+                        behavior:HitTestBehavior.opaque,
+                        onPanDown:(d)=>at(d.localPosition),
+                        onPanUpdate:(d)=>at(d.localPosition),
+                        child:CustomPaint(painter:_FullSpectrumWheel(hsv))),
+                    ));
+                  })),
+                const SizedBox(height:9),
+                Row(children:[
+                  const Text('Brightness'),
+                  Expanded(child:Slider(value:hsv.value,min:0,max:1,
+                    onChanged:(value)=>choose(hsv.withValue(value).toColor()))),
+                  Text('${(hsv.value*100).round()}%'),
+                ]),
+                SegmentedButton<String>(
+                  showSelectedIcon:false,
+                  segments:const [
+                    ButtonSegment(value:'RGB',label:Text('RGB')),
+                    ButtonSegment(value:'HSV',label:Text('HSV')),
+                    ButtonSegment(value:'HEX',label:Text('HEX')),
+                  ],
+                  selected:{mode},
+                  onSelectionChanged:(v)=>refresh(()=>mode=v.first)),
+                const SizedBox(height:12),
+                if(mode=='RGB')
+                  Row(children:[for(var i=0;i<3;i++)
+                    Expanded(child:Padding(
+                      padding:EdgeInsets.only(right:i==2?0:7),
+                      child:TextField(controller:rgb[i],
+                        keyboardType:TextInputType.number,
+                        decoration:InputDecoration(
+                          isDense:true,labelText:['R','G','B'][i],
+                          border:const OutlineInputBorder()),
+                        onChanged:(_){
+                          final values=rgb.map((t)=>int.tryParse(t.text)).toList();
+                          if(values.any((n)=>n==null||n<0||n>255))return;
+                          choose(Color.fromARGB(255,
+                            values[0]!,values[1]!,values[2]!),
+                            updateText:false);
+                          hex.text=picked.toARGB32().toRadixString(16)
+                            .padLeft(8,'0').substring(2).toUpperCase();
+                        }),
+                    )),
+                  ])
+                else if(mode=='HSV')
+                  Row(children:[for(var i=0;i<3;i++)
+                    Expanded(child:Padding(
+                      padding:EdgeInsets.only(right:i==2?0:7),
+                      child:TextField(controller:hsvFields[i],
+                        keyboardType:const TextInputType.numberWithOptions(decimal:true),
+                        decoration:InputDecoration(
+                          isDense:true,labelText:['H°','S%','V%'][i],
+                          border:const OutlineInputBorder()),
+                        onChanged:(_){
+                          final v=hsvFields.map((t)=>double.tryParse(t.text)).toList();
+                          if(v.any((n)=>n==null)||v[0]!<0||v[0]!>360||
+                              v[1]!<0||v[1]!>100||v[2]!<0||v[2]!>100)return;
+                          choose(HSVColor.fromAHSV(1,v[0]!,v[1]!/100,
+                            v[2]!/100).toColor(),updateText:false);
+                          hex.text=picked.toARGB32().toRadixString(16)
+                            .padLeft(8,'0').substring(2).toUpperCase();
+                          final rgbValues=[picked.r,picked.g,picked.b];
+                          for(var j=0;j<3;j++)rgb[j].text=
+                            (rgbValues[j]*255).round().toString();
+                        }),
+                    )),
+                  ])
+                else TextField(controller:hex,
                   textCapitalization:TextCapitalization.characters,
                   decoration:const InputDecoration(
-                    labelText:'HEX color',prefixText:'#',
+                    labelText:'HEX — six digits',prefixText:'#',
                     border:OutlineInputBorder(),isDense:true),
-                  onChanged:(value){
-                    final normalized=value.replaceFirst('#','');
+                  onChanged:(text){
+                    final normalized=text.replaceFirst('#','');
                     if(!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(normalized))return;
-                    final code=int.parse(normalized,radix:16);
-                    final color=Color(0xFF000000|code);
-                    refresh(()=>picked=color);
-                    for(final entry in <int>[0,1,2]){
-                      rgb[entry].text=[
-                        (color.r*255).round(),(color.g*255).round(),
-                        (color.b*255).round()][entry].toString();
-                    }
+                    choose(Color(0xff000000|int.parse(normalized,radix:16)),
+                      updateText:false);
+                    final channels=[picked.r,picked.g,picked.b];
+                    for(var j=0;j<3;j++)rgb[j].text=
+                      (channels[j]*255).round().toString();
                   }),
+                const SizedBox(height:8),
+                const Text('Move anywhere on the wheel to choose hue and '
+                  'saturation. Adjust brightness or enter an exact color.',
+                  style:TextStyle(fontSize:11)),
               ]),
             )),
             actions:[
@@ -1216,13 +1404,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             ],
           );
         }));
-      if(result!=null){
-        _custom=result;
-        await _replaceBackground(color:result);
+      if(selected!=null){
+        _custom=selected;
+        await _replaceBackground(color:selected);
       }
     }finally{
       hex.dispose();
-      for(final controller in rgb)controller.dispose();
+      for(final t in rgb)t.dispose();
+      for(final t in hsvFields)t.dispose();
     }
   }
 
@@ -1260,6 +1449,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_tool=='Crop'){
       final dx=d.delta.dx/size.width,dy=d.delta.dy/size.height;
       setState((){
+        _cropDirty=true;
         final index=_activeCropHandle;
         if(_cropMode=='Normal Crop'&&index!=null){
           const minimum=.025;
@@ -1426,9 +1616,21 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _=>Icons.tune_rounded,
   };
   void _selectTool(String tool){
-    if(_tool==tool)return;
-    // No worker job, image re-encode or full-screen animated crossfade on tab
-    // changes. Lazy-build the brush bitmap only when Erase is first selected.
+    if(_tool==tool||_busy)return;
+    // A dragged crop is an actual pending edit. Commit it before hiding its
+    // handles, so the next tool and Cart see the same crop as the preview.
+    if(_tool=='Crop' && _cropDirty){
+      unawaited(() async {
+        await _commitCrop();
+        if(mounted && !_cropDirty)_switchTool(tool);
+      }());
+      return;
+    }
+    _switchTool(tool);
+  }
+
+  void _switchTool(String tool){
+    // Switching controls is GPU-only; no full-image decode or animated page.
     setState(()=>_tool=tool);
     if(_controlScroll.hasClients)_controlScroll.jumpTo(0);
     if(tool=='Erase' && _bytes!=null){
@@ -1506,9 +1708,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     physics:const ClampingScrollPhysics(),
     padding:const EdgeInsets.fromLTRB(16,12,16,14),
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text(_toolTitle(_tool),style:Theme.of(context).textTheme.titleMedium
-        ?.copyWith(fontWeight:FontWeight.w800)),
-      const SizedBox(height:8),
+      Row(children:[
+        Container(padding:const EdgeInsets.all(7),
+          decoration:BoxDecoration(
+            color:FileTheme.violet.withValues(alpha:.12),
+            borderRadius:BorderRadius.circular(10)),
+          child:Icon(_toolIcon(_tool),color:FileTheme.violet,size:19)),
+        const SizedBox(width:9),
+        Expanded(child:Text(_toolTitle(_tool),
+          style:Theme.of(context).textTheme.titleMedium
+            ?.copyWith(fontWeight:FontWeight.w800))),
+        if(_busy)const SizedBox(width:16,height:16,
+          child:CircularProgressIndicator(strokeWidth:2)),
+      ]),
+      const SizedBox(height:10),
       // Avoid dual-page AnimatedSwitcher layouts during every tool change.
       _toolControls(),
     ]));
@@ -1574,7 +1787,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           const LinearProgressIndicator(minHeight:2),
         Expanded(child:_bytes==null?_emptyCanvas(wide:wide):
           Padding(padding:EdgeInsets.all(wide?14:8),
-            child:RepaintBoundary(child:_preview()))),
+            child:RepaintBoundary(child:Stack(fit:StackFit.expand,children:[
+              _preview(),
+              if(_busy && (_processingAction=='background' ||
+                  _processingAction=='photo_enhance' ||
+                  _processingAction=='compress'))
+                PhotoMagicProcessingOverlay(label:switch(_processingAction){
+                  'photo_enhance'=>'Enhancing photo · please wait',
+                  'compress'=>'Optimizing image size · please wait',
+                  _=>'Removing background · please wait',
+                }),
+            ])))),
         Container(height:52,
           padding:const EdgeInsets.symmetric(horizontal:9),
           decoration:BoxDecoration(
@@ -1772,6 +1995,32 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   );
 }
 
+/// Full hue range around the circle; radius represents saturation.
+class _FullSpectrumWheel extends CustomPainter {
+  const _FullSpectrumWheel(this.hsv);
+  final HSVColor hsv;
+  @override void paint(Canvas canvas,Size size){
+    final center=Offset(size.width/2,size.height/2);
+    final radius=math.min(size.width,size.height)*.46;
+    final bounds=Rect.fromCircle(center:center,radius:radius);
+    canvas.drawCircle(center,radius,Paint()..shader=SweepGradient(
+      colors:[for(var i=0;i<=12;i++)
+        HSVColor.fromAHSV(1,i*30.0,1,1).toColor()],
+      stops:[for(var i=0;i<=12;i++)i/12],
+    ).createShader(bounds));
+    canvas.drawCircle(center,radius,Paint()..shader=RadialGradient(
+      colors:[Colors.white,Colors.white.withValues(alpha:0)],
+      stops:const [0,1],
+    ).createShader(bounds));
+    final a=hsv.hue*math.pi/180;
+    final pos=center+Offset(math.cos(a),math.sin(a))*radius*hsv.saturation;
+    canvas.drawCircle(pos,8,Paint()..color=Colors.white
+      ..style=PaintingStyle.stroke..strokeWidth=3);
+    canvas.drawCircle(pos,9,Paint()..color=Colors.black87
+      ..style=PaintingStyle.stroke..strokeWidth=1);
+  }
+  @override bool shouldRepaint(covariant _FullSpectrumWheel old)=>old.hsv!=hsv;
+}
 class _SaturationValuePicker extends CustomPainter {
   const _SaturationValuePicker(this.color);
   final HSVColor color;
@@ -2000,7 +2249,8 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     unawaited(ImageEditingHistory.instance.load());
   }
   Future<void> _cart(ImageEditingDraft draft)async{
-    final original=File(draft.originalFilePath??draft.filePath);
+    // History's Cart always sends the saved edited stage, not import bytes.
+    final original=File(draft.filePath);
     final root=await getApplicationSupportDirectory();
     final cart=Directory('${root.path}${Platform.pathSeparator}image_editing_cart');
     await cart.create(recursive:true);
@@ -2008,8 +2258,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     final name='edited_${DateTime.now().microsecondsSinceEpoch}.${isJpg?'jpg':'png'}';
     final file=await original.copy('${cart.path}${Platform.pathSeparator}$name');
     ImageEditingCart.instance.add(file,name);
-    if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content:Text('Added to File Share Cart')));
+    if(mounted)FileShareTopNotice.show(context,'Added to File Share Cart');
   }
   Future<void> _historyAction(ImageEditingDraft entry,String action)async{
     try{
@@ -2019,7 +2268,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
             ImageEditingPage(draft:entry)));
         case 'share':
           await SharePlus.instance.share(ShareParams(
-            files:[XFile(entry.originalFilePath??entry.filePath)]));
+            files:[XFile(entry.filePath)]));
         case 'cart':
           await _cart(entry);
         case 'download':
@@ -2044,8 +2293,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
           }
       }
     }catch(_){
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content:Text('Image action failed. Please retry.')));
+      if(mounted)FileShareTopNotice.show(context,'Image action failed. Please retry.');
     }
   }
 

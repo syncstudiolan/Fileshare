@@ -36,8 +36,11 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   static const _filters=['Original','Black & White','Grayscale',
     'Blue Ink','Dark Ink'];
   static const _tabs=['Crop','Compress','Filters'];
-  int _corner=-1;
+  String _cropMode='Normal';
+  int _corner=-1; // 0..3 corners, 4..7 edge midpoints, -2 interior drag.
   Offset? _lastDrag;
+  List<Offset> _quad=[const Offset(.08,.08),const Offset(.92,.08),
+    const Offset(.92,.92),const Offset(.08,.92)];
 
   @override
   void initState(){
@@ -65,6 +68,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         _preview=bytes;
         _aspect=d[0]/d[1];
         _crop=SignatureCrop.full;
+        _quad=[const Offset(.08,.08),const Offset(.92,.08),
+          const Offset(.92,.92),const Offset(.08,.92)];
         _filter='Original';
         _error=null;
       });
@@ -106,14 +111,14 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   Future<void> _export(String action)async{
     if(_original==null||_busy)return;
     final target=int.tryParse(_targetController.text.trim());
-    if(target==null||target<1||target>10240){
-      _show('Enter a target between 1 KB and 10,240 KB');
+    if(target==null||target<5||target>10240){
+      _show('Enter a target between 5 KB and 10,240 KB');
       return;
     }
     setState(()=>_busy=true);
     try{
       final data=await SignatureEditEngine.exactJpeg(
-        _original!,_crop,_filter,target);
+        _original!,_selection,_filter,target);
       if(data.length!=target*1024)throw StateError('Exact size check failed');
       final name='Signature_${DateTime.now().millisecondsSinceEpoch}_${target}KB.jpg';
       if(action=='cart'){
@@ -153,41 +158,113 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     finally{if(mounted)setState(()=>_busy=false);}
   }
 
-  void _gestureStart(DragStartDetails d,Size size){
-    final x=(d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble();
-    final y=(d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble();
-    final corners=[
-      Offset(_crop.left,_crop.top),Offset(_crop.right,_crop.top),
-      Offset(_crop.right,_crop.bottom),Offset(_crop.left,_crop.bottom)];
+  SignatureCrop get _selection => _cropMode=='Perspective'
+    ? SignatureCrop(0,0,1,1,quad:[
+        for(final p in _quad)...[p.dx,p.dy],
+      ]) : _crop;
+
+  void _setMode(String value) => setState((){
+    _cropMode=value;
     _corner=-1;
-    for(var i=0;i<corners.length;i++){
-      if((corners[i]-Offset(x,y)).distance<.095){_corner=i;break;}
+    _lastDrag=null;
+  });
+
+  void _gestureStart(DragStartDetails d,Size size){
+    final p=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble(),
+      (d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble());
+    final points=_cropMode=='Perspective'
+      ? _quad
+      : [Offset(_crop.left,_crop.top),Offset(_crop.right,_crop.top),
+          Offset(_crop.right,_crop.bottom),Offset(_crop.left,_crop.bottom)];
+    final edges=[for(var i=0;i<4;i++)
+      (points[i]+points[(i+1)%4])/2];
+    _corner=-1;
+    // Screen-space hit areas are consistent on wide and tall photos.
+    for(var i=0;i<8;i++){
+      final c=i<4?points[i]:edges[i-4];
+      if((c.dx-p.dx).abs()*size.width<24 &&
+         (c.dy-p.dy).abs()*size.height<24) {
+        _corner=i;break;
+      }
     }
-    _lastDrag=Offset(x,y);
+    if(_corner==-1){
+      // The entire edge, not only its center dot, can be grabbed.
+      final finger=Offset(p.dx*size.width,p.dy*size.height);
+      for(var i=0;i<4;i++){
+        final begin=Offset(points[i].dx*size.width,points[i].dy*size.height);
+        final end=Offset(points[(i+1)%4].dx*size.width,
+          points[(i+1)%4].dy*size.height);
+        final line=end-begin;
+        final length2=line.dx*line.dx+line.dy*line.dy;
+        if(length2<1)continue;
+        final t=((finger-begin).dx*line.dx+
+          (finger-begin).dy*line.dy)/length2;
+        if(t<.08||t>.92)continue;
+        final foot=begin+line*t;
+        if((finger-foot).distance<20){_corner=i+4;break;}
+      }
+    }
+    if(_corner==-1 && _insidePolygon(p,points)) _corner=-2;
+    _lastDrag=p;
+  }
+
+  bool _insidePolygon(Offset p,List<Offset> pts){
+    var inside=false;
+    for(var i=0,j=pts.length-1;i<pts.length;j=i++){
+      final a=pts[i],b=pts[j];
+      if((a.dy>p.dy)!=(b.dy>p.dy) &&
+        p.dx<(b.dx-a.dx)*(p.dy-a.dy)/(b.dy-a.dy)+a.dx)inside=!inside;
+    }
+    return inside;
   }
 
   void _gestureUpdate(DragUpdateDetails d,Size size){
-    final x=(d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble();
-    final y=(d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble();
-    final p=Offset(x,y),last=_lastDrag??p;
+    if(_corner==-1)return;
+    final p=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble(),
+      (d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble());
+    final previous=_lastDrag??p;
     _lastDrag=p;
-    const gap=.04;
-    final c=_crop;
-    double l=c.left,t=c.top,r=c.right,b=c.bottom;
-    if(_corner==-1){
-      final dx=(x-last.dx).clamp(-1.0,1.0);
-      final dy=(y-last.dy).clamp(-1.0,1.0);
-      l=(l+dx).clamp(0.0,1-(r-l)).toDouble();
-      t=(t+dy).clamp(0.0,1-(b-t)).toDouble();
-      r=l+(c.right-c.left);
-      b=t+(c.bottom-c.top);
-    } else {
-      if(_corner==0||_corner==3)l=x.clamp(0.0,r-gap).toDouble();
-      if(_corner==1||_corner==2)r=x.clamp(l+gap,1.0).toDouble();
-      if(_corner==0||_corner==1)t=y.clamp(0.0,b-gap).toDouble();
-      if(_corner==2||_corner==3)b=y.clamp(t+gap,1.0).toDouble();
+    const gap=.025;
+    if(_cropMode=='Perspective'){
+      final next=List<Offset>.from(_quad);
+      if(_corner==-2){
+        var dx=p.dx-previous.dx,dy=p.dy-previous.dy;
+        dx=dx.clamp(-next.map((v)=>v.dx).reduce(math.min),
+          1-next.map((v)=>v.dx).reduce(math.max)).toDouble();
+        dy=dy.clamp(-next.map((v)=>v.dy).reduce(math.min),
+          1-next.map((v)=>v.dy).reduce(math.max)).toDouble();
+        for(var i=0;i<4;i++)next[i]+=Offset(dx,dy);
+      }else if(_corner<4){
+        next[_corner]=p;
+      }else{
+        final a=_corner-4,b=(a+1)%4;
+        final delta=p-(next[a]+next[b])/2;
+        next[a]=Offset((next[a].dx+delta.dx).clamp(0.0,1.0).toDouble(),
+          (next[a].dy+delta.dy).clamp(0.0,1.0).toDouble());
+        next[b]=Offset((next[b].dx+delta.dx).clamp(0.0,1.0).toDouble(),
+          (next[b].dy+delta.dy).clamp(0.0,1.0).toDouble());
+      }
+      double area=0;
+      for(var i=0;i<4;i++){
+        final j=(i+1)%4;
+        area+=next[i].dx*next[j].dy-next[j].dx*next[i].dy;
+      }
+      if(area.abs()>.01)setState(()=>_quad=next);
+    }else{
+      final c=_crop;
+      var l=c.left,t=c.top,r=c.right,b=c.bottom;
+      if(_corner==-2){
+        final dx=(p.dx-previous.dx).clamp(-l,1-r).toDouble();
+        final dy=(p.dy-previous.dy).clamp(-t,1-b).toDouble();
+        l+=dx;r+=dx;t+=dy;b+=dy;
+      }else{
+        if(_corner==0||_corner==3||_corner==7)l=p.dx.clamp(0.0,r-gap).toDouble();
+        if(_corner==1||_corner==2||_corner==5)r=p.dx.clamp(l+gap,1.0).toDouble();
+        if(_corner==0||_corner==1||_corner==4)t=p.dy.clamp(0.0,b-gap).toDouble();
+        if(_corner==2||_corner==3||_corner==6)b=p.dy.clamp(t+gap,1.0).toDouble();
+      }
+      setState(()=>_crop=SignatureCrop(l,t,r,b));
     }
-    setState(()=>_crop=SignatureCrop(l,t,r,b));
   }
 
   Widget _editorCanvas(){
@@ -217,14 +294,14 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       return SizedBox(width:width,height:height,
         child:GestureDetector(
           behavior:HitTestBehavior.opaque,
-          onPanStart:_tool=='Crop'?(d)=>_gestureStart(d,size):null,
-          onPanUpdate:_tool=='Crop'?(d)=>_gestureUpdate(d,size):null,
-          onPanEnd:_tool=='Crop'?(_)=>_lastDrag=null:null,
+          onPanStart:_busy?null:(d)=>_gestureStart(d,size),
+          onPanUpdate:_busy?null:(d)=>_gestureUpdate(d,size),
+          onPanEnd:(_){_lastDrag=null;_corner=-1;},
           child:Stack(fit:StackFit.expand,children:[
             Image.memory(image,fit:BoxFit.fill,gaplessPlayback:true,
               filterQuality:FilterQuality.medium),
-            if(_tool=='Crop')CustomPaint(
-              painter:_SignatureCropPainter(_crop)),
+            CustomPaint(painter:_SignatureCropPainter(
+              _selection,showQuad:_cropMode=='Perspective')),
           ]),
         ),
       );
@@ -234,31 +311,66 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   Widget _controls(){
     if(_tool=='Crop'){
       return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        const Text('Crop Signature',style:TextStyle(
-          fontWeight:FontWeight.w800,fontSize:16)),
+        const Row(children:[
+          Icon(Icons.crop_free_rounded,color:FileTheme.violet,size:19),
+          SizedBox(width:8),
+          Text('Crop Signature',style:TextStyle(
+            fontWeight:FontWeight.w800,fontSize:16)),
+        ]),
         const SizedBox(height:6),
-        const Text('Drag the corners to select the signature. Drag inside to move.'),
+        const Text('Drag corners, side-midpoints or the selection interior. '
+          'Perspective moves each corner independently.'),
+        const SizedBox(height:8),
+        SegmentedButton<String>(
+          showSelectedIcon:false,
+          segments:const [
+            ButtonSegment(value:'Normal',label:Text('Normal Crop')),
+            ButtonSegment(value:'Perspective',label:Text('Perspective Crop')),
+          ],
+          selected:{_cropMode},
+          onSelectionChanged:_busy?null:(choice)=>_setMode(choice.first)),
         const SizedBox(height:12),
         OutlinedButton.icon(
-          onPressed:()=>setState(()=>_crop=SignatureCrop.full),
+          onPressed:()=>setState((){
+            _crop=SignatureCrop.full;
+            _quad=[const Offset(.08,.08),const Offset(.92,.08),
+              const Offset(.92,.92),const Offset(.08,.92)];
+          }),
           icon:const Icon(Icons.restart_alt),
           label:const Text('Reset Crop')),
       ]);
     }
     if(_tool=='Compress'){
       return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        const Text('Exact Export Size',style:TextStyle(
-          fontWeight:FontWeight.w800,fontSize:16)),
+        const Row(children:[
+          Icon(Icons.compress_rounded,color:FileTheme.violet,size:19),
+          SizedBox(width:8),
+          Text('Exact Export Size',style:TextStyle(
+            fontWeight:FontWeight.w800,fontSize:16)),
+        ]),
         const SizedBox(height:7),
+        Row(children:[
+          Expanded(child:Slider(min:5,max:200,divisions:39,
+            value:_target.clamp(5,200).toDouble(),
+            label:'$_target KB',
+            onChanged:_busy?null:(value){
+              final size=(value/5).round()*5;
+              _targetController.text=size.toString();
+              setState(()=>_target=size);
+            })),
+          Text('$_target KB',style:const TextStyle(
+            color:FileTheme.violet,fontWeight:FontWeight.w700)),
+        ]),
         TextField(controller:_targetController,
           keyboardType:TextInputType.number,
           decoration:const InputDecoration(
-            labelText:'Target size in KB',hintText:'20',
+            prefixIcon:Icon(Icons.edit_note_rounded),
+            labelText:'Custom target',hintText:'20',
             suffixText:'KB',border:OutlineInputBorder()),
           onChanged:(value)=>setState(()=>_target=int.tryParse(value)??20)),
         const SizedBox(height:10),
         Wrap(spacing:8,runSpacing:8,children:[
-          for(final kb in [10,20,30,50,100,200])
+          for(final kb in [5,10,20,30,50,100,200])
             ChoiceChip(label:Text('$kb KB'),
               selected:_target==kb,
               onSelected:(_){
@@ -273,8 +385,13 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       ]);
     }
     return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      const Text('Signature Filters',style:TextStyle(
-        fontWeight:FontWeight.w800,fontSize:16)),
+      const Row(children:[
+        Icon(Icons.filter_rounded,color:FileTheme.violet,size:19),
+        SizedBox(width:8),
+        Text('Signature Filters',style:TextStyle(
+          fontWeight:FontWeight.w800,fontSize:16)),
+      ]),
+      const Text('Crop handles remain active while applying filters.'),
       const SizedBox(height:10),
       Wrap(spacing:9,runSpacing:9,children:[
         for(final filter in _filters)ChoiceChip(
@@ -373,28 +490,35 @@ List<int> _signatureDimensions(Uint8List bytes){
 }
 
 class _SignatureCropPainter extends CustomPainter {
-  const _SignatureCropPainter(this.crop);
+  const _SignatureCropPainter(this.crop,{this.showQuad=false});
   final SignatureCrop crop;
-  @override
-  void paint(Canvas canvas,Size size){
-    final rect=Rect.fromLTRB(crop.left*size.width,crop.top*size.height,
-      crop.right*size.width,crop.bottom*size.height);
+  final bool showQuad;
+  @override void paint(Canvas canvas,Size size){
+    final pts=showQuad && crop.quad!=null
+      ? [for(var i=0;i<8;i+=2)
+          Offset(crop.quad![i]*size.width,crop.quad![i+1]*size.height)]
+      : [Offset(crop.left*size.width,crop.top*size.height),
+          Offset(crop.right*size.width,crop.top*size.height),
+          Offset(crop.right*size.width,crop.bottom*size.height),
+          Offset(crop.left*size.width,crop.bottom*size.height)];
+    final polygon=Path()..moveTo(pts[0].dx,pts[0].dy);
+    for(var i=1;i<4;i++)polygon.lineTo(pts[i].dx,pts[i].dy);
+    polygon.close();
     final shade=Paint()..color=Colors.black.withValues(alpha:.40);
-    final hole=Path()..addRect(rect);
     final surround=Path()..addRect(Offset.zero & size);
-    canvas.drawPath(Path.combine(PathOperation.difference,surround,hole),shade);
-    canvas.drawRect(rect,Paint()..color=FileTheme.violet
+    canvas.drawPath(Path.combine(PathOperation.difference,surround,polygon),shade);
+    canvas.drawPath(polygon,Paint()..color=FileTheme.violet
       ..style=PaintingStyle.stroke..strokeWidth=2.5);
-    final handles=[
-      rect.topLeft,rect.topRight,rect.bottomRight,rect.bottomLeft];
+    final handles=[...pts,for(var i=0;i<4;i++)
+      (pts[i]+pts[(i+1)%4])/2];
     for(final pos in handles){
       canvas.drawCircle(pos,7,Paint()..color=Colors.white);
       canvas.drawCircle(pos,7,Paint()
         ..color=FileTheme.violet..style=PaintingStyle.stroke..strokeWidth=2);
     }
   }
-  @override
-  bool shouldRepaint(covariant _SignatureCropPainter old)=>
+  @override bool shouldRepaint(covariant _SignatureCropPainter old)=>
     old.crop.left!=crop.left||old.crop.top!=crop.top||
-    old.crop.right!=crop.right||old.crop.bottom!=crop.bottom;
+    old.crop.right!=crop.right||old.crop.bottom!=crop.bottom||
+    old.showQuad!=showQuad||old.crop.quad.toString()!=crop.quad.toString();
 }

@@ -57,29 +57,35 @@ class PhotoEnhancerEngine {
     if(scale!=2&&scale!=4)throw ArgumentError.value(scale,'scale');
     final decoded=img.decodeImage(source);
     if(decoded==null)throw const FormatException('Unsupported image');
-    final maxSourcePixels=scale==4?1000000:4000000;
-    if(decoded.width*decoded.height>maxSourcePixels){
-      throw StateError('Source too large for safe ${scale}x AI output. '
-        'Use Crop first (maximum ${scale==4?'1':'4'} MP input).');
-    }
+    // Never reject a camera photo only because its dimensions are large.
+    // Limit the working image instead: CPU ONNX 4x output can otherwise exceed
+    // mobile RAM, and the full-resolution original remains untouched in Cart.
+    const maxOutputPixels=8000000;
+    final inputLimit=math.max(1,maxOutputPixels~/(scale*scale));
+    final pixelCount=decoded.width*decoded.height;
+    final working=pixelCount>inputLimit
+      ? img.copyResize(decoded,
+          width:math.max(1,(decoded.width*
+            math.sqrt(inputLimit/pixelCount)).floor()),
+          height:math.max(1,(decoded.height*
+            math.sqrt(inputLimit/pixelCount)).floor()),
+          interpolation:img.Interpolation.cubic)
+      : decoded;
     final model=await _model();
     final runtime=OnnxRuntime();
     final session=await runtime.createSession(model.path,
       options:OrtSessionOptions(intraOpNumThreads:2,interOpNumThreads:1,
         providers:[OrtProvider.CPU]));
     try {
-      var original=decoded;
+      var original=working;
       final stages=scale==4?2:1;
       for(var stage=0;stage<stages;stage++) {
-        if(original.width*original.height>4000000){
-          throw StateError('4x output exceeds device-safe processing limit');
-        }
         original=await _stage(original,session,(p)=>
           onProgress?.call((stage+p)/stages));
       }
       // Blend with a traditionally resized original to reduce AI artifacts.
       if(blend<.999) {
-        final normal=img.copyResize(decoded,
+        final normal=img.copyResize(working,
           width:original.width,height:original.height,
           interpolation:img.Interpolation.cubic);
         final amount=blend.clamp(0.0,1.0);

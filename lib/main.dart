@@ -23,6 +23,9 @@ import 'android_lan_background_setting.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
+import 'cloud_connect_guide_page.dart';
+import 'file_share_updates.dart';
+import 'app_top_notice.dart';
 import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -258,40 +261,14 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     await windowManager.destroy();
   }
 
-  // Tiny, programmatically created ICO. No image resource increases APK size.
+  /// Exact final FS logo: platform icon derived during the build.
   Future<File> _writeTrayIcon() async {
-    const side = 16, pixelBytes = side * side * 4, maskBytes = side * 4;
-    const imageBytes = 40 + pixelBytes + maskBytes;
-    final data = ByteData(22 + imageBytes);
-    data.setUint16(2, 1, Endian.little);
-    data.setUint16(4, 1, Endian.little);
-    data.setUint8(6, side);
-    data.setUint8(7, side);
-    data.setUint16(10, 1, Endian.little);
-    data.setUint16(12, 32, Endian.little);
-    data.setUint32(14, imageBytes, Endian.little);
-    data.setUint32(18, 22, Endian.little);
-    data.setUint32(22, 40, Endian.little);
-    data.setInt32(26, side, Endian.little);
-    data.setInt32(30, side * 2, Endian.little);
-    data.setUint16(34, 1, Endian.little);
-    data.setUint16(36, 32, Endian.little);
-    data.setUint32(42, pixelBytes, Endian.little);
-    final bytes = data.buffer.asUint8List();
-    for (var y = 0; y < side; y++) {
-      for (var x = 0; x < side; x++) {
-        final p = 62 + (y * side + x) * 4;
-        final painted = x > 1 && x < 14 && y > 1 && y < 14;
-        bytes[p] = painted ? 197 : 0;
-        bytes[p + 1] = painted ? 93 : 0;
-        bytes[p + 2] = painted ? 224 : 0;
-        bytes[p + 3] = painted ? 255 : 0;
-      }
-    }
-    final folder = await getApplicationSupportDirectory();
-    final icon = File(folder.path + Platform.pathSeparator + 'file_share_tray.ico');
-    await icon.writeAsBytes(bytes, flush: true);
-    return icon;
+    final bytes=await rootBundle.load('assets/branding/file_share_tray.ico');
+    final folder=await getApplicationSupportDirectory();
+    final file=File('${folder.path}${Platform.pathSeparator}file-share-tray.ico');
+    await file.writeAsBytes(bytes.buffer.asUint8List(
+      bytes.offsetInBytes,bytes.lengthInBytes),flush:true);
+    return file;
   }
 }
 
@@ -310,8 +287,44 @@ class FileShareApp extends StatefulWidget {
   State<FileShareApp> createState() => _FileShareAppState();
 }
 
-class _FileShareAppState extends State<FileShareApp> {
+class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver {
   late ThemeMode _mode = widget.initialMode;
+  Timer? _updateCheckTimer;
+  bool _wasBackgrounded=false;
+
+  @override void initState(){
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if(widget.enableBackends) {
+      _updateCheckTimer=Timer.periodic(const Duration(minutes:45),(_)=>
+        unawaited(FileShareUpdates.instance.check(startup:true)));
+    }
+    FileShareUpdates.instance.initializeVersion(
+      const String.fromEnvironment('FILE_SHARE_VERSION',defaultValue:'0.1.0'),
+      const int.fromEnvironment('FILE_SHARE_BUILD_NUMBER',defaultValue:1));
+    if(widget.enableBackends) {
+      WidgetsBinding.instance.addPostFrameCallback((_) =>
+        unawaited(FileShareUpdates.instance.check(startup:true)));
+    }
+  }
+
+  @override void didChangeAppLifecycleState(AppLifecycleState state){
+    if(state==AppLifecycleState.paused || state==AppLifecycleState.detached)
+      _wasBackgrounded=true;
+    if(state==AppLifecycleState.resumed && _wasBackgrounded){
+      _wasBackgrounded=false;
+      FileShareUpdates.instance.startNewForegroundSession();
+      if(widget.enableBackends)
+        unawaited(FileShareUpdates.instance.check(startup:true));
+    }
+  }
+
+  @override void dispose(){
+    _updateCheckTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
 
   void _setMode(ThemeMode value) {
     setState(() => _mode = value);
@@ -321,6 +334,11 @@ class _FileShareAppState extends State<FileShareApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'File Share',
+        navigatorKey:fileShareNavigatorKey,
+        builder:(context,child)=>Stack(children:[
+          child??const SizedBox.shrink(),
+          const FileShareUpdateBanner(),
+        ]),
         debugShowCheckedModeBanner: false,
         theme: FileTheme.build(Brightness.light),
         darkTheme: FileTheme.build(Brightness.dark),
@@ -497,14 +515,7 @@ class _RootBackGuardState extends State<RootBackGuard> {
     _lastBack = now;
     _backCount++;
     if (_backCount < 3) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Press Back ' +
-              (3 - _backCount).toString() +
-              ' more time(s) to exit'),
-        ),
-      );
+      FileShareTopNotice.show(context,'Press Back ${3-_backCount} more time(s) to exit');
       return;
     }
     _backCount = 0;
@@ -537,21 +548,15 @@ class _RootBackGuardState extends State<RootBackGuard> {
 }
 
 class AppLogo extends StatelessWidget {
-  const AppLogo({super.key, this.size = 48});
+  const AppLogo({super.key,this.size=48});
   final double size;
-  @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [FileTheme.pink, FileTheme.violet],
-          ),
-          borderRadius: BorderRadius.circular(size * .3),
-        ),
-        child: Icon(Icons.swap_horiz_rounded,
-            size: size * .56, color: Colors.white),
-      );
+  @override Widget build(BuildContext context)=>ClipRRect(
+    borderRadius:BorderRadius.circular(size*.22),
+    child:Image.asset('assets/branding/file_share_icon.webp',
+      width:size,height:size,fit:BoxFit.cover,
+      filterQuality:FilterQuality.medium,
+      semanticLabel:'File Share logo'),
+  );
 }
 
 class WelcomePage extends StatelessWidget {
@@ -1918,6 +1923,140 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _showSamples = true;
   bool _refreshing = false;
   bool _desktopSidebarVisible = true;
+  final Map<String,TimelineGroup> _selectedCards={};
+  bool _bulkBusy=false;
+  String _keyOf(TimelineGroup g)=>g.lan!=null
+    ?'lan:${g.lan!.first.id}':'qr:${g.cloud!.first.id}';
+  void _toggleCard(TimelineGroup g){
+    if(_bulkBusy)return;
+    final key=_keyOf(g);
+    setState((){
+      if(_selectedCards.containsKey(key))_selectedCards.remove(key);
+      else _selectedCards[key]=g;
+    });
+  }
+  void _selectAllCards(List<TimelineGroup> groups){
+    if(_bulkBusy)return;
+    setState((){for(final g in groups)_selectedCards[_keyOf(g)]=g;});
+  }
+  Future<void> _downloadCards()async{
+    if(_selectedCards.isEmpty||_bulkBusy)return;
+    final cards=List<TimelineGroup>.of(_selectedCards.values);
+    setState(()=>_bulkBusy=true);
+    var success=0,failed=0,skipped=0;
+    try{
+      for(final g in cards){
+        for(final f in g.lan??<LanFile>[]){
+          if((f.incoming&&f.state!=TransferState.delivered)||
+             !await File(f.path).exists()){skipped++;continue;}
+          try{
+            final saved=await TransferDownloads.instance.export(File(f.path),f.name);
+            if(saved==null){skipped++;continue;}
+            await TransferDownloads.instance.markSaved('lan_${f.id}');
+            success++;
+          }catch(_){failed++;}
+        }
+        for(final f in g.cloud??<CloudFile>[]){
+          try{
+            final file=await PersonalCloud.instance.download(f);
+            final saved=await TransferDownloads.instance.export(file,f.name);
+            if(saved==null){skipped++;continue;}
+            await TransferDownloads.instance.markSaved('cloud_${f.id}');
+            success++;
+          }catch(_){failed++;}
+        }
+      }
+      if(mounted)_snack('$success downloaded · $skipped skipped · $failed failed');
+    }finally{
+      if(mounted)setState((){
+        _bulkBusy=false;_selectedCards.clear();
+      });
+    }
+  }
+  Future<void> _deleteCards()async{
+    if(_selectedCards.isEmpty||_bulkBusy)return;
+    final lanIds=<String>{},cloudIds=<String>{};
+    for(final g in _selectedCards.values){
+      for(final f in g.lan??<LanFile>[])lanIds.add(f.id);
+      for(final f in g.cloud??<CloudFile>[])cloudIds.add(f.id);
+    }
+    final count=lanIds.length+cloudIds.length;
+    final confirm=await showDialog<bool>(context:context,builder:(dialog)=>
+      AlertDialog(
+        title:const Text('Delete selected cards?'),
+        content:Text('$count file(s) will be deleted. '
+          '${cloudIds.isEmpty?'':'Guest QR files will also be deleted from cloud storage. '}'
+          'This action cannot be undone.'),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),
+            child:const Text('Cancel')),
+          FilledButton.icon(onPressed:()=>Navigator.pop(dialog,true),
+            icon:const Icon(Icons.delete_outline_rounded),
+            label:const Text('Delete')),
+        ],
+      ));
+    if(confirm!=true||!mounted)return;
+    setState(()=>_bulkBusy=true);
+    var deleted=0,failed=0;
+    try{
+      for(final id in lanIds){
+        if(!appLan.files.any((f)=>f.id==id))continue;
+        try{await appLan.remove(id);deleted++;}catch(_){failed++;}
+      }
+      for(final id in cloudIds){
+        final matches=PersonalCloud.instance.files.where((f)=>f.id==id);
+        if(matches.isEmpty)continue;
+        try{await PersonalCloud.instance.deleteRemote(matches.first);deleted++;}
+        catch(_){failed++;}
+      }
+      if(mounted)_snack('$deleted deleted${failed==0?'':' · $failed failed'}');
+    }finally{
+      if(mounted)setState((){
+        _bulkBusy=false;_selectedCards.clear();
+      });
+    }
+  }
+  Widget _multiSelectCard(TimelineGroup g){
+    final selected=_selectedCards.containsKey(_keyOf(g));
+    final active=_selectedCards.isNotEmpty;
+    final card=g.lan!=null
+      ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
+        onDelete:_delete,onShare:_share,onTools:_openFileTools)
+      :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
+        onDelete:_deleteCloud,onShare:_shareCloud,
+        onPreview:_previewCloud,onTools:_openCloudTools);
+    return Padding(
+      key:ValueKey(_keyOf(g)),
+      padding:const EdgeInsets.symmetric(vertical:3),
+      child:GestureDetector(
+        behavior:HitTestBehavior.opaque,
+        onLongPress:()=>_toggleCard(g),
+        onTap:active?()=>_toggleCard(g):null,
+        child:Stack(children:[
+          AbsorbPointer(absorbing:active,
+            child:AnimatedContainer(
+              duration:const Duration(milliseconds:160),
+              decoration:BoxDecoration(
+                color:selected?FileTheme.violet.withValues(alpha:.08):null,
+                borderRadius:BorderRadius.circular(26),
+                border:Border.all(color:selected
+                  ?FileTheme.violet:Colors.transparent,width:1.5)),
+              child:card)),
+          if(active)Positioned(top:10,right:10,
+            child:AnimatedContainer(
+              duration:const Duration(milliseconds:140),
+              width:30,height:30,
+              decoration:BoxDecoration(
+                shape:BoxShape.circle,
+                color:selected?FileTheme.violet:
+                  Theme.of(context).colorScheme.surface,
+                border:Border.all(color:FileTheme.violet,width:1.5)),
+              child:Icon(selected?Icons.check_rounded:Icons.circle_outlined,
+                size:18,color:selected?Colors.white:FileTheme.violet))),
+        ]),
+      ),
+    );
+  }
   final _sidebarVisibleNotifier = ValueNotifier<bool>(true);
   final _desktopNavigator = GlobalKey<NavigatorState>();
 
@@ -2521,10 +2660,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('File Transfer', style: TextStyle(fontSize: wide ? 21 : 17,
+                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 17,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
-                      Text(appLan.peers.length.toString() + ' nearby LAN devices · ' +
+                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN devices · ' +
                         (appLan.receivingEnabled ? 'LAN active'
                           : (appLan.started ? 'LAN receiver reconnecting'
                             : 'Starting LAN')) +
@@ -2533,18 +2672,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
                     ])),
-                  IconButton(tooltip: 'QR design preview',
-                    onPressed: () => _navigate('My QR'),
-                    icon: const Icon(Icons.qr_code_2_rounded,
-                      color: FileTheme.violet)),
-                  AppearanceButton(mode: widget.mode, onChange: widget.onMode),
-                  IconButton(tooltip:'Refresh nearby LAN devices',
-                    onPressed:_refreshing?null:_refreshNearby,
-                    icon:AnimatedRotation(
-                      turns:_refreshing?2:0,
-                      duration:const Duration(milliseconds:1100),
-                      curve:Curves.linear,
-                      child:const Icon(Icons.refresh_rounded,color:FileTheme.violet))),
+                  if(_selectedCards.isNotEmpty)...[
+                    IconButton(tooltip:'Select all visible cards',
+                      onPressed:_bulkBusy?null:()=>_selectAllCards(groups),
+                      icon:const Icon(Icons.select_all_rounded,
+                        color:FileTheme.violet)),
+                    IconButton(tooltip:'Download selected files',
+                      onPressed:_bulkBusy?null:_downloadCards,
+                      icon:const Icon(Icons.download_rounded,
+                        color:FileTheme.violet)),
+                    IconButton(tooltip:'Delete selected cards',
+                      onPressed:_bulkBusy?null:_deleteCards,
+                      icon:const Icon(Icons.delete_outline_rounded,
+                        color:FileTheme.pink)),
+                    IconButton(tooltip:'Exit selection mode',
+                      onPressed:_bulkBusy?null:()=>setState(()=>_selectedCards.clear()),
+                      icon:const Icon(Icons.close_rounded)),
+                    if(_bulkBusy)const SizedBox(width:17,height:17,
+                      child:CircularProgressIndicator(strokeWidth:2)),
+                  ]else...[
+                    IconButton(tooltip:'QR design preview',
+                      onPressed:()=>_navigate('My QR'),
+                      icon:const Icon(Icons.qr_code_2_rounded,
+                        color:FileTheme.violet)),
+                    AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+                    IconButton(tooltip:'Refresh nearby LAN devices',
+                      onPressed:_refreshing?null:_refreshNearby,
+                      icon:AnimatedRotation(
+                        turns:_refreshing?2:0,
+                        duration:const Duration(milliseconds:1100),
+                        curve:Curves.linear,
+                        child:const Icon(Icons.refresh_rounded,
+                          color:FileTheme.violet))),
+                  ],
                 ]),
               ),
             ),
@@ -2588,14 +2748,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   reverse: true,
                   padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
                   itemCount: groups.length,
-                  itemBuilder: (_, i) => groups[i].lan != null
-                    ? LiveTransferCard(items: groups[i].lan!,
-                        onSave: _saveReceived, onDelete: _delete,
-                        onShare: _share, onTools: _openFileTools)
-                    : CloudInboxCard(items: groups[i].cloud!,
-                        onSave: _saveCloud, onDelete: _deleteCloud,
-                        onShare: _shareCloud, onPreview: _previewCloud,
-                        onTools: _openCloudTools))
+                  itemBuilder: (_, i) => _multiSelectCard(groups[i]))
               : useDemo
                 ? ListView.builder(
                     padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
@@ -2942,6 +3095,22 @@ class FeatureDesignPage extends StatelessWidget {
             label: const Text('Open Cloud Setup'),
             onPressed: () => Navigator.of(c).push(fadePage(
               CloudConnectPage(mode: mode, onMode: onMode))),
+          )),
+        const SizedBox(height:10),
+        SizedBox(width:double.infinity,
+          child:OutlinedButton.icon(
+            icon:const Icon(Icons.menu_book_outlined),
+            label:const Text('Cloud Connect Guide · Beginner to Advanced'),
+            onPressed:()=>Navigator.of(c).push(fadePage(
+              CloudConnectGuidePage(mode:mode,onMode:onMode))),
+          )),
+        const SizedBox(height:10),
+        SizedBox(width:double.infinity,
+          child:FilledButton.icon(
+            icon:const Icon(Icons.system_update_alt_rounded),
+            label:const Text('App Updates / Check for updates'),
+            onPressed:()=>Navigator.of(c).push(fadePage(
+              const FileShareUpdatePage())),
           )),
       ]),
     ),

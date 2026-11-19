@@ -41,6 +41,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/branding/
     - assets/gander/jszip3.min.js
     - assets/gander/docx-preview.min.js
     - assets/gander/marked.umd.js

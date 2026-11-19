@@ -1,5 +1,7 @@
 #define MyAppName "File Share"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0.1"
+#endif
 #define MyAppExeName "file_share.exe"
 
 [Setup]
@@ -20,6 +22,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 DisableProgramGroupPage=yes
 SetupLogging=yes
+SetupIconFile=..\assets\branding\file_share_tray.ico
+CloseApplications=yes
+RestartApplications=no
 
 [Files]
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

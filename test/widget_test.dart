@@ -367,6 +367,71 @@ void main() {
     expect(find.text('Connect Personal Cloud'), findsOneWidget);
   });
 
+  testWidgets('Long-press LAN card opens bulk header and supports deselection',
+      (tester)async{
+    await tester.binding.setSurfaceSize(const Size(430,880));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final existing=List<LanFile>.of(appLan.files);
+    appLan.files.clear();
+    appLan.files.addAll([
+      LanFile(id:'multi-a',batch:'multi-a',name:'multi_one.txt',
+        path:'/missing/a',peer:'Office',incoming:false,size:40,
+        created:DateTime.utc(2026,11,19,11),state:TransferState.delivered),
+      LanFile(id:'multi-b',batch:'multi-b',name:'multi_two.txt',
+        path:'/missing/b',peer:'Phone',incoming:true,size:60,
+        created:DateTime.utc(2026,11,19,12),state:TransferState.delivered),
+    ]);
+    addTearDown((){
+      appLan.files..clear()..addAll(existing);
+    });
+    await tester.pumpWidget(const FileShareApp(
+      initialMode:ThemeMode.light,offlineDefault:true,enableBackends:false));
+    await tester.pump();
+    expect(find.text('multi_one.txt'),findsOneWidget);
+    await tester.longPress(find.text('multi_one.txt'));
+    await tester.pump();
+    expect(find.text('1 selected'),findsOneWidget);
+    expect(find.byTooltip('Delete selected cards'),findsOneWidget);
+    expect(find.byTooltip('Download selected files'),findsOneWidget);
+    expect(find.byTooltip('QR design preview'),findsNothing);
+    expect(find.byTooltip('Select all visible cards'),findsOneWidget);
+    await tester.tap(find.byTooltip('Select all visible cards'));
+    await tester.pump();
+    expect(find.text('2 selected'),findsOneWidget);
+    await tester.tap(find.byTooltip('Exit selection mode'));
+    await tester.pump();
+    expect(find.text('File Transfer'),findsOneWidget);
+    expect(find.byTooltip('QR design preview'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('Bulk delete requires explicit confirmation',
+      (tester)async{
+    await tester.binding.setSurfaceSize(const Size(430,880));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final previous=List<LanFile>.of(appLan.files);
+    appLan.files.clear();
+    appLan.files.add(LanFile(
+      id:'keep-on-cancel',batch:'confirm',name:'keep_me.txt',
+      path:'/missing/keep',peer:'Tablet',incoming:false,size:12,
+      created:DateTime.utc(2026,11,19,13),
+      state:TransferState.delivered));
+    addTearDown(()=>appLan.files..clear()..addAll(previous));
+    await tester.pumpWidget(const FileShareApp(
+      initialMode:ThemeMode.light,offlineDefault:true,enableBackends:false));
+    await tester.pump();
+    await tester.longPress(find.text('keep_me.txt'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Delete selected cards'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete selected cards?'),findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(appLan.files.any((f)=>f.id=='keep-on-cancel'),isTrue);
+    expect(find.text('1 selected'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
   testWidgets('Narrow mobile dashboard renders first group card',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
