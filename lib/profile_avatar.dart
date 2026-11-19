@@ -48,8 +48,13 @@ class _FileShareProfileAvatarState extends State<FileShareProfileAvatar>{
     }finally{if(mounted)setState(()=>_busy=false);}
   }
   Future<void> _remove()async{
+    final previous=_photo;
     await SharedPreferencesAsync().remove(_key);
     if(mounted)setState(()=>_photo=null);
+    if(previous!=null){
+      try{if(await previous.exists())await previous.delete();}
+      catch(_){}
+    }
   }
   @override Widget build(BuildContext context)=>Column(children:[
     Stack(clipBehavior:Clip.none,children:[
