@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
 import 'signature_edit_page.dart';
 import 'lan_folder_share_page.dart';
+import 'file_share_doc_page.dart';
 import 'package:flutter/services.dart';
 import 'editor_transfer_session.dart';
 import 'main.dart' show FileTheme,fadePage;
@@ -30,6 +31,8 @@ const _entries=[
     Icons.draw_outlined,available:true,acceptsImages:true),
   _ToolEntry('File Share','Share files, ZIPs and nested folders over nearby LAN',
     Icons.folder_shared_outlined,available:true),
+  _ToolEntry('File Share Doc','Open documents, edit Word/Excel/PowerPoint text, save copies',
+    Icons.description_outlined,available:true),
   _ToolEntry('Advanced PDF Editing Tools','Android-only PDF processing, scanner, OCR and history',
     Icons.picture_as_pdf_outlined,available:true),
 ];
@@ -43,6 +46,11 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
   Future<void> _open(_ToolEntry entry) async {
     final name=widget.sourceName??widget.sourcePath??'';
     final hasSource=widget.sourcePath!=null;
+    if(entry.name=='File Share Doc'){
+      await Navigator.of(context).push(fadePage<void>(FileShareDocPage(
+        sourcePath:widget.sourcePath,sourceName:widget.sourceName)));
+      return;
+    }
     if(entry.name=='File Share'){
       await Navigator.of(context).push(fadePage<void>(LanFolderSharePage(
         sourcePath: widget.sourcePath, sourceName: widget.sourceName)));
