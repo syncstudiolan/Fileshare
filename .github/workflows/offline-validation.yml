@@ -8,6 +8,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Avoid overlapping validations when multiple source fixes are pushed.
+concurrency:
+  group: fileshare-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

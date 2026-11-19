@@ -10,8 +10,8 @@ void main(){
     expect(find.text('Search tools...'),findsOneWidget);
     expect(find.text('Image Editing'),findsOneWidget);
     expect(find.text('Signature Edit'),findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Advanced PDF Editing Tools'),220,
-      scrollable:find.byType(Scrollable).last);
+    await tester.enterText(find.byType(TextField),'pdf');
+    await tester.pumpAndSettle();
     expect(find.text('Advanced PDF Editing Tools'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'image');
     await tester.pump();
@@ -40,8 +40,8 @@ void main(){
   testWidgets('Android-only PDF Toolbox provides a clear desktop warning',
     (tester)async{
     await tester.pumpWidget(const MaterialApp(home:FileShareToolboxPage()));
-    await tester.scrollUntilVisible(find.text('Advanced PDF Editing Tools'),220,
-      scrollable:find.byType(Scrollable).last);
+    await tester.enterText(find.byType(TextField),'pdf');
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced PDF Editing Tools'));
     await tester.pumpAndSettle();
     expect(find.textContaining('These tools are only available on Android/mobile.'),findsOneWidget);

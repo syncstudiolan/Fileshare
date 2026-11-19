@@ -7,9 +7,14 @@ import 'package:file_share/personal_cloud.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    SharedPreferencesAsyncPlatform.instance=InMemorySharedPreferencesAsync.empty();
+  });
   test('Real TCP LAN transfer delivers bytes and receives exactly one event',
       () async {
     final root = await Directory.systemTemp.createTemp('file_share_tcp_test_');
