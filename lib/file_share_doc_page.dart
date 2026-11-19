@@ -12,6 +12,7 @@ import 'gander_docx_preview_page.dart';
 import 'gander_markup_preview_page.dart';
 import 'gander_spreadsheet_preview_page.dart';
 import 'gander_presentation_preview_page.dart';
+import 'file_share_windows_pdf_viewer.dart';
 import 'image_editing_page.dart';
 import 'main.dart' show FileTheme, FileCardOpenRouter, appLan;
 import 'transfer_downloads.dart';
@@ -452,6 +453,12 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         await Navigator.of(context).push(MaterialPageRoute<void>(
           builder:(_)=>GanderDocxPreviewPage(document:file,
             displayName:_saved==null?_displayName:null)));
+        return;
+      }
+      if(ext=='pdf'&&Platform.isWindows){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>FileShareWindowsPdfViewer(file:file,
+            name:_saved==null?_displayName:null)));
         return;
       }
       if(ext=='pdf'){
