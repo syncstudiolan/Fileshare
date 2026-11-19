@@ -71,4 +71,38 @@ void main(){
       source(),SignatureCrop.full,'Original',4),throwsArgumentError);
   });
 
+  test('Apply Crop commits full-resolution normal crop',() async {
+    final applied=await SignatureEditEngine.applyCrop(
+      source(),const SignatureCrop(.10,.10,.70,.90));
+    final imgResult=img.decodePng(applied)!;
+    expect(imgResult.width,inInclusiveRange(200,210));
+    expect(imgResult.height,inInclusiveRange(85,90));
+    final filtered=await SignatureEditEngine.preview(
+      applied,SignatureCrop.full,'Red Ink',intensity:.7);
+    expect(img.decodeJpg(filtered),isNotNull);
+  });
+
+  test('Perspective Apply Crop returns decodable full-size source',() async {
+    final result=await SignatureEditEngine.applyCrop(source(),
+      const SignatureCrop(0,0,1,1,
+        quad:[.05,.05,.92,.03,.96,.95,.04,.90]));
+    final output=img.decodePng(result)!;
+    expect(output.width,greaterThan(150));
+    expect(output.height,greaterThan(50));
+  });
+
+  test('Extra ink filters accept adjustable intensity',() async {
+    for(final preset in ['Red Ink','Green Ink','High Contrast',
+        'Soft Ink','Sepia','Invert','Clean Paper','Pencil']){
+      final result=await SignatureEditEngine.preview(
+        source(),SignatureCrop.full,preset,intensity:.45);
+      expect(img.decodeJpg(result),isNotNull,reason:preset);
+    }
+    final neutral=await SignatureEditEngine.preview(
+      source(),SignatureCrop.full,'Red Ink',intensity:0);
+    final full=await SignatureEditEngine.preview(
+      source(),SignatureCrop.full,'Red Ink',intensity:1);
+    expect(neutral, isNot(equals(full)));
+  });
+
 }
