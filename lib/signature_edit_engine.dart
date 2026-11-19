@@ -23,8 +23,8 @@ class SignatureEditEngine {
 
   static Future<Uint8List> exactJpeg(Uint8List original,SignatureCrop crop,
     String filter,int kilobytes) {
-    if(kilobytes<1||kilobytes>10240) {
-      throw ArgumentError('Target must be between 1 and 10,240 KB');
+    if(kilobytes<5||kilobytes>10240) {
+      throw ArgumentError('Target must be between 5 and 10,240 KB');
     }
     return compute(_signatureTransform,{
       'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
