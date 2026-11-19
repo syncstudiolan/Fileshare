@@ -205,7 +205,49 @@ class FileShareDocEngine {
     }
   }
 
-  Future<File> saveCopy(Map<String,String> changed,Directory dir) async {
+  /// Apply whole-paragraph Word text formatting to existing runs.
+  /// Only the explicitly changed blocks are touched.
+  void applyWordFormatting(Map<String,Set<String>> flags) {
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    for(final block in blocks){
+      final choices=flags[block.id];
+      if(choices==null)continue;
+      final doc=parts[block.part];
+      if(doc==null)continue;
+      final paragraphs=slots(doc,kind);
+      if(block.index>=paragraphs.length)continue;
+      final paragraph=paragraphs[block.index];
+      final runs=paragraph.descendants.whereType<xml.XmlElement>()
+        .where((element)=>element.name.local=='r' &&
+          element.name.prefix=='w' &&
+          element.ancestorElements.any((a)=>identical(a,paragraph))).toList();
+      for(final run in runs){
+        var properties=run.childElements
+          .where((child)=>child.name.local=='rPr' &&
+            child.name.prefix=='w').firstOrNull;
+        if(properties==null){
+          properties=xml.XmlElement(xml.XmlName('rPr','w'));
+          run.children.insert(0,properties);
+        }
+        properties.children.removeWhere((node)=>node is xml.XmlElement &&
+          node.name.prefix=='w' &&
+          {'b','i','u'}.contains(node.name.local));
+        if(choices.contains('bold')){
+          properties.children.add(xml.XmlElement(xml.XmlName('b','w')));
+        }
+        if(choices.contains('italic')){
+          properties.children.add(xml.XmlElement(xml.XmlName('i','w')));
+        }
+        if(choices.contains('underline')){
+          properties.children.add(xml.XmlElement(xml.XmlName('u','w'),[
+            xml.XmlAttribute(xml.XmlName('val','w'),'single')]));
+        }
+      }
+    }
+  }
+
+  Future<File> saveCopy(Map<String,String> changed,Directory dir,
+      {Map<String,Set<String>> formatChanges=const {}}) async {
     await dir.create(recursive:true);
     final filename=source.uri.pathSegments.last;
     final dot=filename.lastIndexOf('.');
@@ -223,6 +265,7 @@ class FileShareDocEngine {
       return target;
     }
     apply(changed);
+    if(formatChanges.isNotEmpty)applyWordFormatting(formatChanges);
     final rebuilt=Archive();
     for(final part in archive!){
       if(!part.isFile){
