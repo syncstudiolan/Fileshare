@@ -299,12 +299,16 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       final exported=await TransferDownloads.instance.export(
         saved,saved.uri.pathSegments.last);
       if(!mounted)return;
-      setState((){
-        _saved=saved;_dirty=false;
-        _status=exported==null
+      // Re-open the persisted copy as the new editing base. This refreshes
+      // Word paragraph indices after insert/delete and prevents stale DOM
+      // edits when the user saves more than once.
+      setState(()=>_busy=false);
+      await _openFile(saved,name:saved.uri.pathSegments.last);
+      if(mounted){
+        setState(()=>_status=exported==null
           ?'Edited copy saved inside File Share Doc. External export canceled.'
-          :'Edited copy saved and exported: '+saved.uri.pathSegments.last;
-      });
+          :'Edited copy saved and exported: '+saved.uri.pathSegments.last);
+      }
     }catch(e){_message('Save failed: '+e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
   }
