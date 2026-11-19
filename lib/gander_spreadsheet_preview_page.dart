@@ -101,7 +101,7 @@ try{
   const source=await fetch('document',{credentials:'omit',cache:'no-store'});
   if(!source.ok)throw Error('File cannot be read');
   const buffer=await source.arrayBuffer();
-  const book=XLSX.read(new Uint8Array(buffer),{type:'array',dense:true,
+  const book=XLSX.read(new Uint8Array(buffer),{type:'array',dense:false,
     cellDates:true,cellStyles:true});
   const tabs=document.getElementById('tabs');
   const screen=document.getElementById('sheet');
