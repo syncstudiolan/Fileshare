@@ -187,6 +187,23 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         _corner=i;break;
       }
     }
+    if(_corner==-1){
+      // The entire edge, not only its center dot, can be grabbed.
+      final finger=Offset(p.dx*size.width,p.dy*size.height);
+      for(var i=0;i<4;i++){
+        final begin=Offset(points[i].dx*size.width,points[i].dy*size.height);
+        final end=Offset(points[(i+1)%4].dx*size.width,
+          points[(i+1)%4].dy*size.height);
+        final line=end-begin;
+        final length2=line.dx*line.dx+line.dy*line.dy;
+        if(length2<1)continue;
+        final t=((finger-begin).dx*line.dx+
+          (finger-begin).dy*line.dy)/length2;
+        if(t<.08||t>.92)continue;
+        final foot=begin+line*t;
+        if((finger-foot).distance<20){_corner=i+4;break;}
+      }
+    }
     if(_corner==-1 && _insidePolygon(p,points)) _corner=-2;
     _lastDrag=p;
   }
