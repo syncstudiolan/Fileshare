@@ -11,6 +11,8 @@ import 'main.dart' show FileTheme, WindowsBackground;
 
 /// The only trusted manifest is the one maintained by the GitHub release
 /// workflow on main. No arbitrary remote binary URLs are accepted.
+final fileShareNavigatorKey=GlobalKey<NavigatorState>();
+
 const fileShareUpdateManifest =
     'https://raw.githubusercontent.com/syncstudiolan/Fileshare/main/update_manifest.json';
 const _allowedDownloadPrefix =
@@ -358,7 +360,7 @@ class FileShareUpdateBanner extends StatelessWidget {
                   FilledButton.icon(
                     onPressed:(){
                       updater.later();
-                      Navigator.of(context).push(MaterialPageRoute<void>(
+                      fileShareNavigatorKey.currentState?.push(MaterialPageRoute<void>(
                         builder:(_)=>const FileShareUpdatePage()));
                       unawaited(updater.download());
                     },
