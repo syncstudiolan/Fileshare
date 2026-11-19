@@ -1552,6 +1552,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             clipper:PhotoBeforeAfterClipper(_compareFraction),
             child:Image.memory(_enhanceBefore!,
               width:width,height:height,fit:BoxFit.fill,
+              cacheWidth:(width*MediaQuery.devicePixelRatioOf(context))
+                .round().clamp(1,1920),
               gaplessPlayback:false,filterQuality:FilterQuality.medium),
           ),
           Positioned(
