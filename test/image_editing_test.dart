@@ -69,6 +69,37 @@ void main(){
     expect(img.decodeImage(result),isNotNull);
   });
 
+  test('Requested JPEG output never exceeds 5KB and stays readable',()async{
+    final edited=await ImageEditingEngine.edit(example(),'filter',{'name':'Warm'});
+    final result=await ImageEditingEngine.compress(edited,
+      targetKb:5,quality:85,format:'JPEG');
+    expect(result.length,lessThanOrEqualTo(5*1024));
+    final image=img.decodeJpg(result);
+    expect(image,isNotNull);
+    expect(image!.width,greaterThan(0));
+  });
+
+  test('Compression uses current edited cutout and flattens JPEG on white',()async{
+    final mask=Uint8List.fromList(List<int>.generate(80*50,
+      (index)=>index%80<40?0:255));
+    final cutout=await ImageEditingEngine.edit(example(),'background',{
+      'mask':mask,'maskWidth':80,'maskHeight':50,
+    });
+    final jpeg=await ImageEditingEngine.compress(cutout,
+      targetKb:5,quality:90,format:'JPEG');
+    final decoded=img.decodeJpg(jpeg)!;
+    expect(decoded.getPixel(2,2).r,greaterThan(225));
+    expect(decoded.getPixel(2,2).g,greaterThan(225));
+    expect(decoded.getPixel(70,30).b,lessThan(230));
+  });
+
+  test('Small segmentation images are encoded without changing coordinates',()async{
+    final bounded=await ImageEditingEngine.segmentationInput(example());
+    final decoded=img.decodeJpg(bounded)!;
+    expect(decoded.width,80);
+    expect(decoded.height,50);
+  });
+
   test('Local Cart bridge preserves entries until dashboard consumes',(){
     final cart=ImageEditingCart.instance;
     final file=File('image_editing_test_cart.png');
