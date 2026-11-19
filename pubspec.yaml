@@ -46,6 +46,8 @@ flutter:
     - assets/gander/purify.min.js
     - assets/gander/xlsx.full.min.js
     - assets/gander/pptx/
+    - assets/gander/docx/
+    - assets/gander/epub/
     - cloudflare/worker.js
     - cloudflare/schema.sql
     - cloudflare/public/guest.html
