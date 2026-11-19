@@ -18,6 +18,7 @@ import 'image_editing_page.dart';
 import 'toolbox_page.dart';
 import 'file_share_doc_page.dart';
 import 'file_share_doc_engine.dart';
+import 'profile_avatar.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
@@ -2888,9 +2889,11 @@ class FeatureDesignPage extends StatelessWidget {
           listenable: PersonalCloud.instance,
           builder: (context, _) => _line(c, Icons.cloud_outlined,
             'Personal Cloudflare',
-            PersonalCloud.instance.signedIn
+            PersonalCloud.instance.connected
               ? 'Connected · Cloud transfer and Guest QR settings'
-              : 'Not connected · Offline LAN remains available'),
+              : PersonalCloud.instance.cloudSetupSaved
+                ? 'Saved setup · Sign in to reconnect'
+                : 'Not connected · Offline LAN remains available'),
         ),
         const SizedBox(height: 8),
         SizedBox(width: double.infinity,
@@ -2998,28 +3001,47 @@ class FeatureDesignPage extends StatelessWidget {
     ),
   ]);
 
-  Widget _profile(BuildContext c) => _section(c, 'My profile',
-    'Use local Wi-Fi sharing as a guest, or login to connect your personal cloud.',
-    Column(children: [
-      Center(child: CircleAvatar(
-        radius: 37, backgroundColor: FileTheme.violet.withValues(alpha: .15),
-        child: const Icon(Icons.person_outline, size: 35,
-          color: FileTheme.violet))),
-      const SizedBox(height: 12),
-      const DesignTag('GUEST / OFFLINE'),
-      const SizedBox(height: 10),
-      _line(c, Icons.email_outlined, 'Account', 'Not signed in'),
-      _line(c, Icons.cloud_off_outlined, 'Personal Cloudflare', 'Not connected'),
-      const SizedBox(height: 14),
-      SizedBox(width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: () => Navigator.push(c, fadePage(
-            LoginPage(mode: mode, onMode: onMode))),
-          icon: const Icon(Icons.login_rounded),
-          label: const Text('View login UI'),
-        )),
-    ]),
-  );
+  Widget _profile(BuildContext c) => ListenableBuilder(
+    listenable:PersonalCloud.instance,
+    builder:(context,_) {
+      final cloud=PersonalCloud.instance;
+      final signedIn=cloud.signedIn;
+      final email=cloud.accountEmail?.trim();
+      final isConnected=cloud.connected;
+      return _section(c,'My profile',
+        signedIn?'Your signed-in File Share account and personal cloud.':
+          'Use local Wi-Fi sharing as a guest, or sign in for personal cloud.',
+        Column(children:[
+          const Center(child:FileShareProfileAvatar()),
+          const SizedBox(height:8),
+          DesignTag(signedIn?'SIGNED IN':'GUEST / OFFLINE'),
+          const SizedBox(height:10),
+          _line(c,Icons.email_outlined,'Account',
+            signedIn?(email?.isNotEmpty==true?email!:'Signed in'):
+              'Not signed in'),
+          _line(c,isConnected?Icons.cloud_done_outlined:
+            Icons.cloud_off_outlined,'Personal Cloudflare',
+            isConnected?'Cloud connected':
+              cloud.cloudSetupSaved
+                ?'Cloud setup saved · Sign in to connect'
+                :'Cloud not connected'),
+          if(isConnected && cloud.workerOrigin!=null)
+            _line(c,Icons.link_rounded,'Cloud Worker',
+              cloud.workerOrigin!),
+          const SizedBox(height:14),
+          SizedBox(width:double.infinity,
+            child:OutlinedButton.icon(
+              onPressed:()=>Navigator.push(c,fadePage(
+                signedIn
+                  ?CloudConnectPage(mode:mode,onMode:onMode)
+                  :LoginPage(mode:mode,onMode:onMode))),
+              icon:Icon(signedIn?Icons.manage_accounts_outlined:
+                Icons.login_rounded),
+              label:Text(signedIn?'Manage account / cloud':
+                'Sign in to File Share'))),
+        ]),
+      );
+    });
 }
 
 
