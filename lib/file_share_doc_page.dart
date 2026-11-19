@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
@@ -32,7 +31,6 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   bool _dirty=false;
   String? _status;
   String _search='';
-  String _mode='Edit';
   @override
   void initState(){
     super.initState();
@@ -91,7 +89,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       if(!mounted)return;
       setState((){
         _source=file;_saved=null;_document=doc;
-        _mode=edit?'Edit':'View';_dirty=false;
+        _dirty=false;
         _status=edit
           ?'Edit the displayed text fields, then Save Copy. Complex Office '
             'layouts and unsupported embedded objects remain unchanged.'
@@ -106,6 +104,43 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(value)));
     }
   }
+  Future<void> _findAndReplace()async{
+    final find=TextEditingController(text:_search);
+    final replace=TextEditingController();
+    final confirmed=await showDialog<bool>(context:context,builder:(dialog)=>
+      AlertDialog(
+        title:const Text('Find and replace'),
+        content:Column(mainAxisSize:MainAxisSize.min,children:[
+          TextField(controller:find,autofocus:true,
+            decoration:const InputDecoration(labelText:'Find')),
+          const SizedBox(height:8),
+          TextField(controller:replace,
+            decoration:const InputDecoration(labelText:'Replace with')),
+        ]),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),
+            child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(dialog,true),
+            child:const Text('Replace All')),
+        ],
+      ));
+    if(confirmed==true && find.text.isNotEmpty){
+      var count=0;
+      for(final controller in _controllers.values){
+        final previous=controller.text;
+        if(previous.contains(find.text)){
+          count+=find.text.allMatches(previous).length;
+          controller.text=previous.replaceAll(find.text,replace.text);
+        }
+      }
+      _message('Replaced '+count.toString()+' occurrence(s)');
+    }
+    find.dispose();replace.dispose();
+  }
+  int get _wordCount=>_controllers.values.fold<int>(0,(count,c)=>
+    count+c.text.trim().split(RegExp(r'\\s+'))
+      .where((s)=>s.isNotEmpty).length);
+
   Future<void> _save() async {
     final doc=_document;
     if(_busy||doc==null)return;
@@ -117,11 +152,14 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       final values={for(final e in _controllers.entries)e.key:e.value.text};
       final saved=await doc.saveCopy(values,destination);
       // Export through existing public Android Downloads / Windows folder picker.
-      await TransferDownloads.instance.export(saved,saved.uri.pathSegments.last);
+      final exported=await TransferDownloads.instance.export(
+        saved,saved.uri.pathSegments.last);
       if(!mounted)return;
       setState((){
         _saved=saved;_dirty=false;
-        _status='Edited copy saved and exported: '+saved.uri.pathSegments.last;
+        _status=exported==null
+          ?'Edited copy saved inside File Share Doc. External export canceled.'
+          :'Edited copy saved and exported: '+saved.uri.pathSegments.last;
       });
     }catch(e){_message('Save failed: '+e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
@@ -237,6 +275,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                   onPressed:_busy||!_dirty?null:_save,
                   icon:const Icon(Icons.save_outlined),
                   label:const Text('Save Copy')),
+                if(doc!=null)OutlinedButton.icon(
+                  onPressed:_busy?null:_findAndReplace,
+                  icon:const Icon(Icons.find_replace),
+                  label:const Text('Replace')),
                 OutlinedButton.icon(onPressed:_busy?null:_send,
                   icon:const Icon(Icons.send_outlined),
                   label:const Text('Send to LAN')),
@@ -249,6 +291,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                   style:TextStyle(color:theme.colorScheme.error))),
               if(doc!=null)...[
                 const SizedBox(height:14),
+                Text('Sections: '+doc.blocks.length.toString()+
+                  ' · Words: '+_wordCount.toString(),
+                  style:theme.textTheme.labelMedium),
+                const SizedBox(height:8),
                 TextField(
                   onChanged:(v)=>setState(()=>_search=v),
                   decoration:const InputDecoration(
