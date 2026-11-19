@@ -1,9 +1,13 @@
 name: Build unsigned iOS IPA for external signing
 
-# Build on explicit approval only. Keep iOS unsigned package in draft until
-# native macOS runner access and Apple signing are confirmed.
+# User approved iOS builds. Validate first on the existing fix branch; after
+# PR merge, build and publish the unsigned IPA from main.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - fix/photo-enhancement-crop-signature-visual-20261119
 
 permissions:
   contents: read
@@ -32,6 +36,8 @@ jobs:
           set -euo pipefail
           test -s ios/Runner/Assets.xcassets/AppIcon.appiconset/fs-store.png
           test -s ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+          test -s ios/Runner/FileShareIOSPDF.swift
+          grep -q 'FileShareIOSPDF.register' ios/Runner/AppDelegate.swift
           flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter test
       - name: Configure minimum iOS, privacy and local network usage
@@ -110,7 +116,7 @@ jobs:
   publish_ipa:
     name: Publish unsigned IPA for external signing
     needs: [ios_unsigned]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
