@@ -36,7 +36,7 @@ class _LanFolderSharePageState extends State<LanFolderSharePage> {
     if(_busy)return;
     setState(()=>_busy=true);
     try {
-      final result=await FilePicker.pickFiles(type:FileType.any, allowMultiple:true);
+      final result=await FilePicker.pickFiles(type:FileType.any);
       for(final entry in result) {
         final path=entry.path;
         File? file;
