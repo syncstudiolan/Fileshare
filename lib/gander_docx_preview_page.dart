@@ -151,29 +151,28 @@ html,body{background:#181622}
     }
     try{
       final name=path[1];
-      switch(name){
-        case 'index':
-          response.headers.contentType=ContentType.html;
-          response.headers.set('Content-Security-Policy',
-            "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-            "img-src data: blob:; font-src data: blob:; connect-src 'self'; "+
-            "frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'");
-          response.write(_page);
-        case 'jszip.js':
-          response.headers.contentType=ContentType('text','javascript');
-          response.add(_jszipLib!);
-        case 'docx.js':
-          response.headers.contentType=ContentType('text','javascript');
-          response.add(_docxLib!);
-        case 'bootstrap.js':
-          response.headers.contentType=ContentType('text','javascript');
-          response.write(_bootstrap);
-        case 'document':
-          response.headers.contentType=ContentType(
-            'application','vnd.openxmlformats-officedocument.wordprocessingml.document');
-          response.add(_zip!);
-        default:
-          response.statusCode=HttpStatus.notFound;
+      if(name=='index'){
+        response.headers.contentType=ContentType.html;
+        response.headers.set('Content-Security-Policy',
+          "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+          "img-src data: blob:; font-src data: blob:; connect-src 'self'; "+
+          "frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'");
+        response.write(_page);
+      }else if(name=='jszip.js'){
+        response.headers.contentType=ContentType('text','javascript');
+        response.add(_jszipLib!);
+      }else if(name=='docx.js'){
+        response.headers.contentType=ContentType('text','javascript');
+        response.add(_docxLib!);
+      }else if(name=='bootstrap.js'){
+        response.headers.contentType=ContentType('text','javascript');
+        response.write(_bootstrap);
+      }else if(name=='document'){
+        response.headers.contentType=ContentType(
+          'application','vnd.openxmlformats-officedocument.wordprocessingml.document');
+        response.add(_zip!);
+      }else{
+        response.statusCode=HttpStatus.notFound;
       }
       await response.close();
     }catch(_){
