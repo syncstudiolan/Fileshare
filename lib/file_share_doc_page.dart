@@ -450,7 +450,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       }
       if(ext=='docx'||ext=='docm'||ext=='dotx'){
         await Navigator.of(context).push(MaterialPageRoute<void>(
-          builder:(_)=>GanderDocxPreviewPage(document:file)));
+          builder:(_)=>GanderDocxPreviewPage(document:file,
+            displayName:_saved==null?_displayName:null)));
         return;
       }
       if(ext=='pdf'){
