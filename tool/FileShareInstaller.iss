@@ -9,7 +9,7 @@ AppVersion={#MyAppVersion}
 AppPublisher=File Share
 DefaultDirName={autopf}\File Share
 DefaultGroupName=File Share
-OutputDir=dist
+OutputDir=..\dist
 OutputBaseFilename=FileShare-Windows-Setup
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -22,7 +22,7 @@ DisableProgramGroupPage=yes
 SetupLogging=yes
 
 [Files]
-Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\File Share"; Filename: "{app}\{#MyAppExeName}"
