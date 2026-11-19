@@ -53,6 +53,41 @@ class ImageEditingEngine {
           toImage:img.Image(width:width,height:height,numChannels:4));
       case 'rotate':
         output = img.copyRotate(output, angle: decimal('degrees', 90));
+      case 'straighten':
+        final degrees=decimal('degrees',0).clamp(-45.0,45.0);
+        if(degrees.abs()<0.001)break;
+        final originalW=output.width.toDouble();
+        final originalH=output.height.toDouble();
+        output=img.copyRotate(output,angle:degrees,
+          interpolation:img.Interpolation.linear);
+        if(options['autoCrop']!=false){
+          final radians=degrees.abs()*math.pi/180;
+          final sin=math.sin(radians),cos=math.cos(radians);
+          final shortSide=math.min(originalW,originalH);
+          final longSide=math.max(originalW,originalH);
+          double croppedW,croppedH;
+          if(shortSide<=2*sin*cos*longSide){
+            final x=shortSide/2;
+            if(originalW>=originalH){
+              croppedW=x/sin;croppedH=x/cos;
+            }else{
+              croppedW=x/cos;croppedH=x/sin;
+            }
+          }else{
+            final denom=cos*cos-sin*sin;
+            if(denom.abs()<1e-6){
+              croppedW=originalW*.70;croppedH=originalH*.70;
+            }else{
+              croppedW=(originalW*cos-originalH*sin)/denom;
+              croppedH=(originalH*cos-originalW*sin)/denom;
+            }
+          }
+          final w=croppedW.round().clamp(1,output.width);
+          final h=croppedH.round().clamp(1,output.height);
+          output=img.copyCrop(output,
+            x:(output.width-w)~/2,y:(output.height-h)~/2,
+            width:w,height:h);
+        }
       case 'flip':
         output = img.flipHorizontal(output);
       case 'adjust':
@@ -102,14 +137,39 @@ class ImageEditingEngine {
           math.min(output.width, output.height)).round().clamp(1, 240).toInt();
         final softness = decimal('softness', .4).clamp(0.01, 1.0);
         final erase=action=='erase';
-        for(final point in points){
-          if(point is! Map)continue;
-          final x=((point['x'] as num).toDouble()*output.width).round();
-          final y=((point['y'] as num).toDouble()*output.height).round();
+        // Sample the path on the worker isolate; sparse touch events must not
+        // become a row of separate dots. Pixel work never blocks Flutter UI.
+        final samples=<({int x,int y})>[];
+        for(final raw in points){
+          if(raw is! Map)continue;
+          final px=(((raw['x'] as num).toDouble()).clamp(0.0,1.0)
+            *output.width).round();
+          final py=(((raw['y'] as num).toDouble()).clamp(0.0,1.0)
+            *output.height).round();
+          final previous=samples.isEmpty?null:samples.last;
+          if(previous!=null){
+            final dx=px-previous.x,dy=py-previous.y;
+            final gap=math.sqrt(dx*dx+dy*dy);
+            // Dense 120 Hz pointer samples already overlap substantially.
+            // Avoid applying the same large brush to near-identical pixels.
+            if(gap<math.max(1.0,radius*.28))continue;
+            final steps=(gap/math.max(1.0,radius*.35)).ceil().clamp(1,128);
+            for(var k=1;k<steps;k++){
+              final t=k/steps;
+              samples.add((x:(previous.x+(px-previous.x)*t).round(),
+                y:(previous.y+(py-previous.y)*t).round()));
+            }
+          }
+          samples.add((x:px,y:py));
+        }
+        for(final point in samples){
+          final x=point.x,y=point.y;
           for(var py=math.max(0,y-radius);py<=math.min(output.height-1,y+radius);py++){
             for(var px=math.max(0,x-radius);px<=math.min(output.width-1,x+radius);px++){
-              final distance=math.sqrt((px-x)*(px-x)+(py-y)*(py-y));
-              if(distance>radius)continue;
+              final dx=px-x,dy=py-y;
+              final distanceSq=dx*dx+dy*dy;
+              if(distanceSq>radius*radius)continue;
+              final distance=math.sqrt(distanceSq);
               final feather=((radius-distance)/(radius*softness)).clamp(0.0,1.0);
               final pixel=output.getPixel(px,py);
               final alpha=erase?pixel.a*(1-feather):
@@ -137,7 +197,11 @@ class ImageEditingEngine {
         img.compositeImage(background, output);
         output = background;
     }
-    return Uint8List.fromList(img.encodePng(output));
+    // Editing snapshots are temporary, lossless working images. PNG's default
+    // zlib effort is costly on large phone photos and blocks Apply even after
+    // the pixel operation has finished. Level 1 keeps pixels lossless while
+    // avoiding expensive background compression on every tool change.
+    return Uint8List.fromList(img.encodePng(output,level:1));
   }
 
   static Future<Uint8List> compress(Uint8List bytes,

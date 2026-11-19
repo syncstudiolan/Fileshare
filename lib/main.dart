@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'file_transfer_camera_page.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_filex/open_filex.dart';
@@ -11,8 +13,13 @@ import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
+import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
+import 'file_share_doc_page.dart';
+import 'file_share_doc_engine.dart';
+import 'profile_avatar.dart';
+import 'android_lan_background_setting.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
@@ -30,11 +37,20 @@ Future<void> main([List<String> args = const []]) async {
   final prefs = SharedPreferencesAsync();
   final mode = await prefs.getString('appearance');
   final previousOffline = await prefs.getBool('offline_start') ?? false;
+  await TransferDownloads.instance.init();
   // CI emulator only: run the real LAN backend without first-use tapping.
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
   final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
-  final offline = ciLanTest || previousOffline || windowsSmoke;
+  final androidBackgroundEnabled = Platform.isAndroid &&
+    (await prefs.getBool('android_receive_background') ?? true);
+  // Receiver availability is independent from the first-run login screen.
+  final offline = ciLanTest || previousOffline || windowsSmoke ||
+    Platform.isWindows;
+  // Restore the encrypted session before drawing Profile/Login, without a
+  // network call. The dashboard may re-check the restored session later.
+  try { await PersonalCloud.instance.restore(); }
+  catch (e) { debugPrint('Saved cloud session unavailable: $e'); }
   appLan.onReceived = (file) => Platform.isAndroid
       ? const MethodChannel('file_share.native').invokeMethod<void>(
           'notifyReceived', {'name': file.name, 'sender': file.peer})
@@ -43,13 +59,18 @@ Future<void> main([List<String> args = const []]) async {
           : Future<void>.value();
   if (Platform.isWindows) {
     // Exit a second Windows process before it can bind the same LAN port.
-    if (!await WindowsBackground.instance.acquireSingleInstance()) {
+    if (!await WindowsBackground.instance.acquireSingleInstance(
+        showExisting:!args.contains('--background'))) {
       exit(0);
     }
-    try { await WindowsBackground.instance.initialize(); }
-    catch (e) { debugPrint('Windows tray unavailable: $e'); }
+    try {
+      await WindowsBackground.instance.initialize(
+        launchHidden:args.contains('--background'));
+      await WindowsBackground.instance.enableDefaultStart(prefs);
+    }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
   }
-  if (offline && (Platform.isAndroid || Platform.isWindows)) {
+  if ((offline || androidBackgroundEnabled) &&
+      (Platform.isAndroid || Platform.isWindows)) {
     unawaited(appLan.start().catchError((Object e) {
       debugPrint('Background LAN start failed: $e');
     }));
@@ -65,7 +86,7 @@ Future<void> main([List<String> args = const []]) async {
       'dark' => ThemeMode.dark,
       _ => ThemeMode.system,
     },
-    offlineDefault: offline,
+    offlineDefault: offline || PersonalCloud.instance.signedIn,
   ));
 }
 
@@ -82,7 +103,7 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   /// A private OS file lock prevents two copies of the Windows EXE from
   /// owning the fixed LAN TCP listener. If a copy is already active, ask it
   /// to open its tray window rather than showing a second broken dashboard.
-  Future<bool> acquireSingleInstance() async {
+  Future<bool> acquireSingleInstance({bool showExisting=true}) async {
     if (!Platform.isWindows) return true;
     final folder = await getApplicationSupportDirectory();
     final lockFile = File(folder.path + Platform.pathSeparator +
@@ -95,15 +116,17 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
       _instanceLock = handle;
     } on FileSystemException {
       await handle?.close();
-      try {
-        final existing = await Socket.connect(
-          InternetAddress.loopbackIPv4, 49312,
-          timeout: const Duration(milliseconds: 600));
-        existing.write('SHOW\n');
-        await existing.flush();
-        existing.destroy();
-      } catch (e) {
-        debugPrint('Existing File Share window could not be focused: $e');
+      if(showExisting){
+        try {
+          final existing = await Socket.connect(
+            InternetAddress.loopbackIPv4, 49312,
+            timeout: const Duration(milliseconds: 600));
+          existing.write('SHOW\\n');
+          await existing.flush();
+          existing.destroy();
+        } catch (e) {
+          debugPrint('Existing File Share window could not be focused: $e');
+        }
       }
       return false;
     }
@@ -120,11 +143,15 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     return true;
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize({bool launchHidden=false}) async {
     if (!Platform.isWindows) return;
     await windowManager.ensureInitialized();
-    // Maximize the normal Windows window; do not hide the system taskbar.
-    await windowManager.maximize();
+    // Startup uses the tray only; avoid maximizing a window behind the user.
+    if(launchHidden){
+      try { await windowManager.hide(); } catch (_) {}
+    }else{
+      await windowManager.maximize();
+    }
     final icon = await _writeTrayIcon();
     await desktop_tray.trayManager.setIcon(icon.path);
     await desktop_tray.trayManager.setToolTip('File Share — LAN receiver');
@@ -142,7 +169,8 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
         'query', _windowsRunKey, '/v', 'FileShare',
       ]);
       autoStartEnabled.value = result.exitCode == 0 &&
-        result.stdout.toString().contains(Platform.resolvedExecutable);
+        result.stdout.toString().toLowerCase()
+          .contains(Platform.resolvedExecutable.toLowerCase());
     } catch (e) { debugPrint('Startup preference error: $e'); }
     try {
       await localNotifier.setup(appName: 'File Share',
@@ -165,6 +193,25 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
       throw ProcessException('reg', args, result.stderr.toString(), result.exitCode);
     }
     autoStartEnabled.value = value;
+  }
+
+  /// Configure Windows HKCU Run on first installed launch. Respect any
+  /// later explicit user choice, including opt-out. No elevation is needed.
+  Future<void> enableDefaultStart(SharedPreferencesAsync prefs) async {
+    if(!Platform.isWindows)return;
+    if(await prefs.getBool('windows_autostart_decided')==true)return;
+    final executable=Platform.resolvedExecutable.toLowerCase();
+    // Avoid registering Flutter debug/test binaries or an uninstalled EXE.
+    final normalized=executable.replaceAll(String.fromCharCode(92),'/');
+    if(normalized.contains('flutter_tester') ||
+       normalized.contains('/temp/') ||
+       normalized.contains('/debug/'))return;
+    try {
+      await setAutoStart(true);
+      await prefs.setBool('windows_autostart_decided',true);
+    }catch(e){
+      debugPrint('Windows autorun could not be registered: $e');
+    }
   }
 
   Future<void> notifyReceived(LanFile file) async {
@@ -1249,6 +1296,56 @@ class PendingBatch {
 final LanEngine appLan = LanEngine();
 
 
+/// Central tap policy for every LAN/QR/Cart/History card.
+/// Pictures are only previewed; PDF opens File Share's own Android editor.
+class FileCardOpenRouter {
+  static bool isPdf(String name) => name.toLowerCase().endsWith('.pdf');
+  static bool isDocx(String name) => name.toLowerCase().endsWith('.docx');
+  static bool isImage(String name) {
+    final lower=name.toLowerCase();
+    return ['.jpg','.jpeg','.png','.webp','.gif','.bmp','.heic']
+      .any(lower.endsWith);
+  }
+
+  static Future<bool> openEditor(
+    BuildContext context,String path,String name) async {
+    if(FileShareDocEngine.canEdit(name) ||
+      (FileShareDocEngine.canView(name) &&
+        !isImage(name) && (!isPdf(name)||Platform.isWindows))){
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder:(_)=>FileShareDocPage(
+          sourcePath:path,sourceName:name)));
+      return true;
+    }
+    if (!isPdf(name))return false;
+    if (!Platform.isAndroid) {
+      if (isPdf(name)) {
+        await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
+          title:const Text('PDF editing on Android'),
+          content:const Text('These tools are only available on Android/mobile.'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(dialog),
+            child:const Text('OK'))]));
+        return true;
+      }
+      return false;
+    }
+    try{
+      final theme=Theme.of(context).brightness==Brightness.dark?'dark':'light';
+      final pdfPath=path;
+      if(!context.mounted)return true;
+      await const MethodChannel('file_share.native').invokeMethod<void>(
+        'openUpstreamPdfTools',{
+          'path':pdfPath,
+          'theme':theme,
+        });
+    }catch(e){
+      if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Cannot open this document in PDF Tools: $e')));
+    }
+    return true;
+  }
+}
+
 /// Real file preview. Uses a zoomable full-screen image and the same actions
 /// as the file card; no duplicate upload is initiated from here.
 class FullScreenFilePreview extends StatelessWidget {
@@ -1258,11 +1355,7 @@ class FullScreenFilePreview extends StatelessWidget {
   final LanFile file;
   final Future<void> Function(LanFile) onSave, onDelete, onShare, onTools;
 
-  bool get isPicture {
-    final name=file.name.toLowerCase();
-    return name.endsWith('.jpg')||name.endsWith('.jpeg')||
-      name.endsWith('.png')||name.endsWith('.webp')||name.endsWith('.gif');
-  }
+  bool get isPicture => FileCardOpenRouter.isImage(file.name);
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -1335,6 +1428,121 @@ class SelectedFileToolsPage extends StatelessWidget {
     sourcePath:file.path,sourceName:file.name);
 }
 
+
+/* Compact, direction-aware transfer bubble used by LAN and Guest QR.
+   Draw the side tail with the card itself so it scales on both platforms. */
+class TransferBubble extends StatelessWidget {
+  const TransferBubble({super.key, required this.incoming,
+    required this.child});
+  final bool incoming;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    // Unlike the old full-width cards, opposing sides stay visibly separated.
+    final maxWidth = width >= 760 ? 610.0 : width * .88;
+    final dark = FileTheme.dark(context);
+    final fill = dark
+      ? (incoming ? const Color(0xFF4B294B) : const Color(0xFF3C315E))
+      : (incoming ? const Color(0xFFFFDDED) : const Color(0xFFF0E7FF));
+    final accent = incoming ? FileTheme.pink : FileTheme.violet;
+    return Align(
+      alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          child: CustomPaint(
+            painter: _TransferBubblePainter(incoming, fill, accent),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                incoming ? 16 : 10, 11, incoming ? 10 : 16, 11),
+              child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TransferBubblePainter extends CustomPainter {
+  const _TransferBubblePainter(this.incoming, this.fill, this.accent);
+  final bool incoming;
+  final Color fill, accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final left = incoming ? 10.0 : 0.0;
+    final right = incoming ? size.width : size.width - 10.0;
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTRB(left, 0, right, size.height),
+      const Radius.circular(23));
+    final path = Path()..addRRect(rect);
+    final mid = size.height > 100 ? 45.0 : size.height * .34;
+    if (incoming) {
+      path.moveTo(left + 1, mid - 12);
+      path.lineTo(0, mid);
+      path.lineTo(left + 1, mid + 12);
+    } else {
+      path.moveTo(right - 1, mid - 12);
+      path.lineTo(size.width, mid);
+      path.lineTo(right - 1, mid + 12);
+    }
+    path.close();
+    canvas.drawShadow(path, accent.withValues(alpha: .25), 9, false);
+    canvas.drawPath(path, Paint()..color = fill);
+    canvas.drawPath(path, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = accent.withValues(alpha: .65));
+  }
+
+  @override
+  bool shouldRepaint(covariant _TransferBubblePainter old) =>
+    old.incoming != incoming || old.fill != fill || old.accent != accent;
+}
+
+class TransferCardActions extends StatelessWidget {
+  const TransferCardActions({super.key, required this.actions});
+  final List<Widget> actions;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    alignment: WrapAlignment.end,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 1,
+    runSpacing: 0,
+    children: [
+      for (var i = 0; i < actions.length; i++) ...[
+        if (i > 0) SizedBox(height: 19, child: VerticalDivider(
+          width: 7, thickness: 1,
+          color: FileTheme.pink.withValues(alpha: .38))),
+        actions[i],
+      ],
+    ],
+  );
+}
+
+class TransferCardTime extends StatelessWidget {
+  const TransferCardTime({super.key, required this.created,
+    required this.status});
+  final DateTime created;
+  final Widget status;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+    decoration: BoxDecoration(
+      color: FileTheme.violet.withValues(alpha: .15),
+      borderRadius: BorderRadius.circular(18)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(created.toLocal().toString().substring(11, 16),
+        style: TextStyle(fontSize: 10, color: FileTheme.muted(context))),
+      const SizedBox(width: 4),
+      status,
+    ]),
+  );
+}
+
 class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
     super.key, required this.items, required this.onSave,
@@ -1345,170 +1553,175 @@ class LiveTransferCard extends StatelessWidget {
   final Future<void> Function(LanFile) onDelete;
   final Future<void> Function(LanFile) onShare;
   final Future<void> Function(LanFile) onTools;
-
   bool get incoming => items.first.incoming;
 
-  bool _photo(String path) {
-    final name = path.toLowerCase();
-    return name.endsWith('.jpg') || name.endsWith('.jpeg') ||
-      name.endsWith('.png') || name.endsWith('.webp') || name.endsWith('.gif');
+  static bool _photo(String name) {
+    final n = name.toLowerCase();
+    return n.endsWith('.jpg') || n.endsWith('.jpeg') ||
+      n.endsWith('.png') || n.endsWith('.webp') || n.endsWith('.gif');
   }
 
   Widget _visual(LanFile file) {
     if (_photo(file.name) && File(file.path).existsSync()) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Image.file(File(file.path), width: double.infinity,
-          height: double.infinity, fit: BoxFit.cover,
-          cacheWidth: 360,
-          errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined,
-            color: FileTheme.pink, size: 35)));
+      return ClipRRect(borderRadius: BorderRadius.circular(12),
+        child: Image.file(File(file.path), fit: BoxFit.cover,
+          cacheWidth: 280,
+          errorBuilder: (_, __, ___) => const Icon(
+            Icons.image_not_supported_outlined,
+            color: FileTheme.pink, size: 34)));
     }
-    final name = file.name.toLowerCase();
-    return Icon(name.endsWith('.mp4') || name.endsWith('.mov')
-      ? Icons.play_circle_outline_rounded
-      : (name.endsWith('.pdf') ? Icons.picture_as_pdf_outlined
-        : Icons.insert_drive_file_outlined), color: FileTheme.pink, size: 34);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: FileTheme.pink.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(12)),
+      child: Center(child: Icon(
+        file.name.toLowerCase().endsWith('.pdf')
+          ? Icons.picture_as_pdf_outlined
+          : (file.name.toLowerCase().endsWith('.mp4')
+             ? Icons.play_circle_outline_rounded
+             : Icons.insert_drive_file_outlined),
+        color: FileTheme.pink, size: 42)));
+  }
+
+  void _preview(BuildContext context, LanFile file) {
+    if (!File(file.path).existsSync() ||
+        (file.incoming && file.state != TransferState.delivered)) return;
+    unawaited(FileCardOpenRouter.openEditor(
+      context,file.path,file.name).then((handled){
+      if(handled||!context.mounted)return;
+      Navigator.push(context,MaterialPageRoute<void>(builder:(_) =>
+        FullScreenFilePreview(file:file,onSave:onSave,
+          onDelete:onDelete,onShare:onShare,onTools:onTools)));
+    }));
   }
 
   Widget _buttons(BuildContext context, LanFile file) {
     final exists = File(file.path).existsSync();
-    final canShare = exists &&
+    final canUse = exists &&
       (file.state == TransferState.delivered || !file.incoming);
-    final canDownload = exists && file.incoming &&
-      file.state == TransferState.delivered;
-    Widget action(String label, IconData icon, VoidCallback? callback) =>
+    Widget action(String title, IconData icon, VoidCallback? onTap) =>
       IconButton(
-        tooltip: label, onPressed: callback,
-        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+        tooltip: title, onPressed: onTap,
+        iconSize: 19,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
-        icon: Icon(icon, color: callback == null
-          ? FileTheme.pink.withValues(alpha: .30) : FileTheme.pink),
-      );
-    return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+        icon: Icon(icon, color: onTap == null
+          ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink));
+    return TransferCardActions(actions: [
+      // NEW disappears only after a successful export, never after preview.
       if (file.incoming)
-        action('Download', Icons.download_rounded,
-          canDownload ? () => onSave(file) : null),
+        Stack(clipBehavior: Clip.none,children: [
+          action('Download', Icons.download_rounded,
+            canUse ? () => onSave(file) : null),
+          if (file.state == TransferState.delivered)
+            Positioned(top: -8, right: -4,
+              child: NewDownloadBadge(id: 'lan_${file.id}')),
+        ]),
       action('Delete', Icons.delete_outline_rounded, () => onDelete(file)),
       action('Share', Icons.ios_share_rounded,
-        canShare ? () => onShare(file) : null),
+        canUse ? () => onShare(file) : null),
       action('Open in Tools', Icons.auto_fix_high_rounded,
-        canShare ? () => onTools(file) : null),
+        canUse ? () => onTools(file) : null),
     ]);
   }
 
-  void _preview(BuildContext context,LanFile file){
-    if(!File(file.path).existsSync() ||
-       (file.incoming && file.state!=TransferState.delivered))return;
-    Navigator.push(context,MaterialPageRoute<void>(builder:(_)=>
-      FullScreenFilePreview(file:file,onSave:onSave,
-        onDelete:onDelete,onShare:onShare,onTools:onTools)));
+  Widget _status(LanFile file) {
+    final delivered = file.state == TransferState.delivered;
+    return Icon(
+      delivered ? Icons.done_all_rounded
+        : file.state == TransferState.queued ? Icons.schedule_rounded
+        : file.state == TransferState.failed ? Icons.error_outline_rounded
+        : Icons.done_rounded,
+      size: 15,
+      color: delivered ? FileTheme.pink : FileTheme.violet);
   }
 
-  Widget _file(BuildContext context, LanFile file) =>
-      LayoutBuilder(builder: (context, constraints) {
-    final side = constraints.maxWidth >= 570 ? 206.0 :
-      constraints.maxWidth >= 420 ? 160.0 :
-      constraints.maxWidth >= 310 ? 128.0 : 106.0;
+  Widget _file(BuildContext context, LanFile file) {
     final active = file.state == TransferState.sending ||
       file.state == TransferState.receiving ||
       file.state == TransferState.preparing;
-    final status = switch (file.state) {
-      TransferState.delivered => 'Delivered',
-      TransferState.queued => 'Pending',
-      TransferState.sending => 'Sending',
-      TransferState.receiving => 'Receiving',
-      TransferState.preparing => 'Preparing',
-      TransferState.failed => 'Failed',
-    };
-    return Padding(padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => _preview(context, file),
-              child: SizedBox(width: side, height: side, child: _visual(file)),
-            ),
-            const SizedBox(width: 13),
-            Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(file.name, maxLines: 3, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800,
-                    color: FileTheme.foreground(context))),
-                const SizedBox(height: 8),
-                Text(_formatBytes(file.size),
-                  style: TextStyle(color: FileTheme.muted(context), fontSize: 12)),
-                const SizedBox(height: 7),
-                Text(status,
-                  style: const TextStyle(color: FileTheme.violet,
-                    fontWeight: FontWeight.w700, fontSize: 12)),
-                if (active) ...[
-                  const SizedBox(height: 9),
-                  LinearProgressIndicator(value: file.progress,
-                    minHeight: 5, borderRadius: BorderRadius.circular(9)),
-                ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _preview(context, file),
+            child: SizedBox(width: side, height: side, child: _visual(file))),
+          const SizedBox(width: 10),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(onTap: () => _preview(context,file),
+                child: Text(file.name, maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                    color: FileTheme.foreground(context)))),
+              const SizedBox(height: 3),
+              Text(_formatBytes(file.size),
+                style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
+              if(active || file.state == TransferState.failed) ...[
+                const SizedBox(height: 3),
+                Text(file.state.name, style: const TextStyle(
+                  fontSize: 10, color: FileTheme.pink)),
+                if (active) LinearProgressIndicator(
+                  value: file.progress, minHeight: 2),
               ],
-            )),
-          ]),
-          const SizedBox(height: 7),
-          _buttons(context, file),
-        ],
-      ),
+              const SizedBox(height: 7),
+              // On narrow devices the actions wrap instead of causing overflow.
+              Align(alignment: Alignment.centerRight,
+                child: _buttons(context, file)),
+              const SizedBox(height: 3),
+              Align(alignment: Alignment.centerRight,
+                child: TransferCardTime(created: file.created,
+                  status: _status(file))),
+            ],
+          )),
+        ]);
+      }),
     );
-  });
+  }
 
   @override
   Widget build(BuildContext context) {
     final first = items.first;
     final multiple = items.length > 1;
-    final wide = MediaQuery.sizeOf(context).width > 750;
-    final bodyWidth = wide ? 760.0 : MediaQuery.sizeOf(context).width * .93;
-    return Align(
-      alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: bodyWidth),
-        padding: const EdgeInsets.all(12),
-        margin: const EdgeInsets.symmetric(vertical: 7),
-        decoration: BoxDecoration(
-          color: FileTheme.dark(context)
-              ? (incoming ? const Color(0xFF482945) : const Color(0xFF382B57))
-              : (incoming ? const Color(0xFFFFDCED) : const Color(0xFFF0E7FF)),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(22),
-            topRight: const Radius.circular(22),
-            bottomLeft: Radius.circular(incoming ? 6 : 22),
-            bottomRight: Radius.circular(incoming ? 22 : 6)),
-          border: Border.all(color: FileTheme.violet.withValues(alpha: .15)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(multiple
-                 ? items.length.toString() + ' files · ' + first.peer
-                 : (incoming ? 'From ' : 'To ') + first.peer + ' · Offline LAN',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: FileTheme.foreground(context),
-                fontWeight: FontWeight.w800, fontSize: 14))),
-            DesignTag(incoming ? 'Received' : 'Sent', received: incoming),
-          ]),
-          const SizedBox(height: 7),
-          ...items.take(multiple ? 4 : 1).map((entry) => _file(context, entry)),
-          if (items.length > 4)
-            Text('+ ' + (items.length - 4).toString() + ' more files',
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-          if (incoming && multiple)
-            TextButton.icon(
-              onPressed: items.every((f) => f.state == TransferState.delivered)
-                ? () async { for (final item in items) { await onSave(item); } }
-                : null,
-              icon: const Icon(Icons.download_for_offline_outlined),
-              label: const Text('Download All')),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text(first.created.toLocal().toString().substring(11, 16),
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 10))),
+    final peer = first.peer.trim().isEmpty
+      ? 'Unknown device' : first.peer.trim();
+    final origin = (incoming ? 'From ' : 'To ') + peer + ' · Offline LAN';
+    final delivered = items.every((f) => f.state == TransferState.delivered);
+    return TransferBubble(
+      incoming: incoming,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          CircleAvatar(radius: 15,
+            backgroundColor: FileTheme.violet.withValues(alpha: .22),
+            child: Icon(incoming ? Icons.download_rounded : Icons.upload_rounded,
+              size: 19, color: FileTheme.pink)),
+          const SizedBox(width: 8),
+          Expanded(child: Text(origin,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: FileTheme.foreground(context),
+              fontWeight: FontWeight.w700, fontSize: 12))),
+          if(multiple) Text('${items.length} files',
+            style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
         ]),
-      ),
+        for (final file in items.take(4)) _file(context, file),
+        if (items.length > 4)
+          Padding(padding: const EdgeInsets.only(top: 5),
+            child: Text('+${items.length - 4} more files',
+              style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
+        if (incoming && multiple)
+          Align(alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: delivered
+                ? () async { for (final f in items) { await onSave(f); } }
+                : null,
+              icon: const Icon(Icons.download_for_offline_outlined, size: 17),
+              label: const Text('Download All'))),
+      ]),
     );
   }
 }
@@ -1558,7 +1771,7 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
     onTap:widget.onOpen,
     borderRadius:BorderRadius.circular(10),
     child:ClipRRect(borderRadius:BorderRadius.circular(10),
-      child:SizedBox(width:60,height:60,
+      child:SizedBox.expand(
         child:_image==null
           ?const Icon(Icons.insert_drive_file_outlined,
               color:FileTheme.pink,size:30)
@@ -1567,7 +1780,7 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
               builder:(context,snapshot){
                 if(snapshot.hasData){
                   return Image.file(snapshot.data!,fit:BoxFit.cover,
-                    cacheWidth:160,
+                    cacheWidth:240,
                     errorBuilder:(_,__,___)=>const Icon(
                       Icons.broken_image_outlined,color:FileTheme.pink));
                 }
@@ -1591,85 +1804,92 @@ class CloudInboxCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final first=items.first;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width>700
-          ? 580 : MediaQuery.sizeOf(context).width*.90),
-        margin: const EdgeInsets.symmetric(vertical: 7),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: FileTheme.dark(context)
-            ? const Color(0xFF482945) : const Color(0xFFFFDDED),
-          border: Border.all(color: FileTheme.pink.withValues(alpha: .17)),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(22), topRight: Radius.circular(22),
-            bottomLeft: Radius.circular(5), bottomRight: Radius.circular(22))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start,children: [
-          Row(children: [
-            Expanded(child: Text(items.length>1
-              ? items.length.toString()+' Files (QR Group)' : 'Guest QR upload',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: FileTheme.foreground(context),
-                fontWeight: FontWeight.w800))),
-            const DesignTag('Received',received:true),
-          ]),
-          const SizedBox(height: 7),
-          Text('From Guest browser · Guest QR · Online',
-            style: TextStyle(color: FileTheme.muted(context),fontSize:11)),
-          for(final file in items.take(5))
-            Padding(padding:const EdgeInsets.only(top:12),
-              child:Column(children:[
-                Row(children:[
-                  CloudImageThumbnail(key:ValueKey('qr-thumb-'+file.id),
-                    file:file,onOpen:()=>onPreview(file)),
-                  const SizedBox(width:10),
-                  Expanded(child:InkWell(
-                    onTap:()=>onPreview(file),
-                    child:Column(crossAxisAlignment:CrossAxisAlignment.start,
-                      children:[
-                        Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis,
-                          style:TextStyle(color:FileTheme.foreground(context),
-                            fontWeight:FontWeight.w700,fontSize:13)),
-                        const SizedBox(height:4),
-                        Text(_formatBytes(file.size),
-                          style:TextStyle(color:FileTheme.muted(context),
-                            fontSize:11)),
-                      ]),
-                  )),
-                ]),
-                const SizedBox(height:5),
-                Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[
-                  IconButton(tooltip:'Download received QR file',
-                    onPressed:()=>onSave(file),
-                    icon:const Icon(Icons.download_rounded,color:FileTheme.pink)),
-                  IconButton(tooltip:'Delete QR file',
-                    onPressed:()=>onDelete(file),
-                    icon:const Icon(Icons.delete_outline_rounded,
-                      color:FileTheme.pink)),
-                  IconButton(tooltip:'Share QR file externally',
-                    onPressed:()=>onShare(file),
-                    icon:const Icon(Icons.ios_share_rounded,color:FileTheme.pink)),
-                  IconButton(tooltip:'Open in Tools',
-                    onPressed:()=>onTools(file),
-                    icon:const Icon(Icons.auto_fix_high_rounded,
-                      color:FileTheme.pink)),
-                ]),
-              ])),
-          if(items.length>5)
-            Text('+ '+(items.length-5).toString()+' more files',
-              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
-          if(items.length>1)
-            TextButton.icon(
-              onPressed:()async{for(final f in items){await onSave(f);}},
-              icon:const Icon(Icons.download_for_offline_outlined),
-              label:const Text('Download All')),
-          Align(alignment:Alignment.centerRight,
-            child:Text('Guest QR · '+first.created.toLocal().toString().substring(11,16),
-              style:TextStyle(color:FileTheme.muted(context),fontSize:10))),
+    final grouped = items.length > 1;
+    Widget action(String name, IconData icon, VoidCallback onPressed) =>
+      IconButton(
+        tooltip: name, onPressed: onPressed, iconSize: 19,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        padding: EdgeInsets.zero,
+        icon: Icon(icon, color: FileTheme.pink));
+    return TransferBubble(
+      incoming: true,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          CircleAvatar(radius: 15,
+            backgroundColor: FileTheme.pink.withValues(alpha: .22),
+            child: const Icon(Icons.download_rounded,
+              size: 19, color: FileTheme.pink)),
+          const SizedBox(width: 8),
+          Expanded(child: Text('From Guest browser · Guest QR · Online',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: FileTheme.foreground(context),
+              fontWeight: FontWeight.w700, fontSize: 12))),
+          if (grouped) Text('${items.length} files',
+            style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
         ]),
-      ),
+        for (final file in items.take(5))
+          Padding(padding: const EdgeInsets.only(top: 8),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
+              return Row(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: side, height: side,
+                    child: CloudImageThumbnail(
+                      key: ValueKey('qr-thumb-'+file.id),
+                      file: file, onOpen: () => onPreview(file))),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkWell(onTap: () => onPreview(file),
+                        child: Text(file.name, maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: FileTheme.foreground(context),
+                            fontWeight: FontWeight.w700, fontSize: 13))),
+                      const SizedBox(height: 3),
+                      Text(_formatBytes(file.size),
+                        style: TextStyle(color: FileTheme.muted(context),
+                          fontSize: 11)),
+                      const SizedBox(height: 7),
+                      Align(alignment: Alignment.centerRight,
+                        child: TransferCardActions(actions: [
+                          Stack(clipBehavior: Clip.none, children: [
+                            action('Download received QR file', Icons.download_rounded,
+                              () => onSave(file)),
+                            Positioned(top: -8, right: -4,
+                              child: NewDownloadBadge(id: 'cloud_${file.id}')),
+                          ]),
+                          action('Delete QR file', Icons.delete_outline_rounded,
+                            () => onDelete(file)),
+                          action('Share QR file externally', Icons.ios_share_rounded,
+                            () => onShare(file)),
+                          action('Open in Tools', Icons.auto_fix_high_rounded,
+                            () => onTools(file)),
+                        ])),
+                      const SizedBox(height: 3),
+                      Align(alignment: Alignment.centerRight,
+                        child: TransferCardTime(created: file.created,
+                          status: const Icon(Icons.done_all_rounded,
+                            size: 15, color: FileTheme.pink))),
+                    ],
+                  )),
+                ]);
+            })),
+        if (items.length > 5)
+          Padding(padding: const EdgeInsets.only(top: 5),
+            child: Text('+${items.length - 5} more files',
+              style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
+        if (grouped)
+          Align(alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () async {
+                for (final file in items) { await onSave(file); }
+              },
+              icon: const Icon(Icons.download_for_offline_outlined, size: 17),
+              label: const Text('Download All'))),
+      ]),
     );
   }
 }
@@ -1733,14 +1953,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if(state==AppLifecycleState.resumed){
       _dashboardForeground=true;
+      if (Platform.isAndroid) unawaited(_takeSharedFiles());
       _resumeCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
     }else if(state==AppLifecycleState.paused ||
              state==AppLifecycleState.inactive ||
              state==AppLifecycleState.detached){
-      _dashboardForeground=false;
-      PersonalCloud.instance.stopLiveInbox();
+      // Windows tray is still a running foreground-capable desktop process:
+      // keep the event-driven QR inbox socket while hidden. Android releases
+      // it on background to respect phone battery/platform restrictions.
+      if(Platform.isWindows && state!=AppLifecycleState.detached){
+        _dashboardForeground=true;
+      }else{
+        _dashboardForeground=false;
+        PersonalCloud.instance.stopLiveInbox();
+      }
     }
   }
 
@@ -1759,18 +1987,23 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           _native.setMethodCallHandler((call) async {
             if(call.method=='sharesReceived') await _takeSharedFiles();
           });
-          try { await _native.invokeMethod<bool>('startLanService'); }
-          catch(e){ _snack('Background LAN limited: '+e.toString()); }
+          try {
+            final enabled=await _native.invokeMethod<bool>('getLanBootReceiver')??true;
+            if(enabled){
+              await _native.invokeMethod<bool>('startLanService');
+              await SharedPreferencesAsync()
+                .setBool('android_receive_background',true);
+            }
+          }catch(e){ _snack('Background LAN limited: '+e.toString()); }
           await _takeSharedFiles();
         }
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
-      PersonalCloud.instance.restore().then((_) async {
-        await PersonalCloud.instance.cleanupLocalCache();
+      PersonalCloud.instance.cleanupLocalCache().then((_) {
         _resumeCloudInbox();
       }).catchError((Object e) {
-          _snack('Personal cloud storage unavailable: ' + e.toString());
-        });
+        _snack('Personal cloud cache unavailable: ' + e.toString());
+      });
     });
   }
 
@@ -1876,7 +2109,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       _nav('Toolbox', Icons.handyman_outlined, pinned: pinned),
       _nav('Devices', Icons.devices_rounded, pinned: pinned),
       _nav('My QR', Icons.qr_code_2_rounded, pinned: pinned),
-      _nav('Cloud Setup', Icons.cloud_outlined, pinned: pinned),
       _nav('Settings', Icons.settings_outlined, pinned: pinned),
       _nav('Profile', Icons.person_outline_rounded, pinned: pinned),
       AnimatedBuilder(
@@ -1969,6 +2201,41 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
+  /// Camera button next to the + composer. Capture returns a local photo,
+  /// then copies it into File Share-owned staging storage. Never auto-send.
+  Future<void> _openTransferCamera() async {
+    if(_choosing)return;
+    setState(()=>_choosing=true);
+    try {
+      final captured=await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder:(_)=>const FileTransferCameraPage()));
+      if(captured==null||!mounted)return;
+      final source=File(captured);
+      if(!await source.exists())throw StateError('Captured photo is missing');
+      final root=await getApplicationSupportDirectory();
+      final folder=Directory('${root.path}${Platform.pathSeparator}camera_cart');
+      await folder.create(recursive:true);
+      final originalExt=source.path.toLowerCase();
+      final ext=originalExt.endsWith('.png')?'png':
+        (originalExt.endsWith('.jpeg')?'jpeg':'jpg');
+      final name='Camera_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final target=File('${folder.path}${Platform.pathSeparator}$name');
+      await source.copy(target.path);
+      final length=await target.length();
+      if(length==0){await target.delete();throw StateError('Empty photo');}
+      if(!mounted)return;
+      setState(() {
+        _showSamples=false;
+        _staged.add(PendingBatch(LanEngine.newId(),[target],[name],[length]));
+      });
+      _snack('Camera photo added to Cart. Tap Send to transfer.');
+    } catch(e) {
+      _snack('Camera error: $e');
+    } finally {
+      if(mounted)setState(()=>_choosing=false);
+    }
+  }
+
   Future<void> _choose() async {
     if(_choosing)return;
     setState(()=>_choosing=true);
@@ -2026,21 +2293,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _saveReceived(LanFile item) async {
     if (!item.incoming || item.state != TransferState.delivered) return;
     try {
-      final downloads = await getDownloadsDirectory();
-      if (downloads == null) throw StateError('Downloads directory unavailable');
-      await downloads.create(recursive: true);
-      var target = File(downloads.path + Platform.pathSeparator +
-        LanEngine.safeFileName(item.name));
-      var index = 1;
-      while (await target.exists()) {
-        target = File(downloads.path + Platform.pathSeparator +
-          index.toString() + '_' + LanEngine.safeFileName(item.name));
-        index++;
-      }
-      await File(item.path).openRead().pipe(target.openWrite());
-      _snack('Saved to Downloads: ' + target.path);
+      final result = await TransferDownloads.instance.export(
+        File(item.path), item.name);
+      if (result == null) return; // User cancelled Windows destination picker.
+      await TransferDownloads.instance.markSaved('lan_${item.id}');
+      _snack(Platform.isAndroid
+        ? 'Downloaded to ${_isCloudImage(item.name) ? 'Gallery / DCIM' : 'Downloads'}'
+        : 'Saved: $result');
     } catch (e) {
-      _snack('Could not save to Downloads. Try external Share. ' + e.toString());
+      _snack('Download failed: $e');
     }
   }
 
@@ -2048,6 +2309,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     try {
       if (!File(file.path).existsSync() ||
           (file.incoming && file.state != TransferState.delivered)) return;
+      if(Platform.isAndroid && file.name.toLowerCase().endsWith('.pdf')) {
+        await _native.invokeMethod<void>('openUpstreamPdfTools',{
+          'path':file.path,'action':'share',
+          'theme':Theme.of(context).brightness==Brightness.dark?'dark':'light',
+        });
+        return;
+      }
       await SharePlus.instance.share(ShareParams(
         files: [XFile(file.path)], text: file.name));
     } catch (e) { _snack('Sharing failed: ' + e.toString()); }
@@ -2107,6 +2375,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final local=await PersonalCloud.instance.download(entry);
       if(!mounted)return;
       final selected=_cloudAsLocalFile(entry,local);
+      if(await FileCardOpenRouter.openEditor(
+        context,local.path,entry.name))return;
+      if(!mounted)return;
       await Navigator.of(context).push(MaterialPageRoute<void>(
         builder:(_)=>FullScreenFilePreview(
           file:selected,
@@ -2130,20 +2401,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _saveCloud(CloudFile entry) async {
     try {
       final downloaded = await PersonalCloud.instance.download(entry);
-      final downloads = await getDownloadsDirectory();
-      if (downloads == null) throw StateError('Downloads directory not available');
-      await downloads.create(recursive: true);
-      final name = LanEngine.safeFileName(entry.name);
-      var target = File(downloads.path + Platform.pathSeparator + name);
-      var suffix = 1;
-      while (await target.exists()) {
-        target = File(downloads.path + Platform.pathSeparator +
-          suffix.toString() + '_' + name);
-        suffix++;
-      }
-      await downloaded.openRead().pipe(target.openWrite());
-      _snack('Guest QR file saved to Downloads.');
-    } catch (e) { _snack('QR Download failed: ' + e.toString()); }
+      final result = await TransferDownloads.instance.export(downloaded, entry.name);
+      if (result == null) return;
+      await TransferDownloads.instance.markSaved('cloud_${entry.id}');
+      _snack(Platform.isAndroid
+        ? 'Downloaded to ${_isCloudImage(entry.name) ? 'Gallery / DCIM' : 'Downloads'}'
+        : 'Saved: $result');
+    } catch (e) { _snack('QR Download failed: $e'); }
   }
 
   Future<void> _deleteCloud(CloudFile entry) async {
@@ -2154,6 +2418,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _shareCloud(CloudFile entry) async {
     try {
       final downloaded = await PersonalCloud.instance.download(entry);
+      if(Platform.isAndroid && entry.name.toLowerCase().endsWith('.pdf')){
+        await _native.invokeMethod<void>('openUpstreamPdfTools',{
+          'path':downloaded.path,'action':'share',
+          'theme':Theme.of(context).brightness==Brightness.dark?'dark':'light',
+        });
+        return;
+      }
       await SharePlus.instance.share(ShareParams(
         files: [XFile(downloaded.path)], text: entry.name));
     } catch (e) { _snack('QR Share failed: ' + e.toString()); }
@@ -2184,6 +2455,24 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       errorBuilder:(_,__,___)=>const Icon(Icons.image_outlined)))
                 :const Icon(Icons.insert_drive_file_outlined,color:FileTheme.pink)),
               title:Text(batch.labels[i],maxLines:1,overflow:TextOverflow.ellipsis),
+              onTap:()async{
+                final name=batch.labels[i];
+                final path=batch.sources[i].path;
+                if(await FileCardOpenRouter.openEditor(context,path,name))return;
+                if(!context.mounted)return;
+                final preview=LanFile(id:batch.id,batch:batch.id,name:name,
+                  path:path,peer:'Cart',incoming:false,size:batch.sizes[i],
+                  created:DateTime.now(),state:TransferState.queued);
+                await Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder:(_)=>FullScreenFilePreview(file:preview,
+                    onSave:(_ )async{},onDelete:(_ )async{},
+                    onShare:(_ )async{await SharePlus.instance.share(
+                      ShareParams(files:[XFile(path)]));},
+                    onTools:(_ )async{
+                      await Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder:(_)=>SelectedFileToolsPage(file:preview)));
+                    })));
+              },
               subtitle:Text(_formatBytes(batch.sizes[i])+' · Not sent',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
               trailing:IconButton(
@@ -2325,9 +2614,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onPressed: _choosing ? null : _choose,
                     icon: const Icon(Icons.add_rounded)),
                   IconButton(
-                    tooltip: 'Toolbox',
+                    tooltip: 'Camera',
+                    onPressed:_choosing?null:_openTransferCamera,
+                    icon:const Icon(Icons.camera_alt_outlined,
+                      color:FileTheme.violet)),
+                  IconButton(
+                    tooltip: 'Tools',
                     onPressed:()=>_navigate('Toolbox'),
-                    icon:const Icon(Icons.handyman_outlined)),
+                    icon:const Icon(Icons.handyman_outlined,
+                      color:FileTheme.violet)),
                   Expanded(child: Text(_staged.isEmpty
                       ? 'Choose files to send...'
                       : _staged.length.toString() + ' selection(s)',
@@ -2400,7 +2695,8 @@ class FeatureDesignPage extends StatelessWidget {
         Expanded(child: Center(child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 750),
           child: ListView(padding: const EdgeInsets.all(15), children: [
-            const DesignTag('UI DESIGN ONLY — NO ONLINE SERVICE'),
+            if (title != 'Settings')
+              const DesignTag('UI DESIGN ONLY — NO ONLINE SERVICE'),
             const SizedBox(height: 15),
             if (title == 'Home') _home(context),
             if (title == 'Files') _files(context),
@@ -2579,9 +2875,19 @@ class FeatureDesignPage extends StatelessWidget {
     _section(c, 'Connect your personal Cloudflare',
       'A user connects their own account once through Account ID and restricted API token.',
       Column(children: [
-        _line(c, Icons.cloud_off_outlined, 'Cloud connection',
-          'Not connected · no Cloudflare requests are being made',
-          trailing: const DesignTag('Offline')),
+        ListenableBuilder(
+          listenable:PersonalCloud.instance,
+          builder:(context,_) {
+            final cloud=PersonalCloud.instance;
+            return _line(c,cloud.connected
+                ?Icons.cloud_done_outlined:Icons.cloud_off_outlined,
+              'Cloud connection',cloud.connected
+                ?'Cloud connected · '+(cloud.workerOrigin??'Personal Worker')
+                :cloud.cloudSetupSaved
+                  ?'Cloud configured · sign in to reconnect'
+                  :'Cloud not connected',
+              trailing:DesignTag(cloud.connected?'CONNECTED':'OFFLINE'));
+          }),
         const SizedBox(height: 10),
         const TextField(enabled: false, decoration: InputDecoration(
           labelText: 'Cloudflare Account ID', hintText: 'Your Account ID',
@@ -2597,7 +2903,7 @@ class FeatureDesignPage extends StatelessWidget {
     ),
     const SizedBox(height: 14),
     _section(c, 'Automatic setup · proposed steps',
-      'The provisioning engine will run later; no live resources exist.',
+      'Account and personal Worker connection status is shown above.',
       Column(children: [
         _line(c, Icons.verified_user_outlined, '1. Verify token',
           'Check account, scope and permissions'),
@@ -2614,7 +2920,49 @@ class FeatureDesignPage extends StatelessWidget {
   ]);
 
   Widget _settings(BuildContext c) => Column(children: [
+    _section(c, 'Cloud Setup',
+      'Manage the personal Cloudflare Worker, account pairing and online Guest QR service from Settings.',
+      Column(children: [
+        ListenableBuilder(
+          listenable: PersonalCloud.instance,
+          builder: (context, _) => _line(c, Icons.cloud_outlined,
+            'Personal Cloudflare',
+            PersonalCloud.instance.connected
+              ? 'Connected · Cloud transfer and Guest QR settings'
+              : PersonalCloud.instance.cloudSetupSaved
+                ? 'Saved setup · Sign in to reconnect'
+                : 'Not connected · Offline LAN remains available'),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(width: double.infinity,
+          child: FilledButton.icon(
+            icon: const Icon(Icons.cloud_sync_outlined),
+            label: const Text('Open Cloud Setup'),
+            onPressed: () => Navigator.of(c).push(fadePage(
+              CloudConnectPage(mode: mode, onMode: onMode))),
+          )),
+      ]),
+    ),
+    const SizedBox(height: 14),
     if (Platform.isWindows) ...[
+      _section(c, 'Windows Download Destination',
+        'Choose a destination each time, or make Downloads the permanent default. '
+        'The last successful folder selection is remembered.',
+        FutureBuilder<bool>(
+          future: TransferDownloads.instance.windowsAlwaysDownloads(),
+          builder:(context,snapshot) => SwitchListTile(
+            title: const Text('Always save into Downloads'),
+            subtitle: Text(snapshot.data==true
+              ? 'Do not ask again — save everything to Windows Downloads'
+              : 'Ask for a folder on every download; remember last folder'),
+            value:snapshot.data??false,
+            onChanged: snapshot.hasData ? (value) async {
+              await TransferDownloads.instance.setWindowsAlwaysDownloads(value);
+              if(c.mounted) (c as Element).markNeedsBuild();
+            }:null,
+          ),
+        )),
+      const SizedBox(height:14),
       _section(c, 'Windows Background Receiver',
         'Closing the window hides File Share in the tray. The LAN engine keeps receiving while Windows is awake.',
         Column(children: [
@@ -2625,7 +2973,10 @@ class FeatureDesignPage extends StatelessWidget {
               subtitle: const Text('Launch File Share when you sign in to Windows'),
               value: enabled,
               onChanged: (value) async {
-                try { await WindowsBackground.instance.setAutoStart(value); }
+                try {
+                  await WindowsBackground.instance.setAutoStart(value);
+                  await SharedPreferencesAsync().setBool('windows_autostart_decided',true);
+                }
                 catch (e) {
                   if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(
                     SnackBar(content: Text('Windows startup error: $e')));
@@ -2648,21 +2999,9 @@ class FeatureDesignPage extends StatelessWidget {
     ],
     if (Platform.isAndroid) ...[
       _section(c, 'Android Background Receiver',
-        'A visible connected-device foreground notification keeps the LAN engine available after leaving the app.',
-        const Column(children: [
-          ListTile(
-            leading: Icon(Icons.wifi_rounded),
-            title: Text('Background LAN receiving'),
-            subtitle: Text('Active while the File Share foreground service is running'),
-          ),
-          ListTile(
-            leading: Icon(Icons.notifications_active_outlined),
-            title: Text('File received notifications'),
-            subtitle: Text('Allow notifications in Android app settings'),
-          ),
-          Text('Force Stop, OEM battery optimization, Wi-Fi disconnect and reboot can still interrupt receiving.'),
-        ]),
-      ),
+        'File Share can receive nearby LAN transfers while the screen is closed. '
+        'Android may restrict background services after reboot.',
+        const AndroidLanBackgroundSetting()),
       const SizedBox(height: 14),
     ],
     _section(c, 'Appearance', 'Light, dark and follow-system for Android and Windows.',
@@ -2688,28 +3027,47 @@ class FeatureDesignPage extends StatelessWidget {
     ),
   ]);
 
-  Widget _profile(BuildContext c) => _section(c, 'My profile',
-    'Use local Wi-Fi sharing as a guest, or login to connect your personal cloud.',
-    Column(children: [
-      Center(child: CircleAvatar(
-        radius: 37, backgroundColor: FileTheme.violet.withValues(alpha: .15),
-        child: const Icon(Icons.person_outline, size: 35,
-          color: FileTheme.violet))),
-      const SizedBox(height: 12),
-      const DesignTag('GUEST / OFFLINE'),
-      const SizedBox(height: 10),
-      _line(c, Icons.email_outlined, 'Account', 'Not signed in'),
-      _line(c, Icons.cloud_off_outlined, 'Personal Cloudflare', 'Not connected'),
-      const SizedBox(height: 14),
-      SizedBox(width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: () => Navigator.push(c, fadePage(
-            LoginPage(mode: mode, onMode: onMode))),
-          icon: const Icon(Icons.login_rounded),
-          label: const Text('View login UI'),
-        )),
-    ]),
-  );
+  Widget _profile(BuildContext c) => ListenableBuilder(
+    listenable:PersonalCloud.instance,
+    builder:(context,_) {
+      final cloud=PersonalCloud.instance;
+      final signedIn=cloud.signedIn;
+      final email=cloud.accountEmail?.trim();
+      final isConnected=cloud.connected;
+      return _section(c,'My profile',
+        signedIn?'Your signed-in File Share account and personal cloud.':
+          'Use local Wi-Fi sharing as a guest, or sign in for personal cloud.',
+        Column(children:[
+          const Center(child:FileShareProfileAvatar()),
+          const SizedBox(height:8),
+          DesignTag(signedIn?'SIGNED IN':'GUEST / OFFLINE'),
+          const SizedBox(height:10),
+          _line(c,Icons.email_outlined,'Account',
+            signedIn?(email?.isNotEmpty==true?email!:'Signed in'):
+              'Not signed in'),
+          _line(c,isConnected?Icons.cloud_done_outlined:
+            Icons.cloud_off_outlined,'Personal Cloudflare',
+            isConnected?'Cloud connected':
+              cloud.cloudSetupSaved
+                ?'Cloud setup saved · Sign in to connect'
+                :'Cloud not connected'),
+          if(isConnected && cloud.workerOrigin!=null)
+            _line(c,Icons.link_rounded,'Cloud Worker',
+              cloud.workerOrigin!),
+          const SizedBox(height:14),
+          SizedBox(width:double.infinity,
+            child:OutlinedButton.icon(
+              onPressed:()=>Navigator.push(c,fadePage(
+                signedIn
+                  ?CloudConnectPage(mode:mode,onMode:onMode)
+                  :LoginPage(mode:mode,onMode:onMode))),
+              icon:Icon(signedIn?Icons.manage_accounts_outlined:
+                Icons.login_rounded),
+              label:Text(signedIn?'Manage account / cloud':
+                'Sign in to File Share'))),
+        ]),
+      );
+    });
 }
 
 
@@ -3190,10 +3548,15 @@ class FileCategoriesPage extends StatelessWidget {
               title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
               subtitle:Text(_formatBytes(item.size)+' · '+item.state.name),
               trailing:const Icon(Icons.chevron_right_rounded),
-              onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
-                builder:(_)=>FullScreenFilePreview(
-                  file:item,onSave:_save,onDelete:_delete,onShare:_share,
-                  onTools:(item)=>_openTools(context,item)))),
+              onTap:()async{
+                if(await FileCardOpenRouter.openEditor(
+                  context,item.path,item.name))return;
+                if(!context.mounted)return;
+                await Navigator.push(context,MaterialPageRoute<void>(
+                  builder:(_)=>FullScreenFilePreview(
+                    file:item,onSave:_save,onDelete:_delete,onShare:_share,
+                    onTools:(file)=>_openTools(context,file))));
+              },
             )),
         );
       },
@@ -3219,10 +3582,15 @@ class FileCategoriesPage extends StatelessWidget {
                 ListTile(title:Text(item.name,maxLines:1,overflow:TextOverflow.ellipsis),
                   subtitle:Text(_formatBytes(item.size)),
                   trailing:const Icon(Icons.chevron_right_rounded),
-                  onTap:()=>Navigator.push(context,MaterialPageRoute<void>(
-                    builder:(_)=>FullScreenFilePreview(file:item,
-                      onSave:_save,onDelete:_delete,onShare:_share,
-                  onTools:(item)=>_openTools(context,item))))),
+                  onTap:()async{
+                    if(await FileCardOpenRouter.openEditor(
+                      context,item.path,item.name))return;
+                    if(!context.mounted)return;
+                    await Navigator.push(context,MaterialPageRoute<void>(
+                      builder:(_)=>FullScreenFilePreview(file:item,
+                        onSave:_save,onDelete:_delete,onShare:_share,
+                        onTools:(file)=>_openTools(context,file))));
+                  }),
             ],
           ))),
     ]);

@@ -1,7 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
-import 'advanced_pdf_tools_page.dart';
+import 'signature_edit_page.dart';
+import 'lan_folder_share_page.dart';
+import 'file_share_doc_page.dart';
+import 'package:flutter/services.dart';
+import 'editor_transfer_session.dart';
 import 'main.dart' show FileTheme,fadePage;
 
 /// File Share's extensible Toolbox landing page. Future tool names remain
@@ -23,8 +27,12 @@ class _ToolEntry {
 const _entries=[
   _ToolEntry('Image Editing','Background removal, crop, filters, compression',
     Icons.photo_filter_outlined,available:true,acceptsImages:true),
-  _ToolEntry('Signature Editing','Crop, clean and enhance handwritten signatures',
-    Icons.draw_outlined),
+  _ToolEntry('Signature Edit','Camera, crop, signature filters and exact-KB export',
+    Icons.draw_outlined,available:true,acceptsImages:true),
+  _ToolEntry('File Share','Share files, ZIPs and nested folders over nearby LAN',
+    Icons.folder_shared_outlined,available:true),
+  _ToolEntry('File Share Doc','Open documents, edit Word/Excel/PowerPoint text, save copies',
+    Icons.description_outlined,available:true),
   _ToolEntry('Advanced PDF Editing Tools','Android-only PDF processing, scanner, OCR and history',
     Icons.picture_as_pdf_outlined,available:true),
 ];
@@ -35,36 +43,78 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
   void _rebuild(){if(mounted)setState((){});}
   @override void dispose(){_search.removeListener(_rebuild);_search.dispose();super.dispose();}
 
-  void _open(_ToolEntry entry){
+  Future<void> _open(_ToolEntry entry) async {
+    final name=widget.sourceName??widget.sourcePath??'';
+    final hasSource=widget.sourcePath!=null;
+    if(entry.name=='File Share Doc'){
+      await Navigator.of(context).push(fadePage<void>(FileShareDocPage(
+        sourcePath:widget.sourcePath,sourceName:widget.sourceName)));
+      return;
+    }
+    if(entry.name=='File Share'){
+      await Navigator.of(context).push(fadePage<void>(LanFolderSharePage(
+        sourcePath: widget.sourcePath, sourceName: widget.sourceName)));
+      return;
+    }
     if(entry.name=='Advanced PDF Editing Tools'){
       if(!Platform.isAndroid){
         showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
           title:const Text('Only Available on Android'),
-          content:const Text('Advanced PDF Editing Tools are supported on Android devices only.'),
-          actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('OK'))]));
+          content:const Text('These tools are only available on Android/mobile.'),
+          actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
+            child:const Text('OK'))]));
         return;
       }
-      Navigator.of(context).push(fadePage<void>(AdvancedPdfToolsPage(
-        sourcePath:widget.sourcePath?.toLowerCase().endsWith('.pdf')==true?widget.sourcePath:null,
-        sourceName:widget.sourceName)));
+      if(hasSource&&!EditingFileRouter.acceptsPdfTool(name)){
+        _unsupported(name,'Advanced PDF Editing Tools');
+        return;
+      }
+      try {
+        await const MethodChannel('file_share.native').invokeMethod<void>(
+          'openUpstreamPdfTools', {'path': hasSource &&
+                EditingFileRouter.classify(name)==EditingFileKind.pdf
+                  ? widget.sourcePath : null,
+            'theme': Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light'});
+      } on PlatformException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('PDF tools could not open: ${error.message ?? error.code}')));
+      }
+      return;
+    }
+    if(entry.name=='Signature Edit'){
+      if(hasSource&&!EditingFileRouter.acceptsImageTool(name)){
+        _unsupported(name,'Signature Edit');
+        return;
+      }
+      await Navigator.of(context).push(fadePage<void>(SignatureEditPage(
+        sourcePath:widget.sourcePath,sourceName:widget.sourceName)));
       return;
     }
     if(!entry.available){
-      showDialog<void>(context:context,builder:(context)=>AlertDialog(
+      showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
         title:Text(entry.name),
-        content:const Text('This tool is planned for a future release. '
-          'Image Editing is available now.'),
-        actions:[TextButton(onPressed:()=>Navigator.pop(context),
-          child:const Text('OK'))],
-      ));
+        content:const Text('This tool is planned for a future release.'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
+          child:const Text('OK'))]));
       return;
     }
-    Navigator.of(context).push(fadePage<void>(
-      ImageEditingPage(
-        sourcePath:entry.acceptsImages?widget.sourcePath:null,
-        sourceName:entry.acceptsImages?widget.sourceName:null,
-      ),
-    ));
+    if(entry.acceptsImages&&hasSource&&
+       !EditingFileRouter.acceptsImageTool(name)){
+      _unsupported(name,'Image Editing');
+      return;
+    }
+    Navigator.of(context).push(fadePage<void>(ImageEditingPage(
+      sourcePath:entry.acceptsImages?widget.sourcePath:null,
+      sourceName:entry.acceptsImages?widget.sourceName:null,
+    )));
+  }
+  void _unsupported(String file,String tool){
+    showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Incompatible file type'),
+      content:Text('Cannot open $file in $tool. Videos do not convert to PDF.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
+        child:const Text('OK'))]));
   }
 
   @override Widget build(BuildContext context){

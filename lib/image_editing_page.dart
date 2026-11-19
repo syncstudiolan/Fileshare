@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,11 +10,15 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
 import 'image_editing_storage.dart';
+import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
+import 'photo_enhancer_engine.dart';
+import 'face_restoration_engine.dart';
 
 /// File Share's native-feeling editing workspace. The main canvas, transition
 /// animations and controls are Flutter GPU rendered; expensive file encodes and
@@ -26,13 +31,12 @@ class ImageEditingPage extends StatefulWidget {
   State<ImageEditingPage> createState()=>_ImageEditingPageState();
 }
 
-class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerProviderStateMixin {
+class _ImageEditingPageState extends State<ImageEditingPage> {
   Uint8List? _bytes;
   Uint8List? _originalBytes;
   Uint8List? _cutoutBytes;
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
-  late final AnimationController _magicController;
   bool _imagePickerBusy=false;
   String? _selectedFilter;
   String? _pendingFilter;
@@ -53,12 +57,31 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   int? _activeCropHandle;
   String _cropMode='Normal Crop';
   final List<Offset> _stroke=[];
+  final ValueNotifier<int> _strokeRepaint=ValueNotifier<int>(0);
+  final List<_LiveEraseStroke> _pendingErase=[];
+  Future<void> _eraseQueue=Future<void>.value();
+  Future<void> _historyQueue=Future<void>.value();
+  final ScrollController _controlScroll=ScrollController();
+  int _previewDecodeVersion=0;
+  ui.Image? _erasePreview;
+  ui.Image? _eraseRestoration;
+  double _fineAngle=0;
+  bool _straightenAutoCrop=true;
+  String? _processingAction;
+  Rect? _instantCrop;
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
+  List<Color> _recentColors=[];
   Color? _pendingBackgroundColor;
   Color _custom=const Color(0xFF7D5BE3);
+  String _backgroundEngine='Auto (ML Kit first)';
+  int _enhanceScale=2;
+  double _enhanceStrength=.8;
+  double _enhanceProgress=0;
+  bool _enhanceFaceMode=false;
+  bool _faceUseCrop=false;
 
-  static const _tools=['Background','Compress','Crop','Filters','Erase','Adjust'];
+  static const _tools=['Background','Erase','Photo Enhancer','Crop','Filters','Straighten','Adjust','Compress'];
   static const _colors=[Colors.transparent,Colors.white,Colors.black,
     Color(0xFFE84D9F), Color(0xFF765ADB),Color(0xFFE53935),
     Color(0xFF1E88E5),Color(0xFF43A047),Color(0xFFFFEB3B)];
@@ -66,14 +89,16 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   @override
   void initState(){
     super.initState();
-    _magicController=AnimationController(vsync:this,
-      duration:const Duration(milliseconds:1200));
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
     unawaited(_load());
+    unawaited(_loadRecentColors());
   }
   @override void dispose(){
-    _magicController.dispose();
+    _erasePreview?.dispose();
+    _eraseRestoration?.dispose();
     _transformController.dispose();
+    _controlScroll.dispose();
+    _strokeRepaint.dispose();
     super.dispose();
   }
   void _changeZoom(double factor){
@@ -86,6 +111,32 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     _transformController.value=Matrix4.identity();
     if(mounted)setState((){});
   }
+  Future<void> _cacheEraseImage(Uint8List bytes,{bool original=false})async{
+    final revision=original?-1:++_previewDecodeVersion;
+    try{
+      final codec=await ui.instantiateImageCodec(bytes,targetWidth:1000);
+      final frame=await codec.getNextFrame();
+      codec.dispose();
+      if(!mounted || (!original && revision!=_previewDecodeVersion)){
+        frame.image.dispose();return;
+      }
+      // Keep the previous GPU frame alive until Flutter has painted the new
+      // bitmap. Disposing it inside setState can race a raster-thread frame.
+      ui.Image? replaced;
+      setState((){
+        if(original){
+          replaced=_eraseRestoration;
+          _eraseRestoration=frame.image;
+        }else{
+          replaced=_erasePreview;
+          _erasePreview=frame.image;
+        }
+      });
+      if(replaced!=null)WidgetsBinding.instance.addPostFrameCallback((_){
+        replaced?.dispose();
+      });
+    }catch(_){/* Image.memory still renders any supported file. */}
+  }
   Future<void> _load() async {
     try {
       await ImageEditingHistory.instance.load();
@@ -97,13 +148,45 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       _steps.addAll(widget.draft?.steps??[]);
       _ratio=dimensions[0]/dimensions[1];
+      Uint8List original=bytes;
+      final savedOriginal=widget.draft?.originalFilePath;
+      if(savedOriginal!=null&&await File(savedOriginal).exists()){
+        original=await File(savedOriginal).readAsBytes();
+      }
       if(mounted)setState((){
         _bytes=Uint8List.fromList(bytes);
-        _originalBytes=Uint8List.fromList(bytes);
+        _originalBytes=Uint8List.fromList(original);
         _cutoutBytes=null;
       });
+      unawaited(_cacheEraseImage(bytes));
+      unawaited(_cacheEraseImage(bytes,original:true));
+      await _restoreSession();
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
+  }
+
+  Future<void> _loadRecentColors() async {
+    try {
+      final stored = await SharedPreferencesAsync().getStringList(
+        'file_share_recent_background_colors') ?? <String>[];
+      if(mounted)setState(() {
+        _recentColors=stored.map(int.tryParse).whereType<int>()
+          .map(Color.new).toList();
+      });
+    }catch(_){}
+  }
+  Future<void> _rememberColor(Color selected) async {
+    if(selected==Colors.transparent)return;
+    final value=selected.toARGB32();
+    setState(() {
+      _recentColors=[selected,
+        ..._recentColors.where((c)=>c.toARGB32()!=value)].take(10).toList();
+    });
+    try {
+      await SharedPreferencesAsync().setStringList(
+        'file_share_recent_background_colors',
+        _recentColors.map((x)=>x.toARGB32().toString()).toList());
+    }catch(_){}
   }
 
   Future<void> _chooseSource({required bool camera}) async {
@@ -154,33 +237,122 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _error=null;
         _showOriginal=false;
       });
+      unawaited(_cacheEraseImage(bytes));
+      unawaited(_cacheEraseImage(bytes,original:true));
       await _saveDraft();
     }catch(_){
       _message('Could not open this image. Try a JPG or PNG.');
     }finally{if(mounted)setState(()=>_imagePickerBusy=false);}
   }
 
-  Future<void> _saveDraft() async {
+  Future<void> _saveSession()async{
+    final id=_draftId;
+    if(id==null)return;
+    await EditorSessionStore.instance.save('image',id,{
+      'tool':_tool,'format':_format,
+      'cropMode':_cropMode,'crop':[_crop.left,_crop.top,_crop.right,_crop.bottom],
+      'cropRatio':_cropRatio,
+      'cropCorners':[for(final p in _cropCorners)[p.dx,p.dy]],
+      'eraseRadius':_eraseRadius,'softness':_softness,'eraseMode':_eraseMode,
+      'fineAngle':_fineAngle,'straightenAutoCrop':_straightenAutoCrop,
+      'quality':_quality,'targetKb':_targetKb,
+      'brightness':_brightness,'contrast':_contrast,
+      'saturation':_saturation,'exposure':_exposure,
+      'backgroundColor':_background.toARGB32(),
+      'backgroundEngine':_backgroundEngine,
+      'enhanceScale':_enhanceScale,
+      'enhanceStrength':_enhanceStrength,
+      'enhanceFaceMode':_enhanceFaceMode,
+      'faceUseCrop':_faceUseCrop,
+      'zoom':_zoom,
+    });
+  }
+  Future<void> _restoreSession()async{
+    final id=_draftId;
+    if(id==null)return;
+    final state=await EditorSessionStore.instance.load('image',id);
+    if(state==null||!mounted)return;
+    double number(dynamic v,double fallback)=>
+      v is num?v.toDouble():fallback;
+    setState((){
+      final tool=state['tool'] as String?;
+      if(tool!=null&&_tools.contains(tool))_tool=tool;
+      _format=state['format'] as String? ??_format;
+      _cropMode=state['cropMode'] as String? ??_cropMode;
+      _cropRatio=state['cropRatio'] as String? ??_cropRatio;
+      final crop=state['crop'];
+      if(crop is List&&crop.length==4)_crop=Rect.fromLTRB(
+        number(crop[0],.06),number(crop[1],.06),
+        number(crop[2],.94),number(crop[3],.94));
+      final corners=state['cropCorners'];
+      if(corners is List&&corners.length==4){
+        _cropCorners=[for(final item in corners)
+          if(item is List&&item.length==2)
+            Offset(number(item[0],.5),number(item[1],.5))];
+        if(_cropCorners.length!=4)_cropCorners=[
+          _crop.topLeft,_crop.topRight,_crop.bottomRight,_crop.bottomLeft];
+      }
+      _eraseRadius=number(state['eraseRadius'],_eraseRadius);
+      _softness=number(state['softness'],_softness);
+      _eraseMode=state['eraseMode'] as String? ??_eraseMode;
+      _fineAngle=number(state['fineAngle'],0);
+      _straightenAutoCrop=state['straightenAutoCrop'] as bool? ??true;
+      _backgroundEngine=state['backgroundEngine'] as String? ?? _backgroundEngine;
+      _enhanceScale=(state['enhanceScale'] as num?)?.toInt() ?? 2;
+      _enhanceStrength=(state['enhanceStrength'] as num?)?.toDouble() ?? .8;
+      _enhanceFaceMode=state['enhanceFaceMode'] as bool? ?? false;
+      _faceUseCrop=state['faceUseCrop'] as bool? ?? false;
+      _quality=(state['quality'] as num?)?.toInt()??_quality;
+      _targetKb=(state['targetKb'] as num?)?.toInt()??_targetKb;
+      _brightness=number(state['brightness'],_brightness);
+      _contrast=number(state['contrast'],_contrast);
+      _saturation=number(state['saturation'],_saturation);
+      _exposure=number(state['exposure'],_exposure);
+      if(state['backgroundColor'] is int){
+        _background=Color(state['backgroundColor'] as int);
+      }
+    });
+  }
+
+  Future<void> _saveDraft() {
     final bytes=_bytes,id=_draftId;
-    if(bytes==null||id==null)return;
-    await ImageEditingHistory.instance.save(id:id,name:_name,
-      bytes:bytes,steps:_steps);
+    if(bytes==null||id==null)return _historyQueue;
+    // Snapshot before enqueueing; subsequent strokes cannot mutate this save.
+    final name=_name, steps=List<String>.of(_steps);
+    final original=_originalBytes;
+    _historyQueue=_historyQueue.catchError((Object _) {}).then((_) async {
+      await ImageEditingHistory.instance.save(id:id,name:name,
+        bytes:bytes,steps:steps,originalBytes:original);
+    });
+    return _historyQueue;
   }
 
   Future<void> _apply(String action, Map<String,Object?> options,
       {String? description}) async {
+    if(_busy)return;
+    await _eraseQueue;
     final bytes=_bytes;
     if(bytes==null||_busy)return;
+    _processingAction=action;
     setState(()=>_busy=true);
     try{
       final next=await ImageEditingEngine.edit(bytes,action,options);
       await _commit(bytes,next,description??action);
     }catch(e){_message('Editing failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+    finally{_processingAction=null;if(mounted)setState(()=>_busy=false);}
   }
 
   Future<void> _commit(Uint8List previous,Uint8List next,String step) async {
-    if(!mounted)return;
+    if(!mounted){
+      // A user may send the last completed snapshot to Cart while AI is
+      // processing. The late result belongs in the draft history, not lost
+      // because the Editor route was closed.
+      final id=_draftId;
+      if(id!=null)await ImageEditingHistory.instance.save(
+        id:id,name:_name,bytes:next,steps:[..._steps,step],
+        originalBytes:_originalBytes);
+      return;
+    }
     _undo.add(previous);
     if(_undo.length>15)_undo.removeAt(0);
     _redo.clear();
@@ -188,19 +360,36 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
       _cutoutBytes=null; // A crop or other transform changed image geometry.
     }
-    final dimensions=await ImageEditingEngine.dimensions(next);
+    // Keep geometry from the last decoded image for color/erase/filter edits.
+    // These do not change pixels dimensions; decoding them a second time for
+    // every tool Apply was unnecessarily stalling frame delivery.
+    final geometryChanged=step.toLowerCase().contains('crop') ||
+      step.toLowerCase().contains('straighten') ||
+      step.toLowerCase().contains('rotate') ||
+      step.toLowerCase().contains('resize');
+    final dimensions=geometryChanged
+      ?await ImageEditingEngine.dimensions(next):null;
     if(!mounted)return;
     setState((){
       _bytes=next;
-      _ratio=dimensions[0]/dimensions[1];
+      if(dimensions!=null)_ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
-    await _saveDraft();
+    // Only the Erase tool needs decoded UI images. Decode asynchronously
+    // and cache when selected; the active image is already GPU-rendered.
+    if(_tool=='Erase')unawaited(_cacheEraseImage(next));
+    if(!step.startsWith('Manual ')&&!step.startsWith('Background')&&_tool=='Erase'){
+      unawaited(_cacheEraseImage(next,original:true));
+    }
+    // IO failures should not interrupt GPU interaction or surface as an
+    // unhandled asynchronous exception; the next save may still succeed.
+    unawaited(_saveDraft().catchError((Object _) {}));
   }
 
   Future<void> _historyStep(bool undo) async {
+    await _eraseQueue;
     final source=undo?_undo:_redo;
     final current=_bytes;
     if(source.isEmpty||current==null||_busy)return;
@@ -216,6 +405,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
+    await _cacheEraseImage(next);
     await _saveDraft();
   }
 
@@ -223,52 +413,66 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   /// throws (as on the reported release device), run a verified portable
   /// ONNX model instead of surfacing a raw Java stack trace.
   Future<void> _removeBackground() async {
+    await _eraseQueue;
     final data=_bytes;
     if(data==null||_busy)return;
-    _magicController.repeat();
+    // Keep image canvas still: do not run a full-screen rendering animation.
+    _processingAction='background';
     setState(()=>_busy=true);
     try{
       late Uint8List mask;
       late int width,height;
-      var engine='U²-NetP AI';
-      if(Platform.isAndroid){
-        try{
-          final dir=await getTemporaryDirectory();
-          final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
-          await temporary.writeAsBytes(data,flush:true);
-          final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
-          try{
-            final result=await segmenter.processImage(
-              InputImage.fromFilePath(temporary.path));
-            if(result==null || result.width<=0 || result.height<=0 ||
-               result.confidences.length!=result.width*result.height){
-              throw const FormatException('ML Kit subject mask is invalid');
-            }
-            width=result.width;height=result.height;
-            mask=Uint8List.fromList(result.confidences.map(
-              (confidence)=>(confidence.clamp(0.0,1.0)*255).round()).toList());
-            engine='Google ML Kit';
-          }finally{
-            await segmenter.close();
-            if(await temporary.exists())await temporary.delete();
-          }
-        }catch(_){
-          // A failed Android platform call is not a user-facing crash.
-          // The model is downloaded once, hash-verified, then used offline.
-          width=WindowsBackgroundAi.modelSize;
-          height=WindowsBackgroundAi.modelSize;
-          mask=await WindowsBackgroundAi.segmentationMask(data);
+      var engine='';
+      Future<void> mlKit() async {
+        if(!Platform.isAndroid) {
+          throw UnsupportedError('Google ML Kit segmentation is Android-only');
         }
-      }else if(Platform.isWindows){
+        final dir=await getTemporaryDirectory();
+        final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
+        await temporary.writeAsBytes(data,flush:true);
+        final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
+        try {
+          final result=await segmenter.processImage(
+            InputImage.fromFilePath(temporary.path));
+          if(result==null || result.width<=0 || result.height<=0 ||
+             result.confidences.length!=result.width*result.height){
+            throw const FormatException('Google ML Kit mask invalid');
+          }
+          width=result.width;height=result.height;
+          mask=Uint8List.fromList(result.confidences.map(
+            (v)=>(v.clamp(0.0,1.0)*255).round()).toList());
+          engine='Google ML Kit';
+        }finally {
+          await segmenter.close();
+          if(await temporary.exists())await temporary.delete();
+        }
+      }
+      Future<void> u2NetP() async {
         width=WindowsBackgroundAi.modelSize;
         height=WindowsBackgroundAi.modelSize;
         mask=await WindowsBackgroundAi.segmentationMask(data);
-      }else{
+        engine='U²-NetP (ONNX)';
+      }
+      Future<void> plain() async {
         final dimensions=await ImageEditingEngine.dimensions(data);
         width=dimensions[0];height=dimensions[1];
         mask=await ImageEditingEngine.simpleBackgroundMask(
           data,tolerance:_tolerance);
-        engine='Plain background remover';
+        engine='Plain-color edge segmentation';
+      }
+      if(_backgroundEngine=='Google ML Kit'){
+        await mlKit();
+      }else if(_backgroundEngine=='U²-NetP (ONNX)'){
+        await u2NetP();
+      }else if(_backgroundEngine=='Plain-color'){
+        await plain();
+      }else if(Platform.isAndroid){
+        try{await mlKit();}
+        catch(_){await u2NetP();}
+      }else if(Platform.isWindows){
+        await u2NetP();
+      }else{
+        await plain();
       }
       final edited=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':width,'maskHeight':height,
@@ -281,7 +485,42 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _message('AI background removal could not finish. Check internet for '
         'the first AI model download, or try Remove Plain Background.');
     }finally{
-      _magicController.stop();
+      _processingAction=null;
+      if(mounted)setState(()=>_busy=false);
+    }
+  }
+
+  Future<void> _runPhotoEnhancer() async {
+    await _eraseQueue;
+    final current=_bytes;
+    if(current==null||_busy)return;
+    _processingAction='photo_enhance';
+    setState((){_busy=true;_enhanceProgress=0;});
+    try{
+      final Uint8List result;
+      if(_enhanceFaceMode){
+        // Face mode uses a deliberately chosen face region. The existing
+        // Crop selection can be reused without cropping the full image.
+        final roi=_faceUseCrop
+          ? <double>[_crop.left,_crop.top,_crop.right,_crop.bottom]
+          : <double>[.15,.15,.85,.85];
+        result=await FaceRestorationEngine.restore(current,
+          normalizedRoi:roi,strength:_enhanceStrength);
+      }else{
+        result=await PhotoEnhancerEngine.enhance(current,
+          scale:_enhanceScale,blend:_enhanceStrength,
+          onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
+      }
+      await _commit(current,result,_enhanceFaceMode
+        ? 'GFPGAN Face Restoration'
+        : 'Photo Enhancer Real-ESRGAN ${_enhanceScale}x');
+      _message(_enhanceFaceMode
+        ? 'Face restoration applied to the selected area'
+        : 'Photo enhanced with Real-ESRGAN ${_enhanceScale}x');
+    }catch(e){
+      _message('Photo Enhancer could not finish: $e');
+    }finally{
+      _processingAction=null;
       if(mounted)setState(()=>_busy=false);
     }
   }
@@ -289,7 +528,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   Future<void> _removePlainBackground()async{
     final data=_bytes;
     if(data==null||_busy)return;
-    _magicController.repeat();
+    _processingAction='background';
     setState(()=>_busy=true);
     try {
       final dimensions=await ImageEditingEngine.dimensions(data);
@@ -303,7 +542,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       _format='PNG';
     }catch(e){_message('Plain background removal failed: $e');}
     finally{
-      _magicController.stop();
+      _processingAction=null;
       if(mounted)setState(()=>_busy=false);
     }
   }
@@ -324,6 +563,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _background=selected;
         _format='PNG';
       });
+      unawaited(_rememberColor(selected));
       return;
     }
     final previous=_bytes!;
@@ -341,6 +581,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _background=selected;
         _format='PNG';
       });
+      unawaited(_rememberColor(selected));
     }catch(_){
       _message('Could not replace this background. Try a different image.');
     }finally{if(mounted)setState(()=>_busy=false);}
@@ -390,22 +631,43 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
 
   Future<void> _export(String action)async {
-    if(_pendingFilter!=null)await _finalizeFilter();
-    if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-    final data=_bytes;
-    if(data==null||_busy)return;
+    final cart=action=='cart';
+    if(_bytes==null)return;
     try{
-      final type=data.length>=2 && data[0]==0xff && data[1]==0xd8
+      // Do not lose a live brush stroke if Send is pressed mid-edit.
+      if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
+      await _eraseQueue;
+      if(!_busy){
+        if(_pendingFilter!=null)await _finalizeFilter();
+        if(_fineAngle.abs()>=.001)await _commitStraighten();
+        if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
+        if(_tool=='Crop'&&(_cropMode=='Perspective Crop'||
+            _crop!=const Rect.fromLTWH(.06,.06,.88,.88))){
+          await _commitCrop();
+        }
+        if(_brightness!=1||_contrast!=1||
+            _saturation!=1||_exposure!=0){
+          await _commitAdjust();
+        }
+      }
+      if(cart){
+        await _saveDraft();
+        await _saveSession();
+      }
+      // Sharing uses the untouched imported photo. Edited pixels stay in History.
+      final data=(cart||action=='share')?(_originalBytes??_bytes):_bytes;
+      if(data==null)return;
+      final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8
         ?'jpg':'png';
-      final name='edited_${DateTime.now().millisecondsSinceEpoch}.$type';
-      if(action=='cart'){
+      final name='${cart||action=='share'?'original':'edited'}_${DateTime.now().millisecondsSinceEpoch}.$type';
+      if(cart){
         final directory=await getApplicationSupportDirectory();
-        final cart=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
-        await cart.create(recursive:true);
-        final path=File('${cart.path}${Platform.pathSeparator}$name');
-        await path.writeAsBytes(data,flush:true);
-        ImageEditingCart.instance.add(path,name);
-        _message('Image added to File Share Cart');
+        final folder=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
+        await folder.create(recursive:true);
+        final file=File('${folder.path}${Platform.pathSeparator}$name');
+        await file.writeAsBytes(data,flush:true);
+        ImageEditingCart.instance.add(file,name);
+        if(mounted)returnToFileShareCart(context);
       }else if(action=='share'){
         final directory=await getTemporaryDirectory();
         final file=File('${directory.path}${Platform.pathSeparator}$name');
@@ -439,46 +701,180 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
       ]));
   }
 
+  Widget _colorSwatch(Color color)=>Tooltip(
+    message:color==Colors.transparent?'Transparent background':
+      '#${color.toARGB32().toRadixString(16).padLeft(8,'0').substring(2).toUpperCase()}',
+    child:InkWell(
+      borderRadius:BorderRadius.circular(28),
+      onTap:_busy?null:()=>_replaceBackground(color:color),
+      child:Container(width:41,height:41,
+        decoration:BoxDecoration(
+          color:color==Colors.transparent?Colors.grey.shade200:color,
+          shape:BoxShape.circle,
+          border:Border.all(color:color==_background?
+            FileTheme.violet:Colors.grey.withValues(alpha:.5),
+            width:color==_background?3:1)),
+        child:color==_background?const Icon(Icons.check_rounded,size:19):null),
+    ),
+  );
+
   Widget _toolControls(){
     switch(_tool){
       case 'Background':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          Text(Platform.isAndroid?'Fast recommended: Google ML Kit':
-            Platform.isWindows?'Windows: U²-NetP on-device AI (4.6 MB first download)':
-            'Plain-color background remover',
-            style:TextStyle(color:FileTheme.muted(context))),
-          const SizedBox(height:10),
-          FilledButton.icon(onPressed:_busy?null:_removeBackground,
-            icon:const Icon(Icons.auto_fix_high),
-            label:const Text('AI Remove Background')),
-          if(true) ...[
-            const SizedBox(height:8),
-            _slider('Plain background tolerance',_tolerance,5,120,
-              (v)=>setState(()=>_tolerance=v),(){}),
-            OutlinedButton.icon(
-              onPressed:_busy?null:_removePlainBackground,
-              icon:const Icon(Icons.colorize_outlined),
-              label:const Text('Remove plain-color background')),
-          ],
-          const SizedBox(height:16),
-          const Text('Replace background',style:TextStyle(fontWeight:FontWeight.bold)),
+          const Text('Background removal engine',
+            style:TextStyle(fontWeight:FontWeight.w700,fontSize:12)),
           const SizedBox(height:7),
-          Wrap(spacing:8,runSpacing:8,children:[
-            for(final color in _colors)
-              InkWell(onTap:_busy?null:()=>_replaceBackground(color:color),
-                child:CircleAvatar(radius:18,backgroundColor:color==Colors.transparent
-                  ?Colors.grey.shade300:color,
-                  child:color==_background?const Icon(Icons.check,size:18):null)),
-          ]),
+          DropdownButtonFormField<String>(
+            initialValue:_backgroundEngine,
+            isExpanded:true,
+            decoration:const InputDecoration(
+              border:OutlineInputBorder(),
+              helperText:'Auto uses ML Kit first on Android, then U²-NetP.'),
+            items:[
+              const DropdownMenuItem(value:'Auto (ML Kit first)',
+                child:Text('Auto · ML Kit first')),
+              if(Platform.isAndroid)
+                const DropdownMenuItem(value:'Google ML Kit',
+                  child:Text('Google ML Kit · Portrait')),
+              const DropdownMenuItem(value:'U²-NetP (ONNX)',
+                child:Text('U²-NetP · AI subject removal')),
+              const DropdownMenuItem(value:'Plain-color',
+                child:Text('Plain-color · Edge flood fill')),
+            ],
+            onChanged:_busy?null:(value){
+              if(value!=null)setState(()=>_backgroundEngine=value);
+            },
+          ),
+          const SizedBox(height:12),
+          const Text('AI Background Removal',
+            style:TextStyle(fontWeight:FontWeight.w800,fontSize:15)),
           const SizedBox(height:8),
-          Wrap(spacing:8,runSpacing:8,children:[
+          Text('Remove a portrait background or erase unwanted areas.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+          const SizedBox(height:12),
+          SizedBox(width:double.infinity,child:FilledButton.icon(
+            onPressed:_busy?null:_removeBackground,
+            icon:_busy?const SizedBox(width:18,height:18,
+              child:CircularProgressIndicator(strokeWidth:2)):
+              const Icon(Icons.auto_fix_high_rounded),
+            label:const Text('AI Remove Background'))),
+          const SizedBox(height:14),
+          const Text('Plain-color background',
+            style:TextStyle(fontWeight:FontWeight.w700)),
+          _slider('Color tolerance',_tolerance,5,120,
+            (v)=>setState(()=>_tolerance=v),(){}),
+          SizedBox(width:double.infinity,child:OutlinedButton.icon(
+            onPressed:_busy?null:_removePlainBackground,
+            icon:const Icon(Icons.colorize_outlined),
+            label:const Text('Remove plain-color background'))),
+          const SizedBox(height:14),
+          SizedBox(width:double.infinity,child:OutlinedButton.icon(
+            onPressed:()=>_selectTool('Erase'),
+            icon:const Icon(Icons.auto_fix_off_rounded),
+            label:const Text('Manual Erase / Restore'))),
+          const Divider(height:30),
+          Row(children:[
+            const Expanded(child:Text('Replace Background',
+              style:TextStyle(fontWeight:FontWeight.w800,fontSize:15))),
+            Container(height:27,width:27,decoration:BoxDecoration(
+              color:_background,shape:BoxShape.circle,
+              border:Border.all(color:FileTheme.violet))),
+          ]),
+          const SizedBox(height:10),
+          const Text('Preset colors',style:TextStyle(fontSize:12)),
+          const SizedBox(height:7),
+          Wrap(spacing:9,runSpacing:9,children:[
+            for(final color in _colors)_colorSwatch(color),
+          ]),
+          if(_recentColors.isNotEmpty) ...[
+            const SizedBox(height:14),
+            const Text('Recently used colors',
+              style:TextStyle(fontSize:12,fontWeight:FontWeight.w600)),
+            const SizedBox(height:8),
+            Wrap(spacing:9,runSpacing:9,children:[
+              for(final color in _recentColors)_colorSwatch(color),
+            ]),
+          ],
+          const SizedBox(height:13),
+          Wrap(spacing:9,runSpacing:8,children:[
             OutlinedButton.icon(onPressed:_busy?null:_pickBackground,
               icon:const Icon(Icons.photo_library_outlined),
-              label:const Text('Gallery background')),
-            const SizedBox(width:8),
-            OutlinedButton.icon(onPressed:_busy?null:()=>_customColorDialog(),
-              icon:const Icon(Icons.palette_outlined),label:const Text('Custom')),
+              label:const Text('Gallery')),
+            FilledButton.tonalIcon(
+              onPressed:_busy?null:_customColorDialog,
+              icon:const Icon(Icons.palette_outlined),
+              label:const Text('RGB Color Picker')),
           ]),
+        ]);
+      case 'Photo Enhancer':
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('AI Photo Enhancer',
+            style:TextStyle(fontWeight:FontWeight.w800,fontSize:15)),
+          const SizedBox(height:8),
+          SegmentedButton<bool>(
+            segments:const [
+              ButtonSegment(value:false,label:Text('Photo HD')),
+              ButtonSegment(value:true,label:Text('Face Restore')),
+            ],selected:{_enhanceFaceMode},
+            onSelectionChanged:_busy?null:(v)=>
+              setState(()=>_enhanceFaceMode=v.first)),
+          const SizedBox(height:12),
+          if(!_enhanceFaceMode)...[
+            Text('Real-ESRGAN ONNX: 2× resolution, or 4× with two '
+              '2× passes. First use downloads a verified model (~67 MB). '
+              'Following edits run entirely offline.',
+              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+            const SizedBox(height:12),
+            SegmentedButton<int>(
+              segments:const [
+                ButtonSegment(value:2,label:Text('2× HD')),
+                ButtonSegment(value:4,label:Text('4× Ultra HD')),
+              ],selected:{_enhanceScale},
+              onSelectionChanged:_busy?null:(v)=>
+                setState(()=>_enhanceScale=v.first)),
+          ]else...[
+            Text('GFPGAN v1.4 restores one front-facing, approximately '
+              'aligned face. First use downloads a verified model (~170 MB). '
+              'Face details are AI estimates and may alter identity.',
+              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+            const SizedBox(height:10),
+            SwitchListTile.adaptive(
+              dense:true,contentPadding:EdgeInsets.zero,
+              title:const Text('Use Crop selection as face region'),
+              subtitle:const Text('Select the face in Crop first, '
+                'then return here without applying Crop.'),
+              value:_faceUseCrop,
+              onChanged:_busy?null:(v)=>setState(()=>_faceUseCrop=v)),
+            if(!_faceUseCrop)
+              Text('Otherwise uses the central 70% of the picture. '
+                'Best for a centered single-face portrait.',
+                style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+            OutlinedButton.icon(
+              onPressed:_busy?null:()=>_selectTool('Crop'),
+              icon:const Icon(Icons.crop_free_rounded),
+              label:const Text('Select face area with Crop')),
+          ],
+          const SizedBox(height:12),
+          _slider('AI strength',_enhanceStrength,0,1,
+            (v)=>setState(()=>_enhanceStrength=v),(){}),
+          Text('Less strength preserves more of the original photo. '
+            'AI reconstruction does not guarantee authentic lost detail.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+          if(_processingAction=='photo_enhance')...[
+            const SizedBox(height:12),
+            LinearProgressIndicator(
+              value:_enhanceFaceMode?null:_enhanceProgress,
+              minHeight:5,borderRadius:BorderRadius.circular(4)),
+            if(!_enhanceFaceMode)
+              Text('${(_enhanceProgress*100).round()}%'),
+          ],
+          const SizedBox(height:14),
+          SizedBox(width:double.infinity,child:FilledButton.icon(
+            onPressed:_busy?null:_runPhotoEnhancer,
+            icon:const Icon(Icons.auto_awesome_rounded),
+            label:Text(_enhanceFaceMode
+              ? 'Restore Face' : 'Enhance Photo'))),
         ]);
       case 'Compress':
         return Column(children:[
@@ -583,6 +979,26 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           ],selected:{_eraseMode},onSelectionChanged:(v)=>
             setState(()=>_eraseMode=v.first)),
         ]);
+      case 'Straighten':
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Fine rotation in 0.5° increments',
+            style:TextStyle(fontSize:12)),
+          Center(child:Text('${_fineAngle.toStringAsFixed(1)}°',
+            style:const TextStyle(fontWeight:FontWeight.w700,fontSize:19))),
+          Slider(min:-45,max:45,divisions:180,value:_fineAngle,
+            onChanged:(v)=>setState(()=>_fineAngle=v)),
+          Row(children:[
+            TextButton.icon(onPressed:()=>setState(()=>_fineAngle=0),
+              icon:const Icon(Icons.restart_alt),label:const Text('Reset')),
+            Expanded(child:SwitchListTile(dense:true,
+              title:const Text('Auto-crop corners'),
+              value:_straightenAutoCrop,
+              onChanged:(v)=>setState(()=>_straightenAutoCrop=v))),
+          ]),
+          FilledButton.icon(onPressed:_busy?null:()=>unawaited(_commitStraighten()),
+            icon:const Icon(Icons.straighten),
+            label:const Text('Apply Straighten')),
+        ]);
       case 'Adjust':
         return Column(children:[
           _slider('Brightness',_brightness,.4,1.6,
@@ -649,7 +1065,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         _crop.bottomLeft];
     });
   }
-  void _commitAdjust(){
+  Future<void> _commitStraighten()async{
+    final degrees=_fineAngle;
+    if(degrees.abs()<.001)return;
+    await _apply('straighten',{'degrees':degrees,'autoCrop':_straightenAutoCrop},
+      description:'Straighten ${degrees.toStringAsFixed(1)}°');
+    if(mounted)setState(()=>_fineAngle=0);
+  }
+  Future<void> _commitAdjust()async{
     if(_busy)return;
     final options=<String,Object?>{
       'brightness':_brightness,'contrast':_contrast,
@@ -658,55 +1081,154 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     setState((){
       _brightness=1;_contrast=1;_saturation=1;_exposure=0;
     });
-    unawaited(_apply('adjust',options));
+    await _apply('adjust',options);
   }
-  void _commitCrop(){
+  Future<void> _commitCrop()async{
+    if(_busy)return;
     if(_cropMode=='Normal Crop'){
-      unawaited(_apply('crop',{
-        'x':_crop.left,'y':_crop.top,'w':_crop.width,'h':_crop.height,
-      },description:'Normal crop'));
+      final crop=_crop;
+      final before=_bytes;
+      final ratio=_ratio;
+      if(before==null)return;
+      setState((){
+        _instantCrop=crop;
+        _ratio=ratio*crop.width/crop.height;
+      });
+      await _apply('crop',{
+        'x':crop.left,'y':crop.top,'w':crop.width,'h':crop.height,
+      },description:'Normal crop').whenComplete((){
+        if(mounted)setState((){
+          _instantCrop=null;
+          if(identical(_bytes,before))_ratio=ratio;
+        });
+      });
       return;
     }
     final points=_cropCorners;
-    unawaited(_apply('perspective',{
+    await _apply('perspective',{
       'tlx':points[0].dx,'tly':points[0].dy,
       'trx':points[1].dx,'try':points[1].dy,
       'brx':points[2].dx,'bry':points[2].dy,
       'blx':points[3].dx,'bly':points[3].dy,
-    },description:'Perspective freeform crop'));
+    },description:'Perspective freeform crop');
   }
 
-  Future<void> _customColorDialog()async{
-    var red=_custom.r*255,green=_custom.g*255,
-      blue=_custom.b*255;
-    final color=await showDialog<Color>(context:context,builder:(context)=>
-      StatefulBuilder(builder:(context,update)=>AlertDialog(
-        title:const Text('Custom background color'),
-        content:Column(mainAxisSize:MainAxisSize.min,children:[
-          for(final channel in [0,1,2])
-            Slider(value:[red,green,blue][channel],min:0,max:255,
-              onChanged:(v)=>update((){
-                if(channel==0)red=v;
-                if(channel==1)green=v;
-                if(channel==2)blue=v;
-              })),
-          Container(height:35,color:Color.fromARGB(255,
-            red.round(),green.round(),blue.round())),
-        ]),
-        actions:[TextButton(onPressed:()=>Navigator.pop(context),
-          child:const Text('Cancel')),
-          FilledButton(onPressed:()=>Navigator.pop(context,
-            Color.fromARGB(255,red.round(),green.round(),blue.round())),
-            child:const Text('Apply'))],
-      )));
-    if(color!=null){
-      _custom=color;
-      await _replaceBackground(color:color);
+  Future<void> _customColorDialog() async {
+    Color picked=_custom;
+    final hex=TextEditingController(
+      text:picked.toARGB32().toRadixString(16).substring(2).toUpperCase());
+    final rgb=[picked.r,picked.g,picked.b].map((x)=>
+      TextEditingController(text:(x*255).round().toString())).toList();
+    try {
+      final result=await showDialog<Color>(context:context,
+        builder:(dialog)=>StatefulBuilder(builder:(dialog,refresh){
+          void choose(Color color){
+            refresh(()=>picked=color);
+            hex.text=color.toARGB32().toRadixString(16)
+              .padLeft(8,'0').substring(2).toUpperCase();
+            final values=[color.r,color.g,color.b];
+            for(var i=0;i<3;i++){
+              rgb[i].text=(values[i]*255).round().toString();
+            }
+          }
+          final hsv=HSVColor.fromColor(picked);
+          return AlertDialog(
+            title:const Text('RGB Background Color Picker'),
+            content:SizedBox(width:330,child:SingleChildScrollView(
+              child:Column(mainAxisSize:MainAxisSize.min,
+                crossAxisAlignment:CrossAxisAlignment.start,children:[
+                Container(height:44,decoration:BoxDecoration(
+                  color:picked,borderRadius:BorderRadius.circular(12),
+                  border:Border.all(color:Colors.grey.shade400))),
+                const SizedBox(height:15),
+                const Text('Choose saturation and brightness'),
+                const SizedBox(height:8),
+                LayoutBuilder(builder:(context,limits)=>GestureDetector(
+                  onPanDown:(d)=>choose(hsv.withSaturation(
+                    (d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
+                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
+                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked)
+                    .withSaturation((d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
+                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
+                  child:CustomPaint(
+                    painter:_SaturationValuePicker(hsv),
+                    child:const SizedBox(height:150,width:double.infinity)),
+                )),
+                const SizedBox(height:13),
+                const Text('Hue'),
+                const SizedBox(height:6),
+                LayoutBuilder(builder:(context,limits)=>GestureDetector(
+                  onPanDown:(d)=>choose(HSVColor.fromColor(picked).withHue(
+                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
+                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked).withHue(
+                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
+                  child:CustomPaint(painter:_HueColorPicker(hsv.hue),
+                    child:const SizedBox(height:26,width:double.infinity)),
+                )),
+                const SizedBox(height:14),
+                Row(children:[
+                  for(var i=0;i<3;i++)Expanded(child:Padding(
+                    padding:EdgeInsets.only(right:i==2?0:8),
+                    child:TextField(
+                      controller:rgb[i],
+                      keyboardType:TextInputType.number,
+                      decoration:InputDecoration(
+                        isDense:true,labelText:['R','G','B'][i],
+                        border:const OutlineInputBorder()),
+                      onChanged:(value){
+                        final v=int.tryParse(value);
+                        if(v==null||v<0||v>255)return;
+                        final values=[for(final t in rgb)
+                          (int.tryParse(t.text)??0).clamp(0,255)];
+                        refresh(()=>picked=Color.fromARGB(255,
+                          values[0],values[1],values[2]));
+                        hex.text=picked.toARGB32().toRadixString(16)
+                          .padLeft(8,'0').substring(2).toUpperCase();
+                      },
+                    ),
+                  )),
+                ]),
+                const SizedBox(height:10),
+                TextField(controller:hex,
+                  textCapitalization:TextCapitalization.characters,
+                  decoration:const InputDecoration(
+                    labelText:'HEX color',prefixText:'#',
+                    border:OutlineInputBorder(),isDense:true),
+                  onChanged:(value){
+                    final normalized=value.replaceFirst('#','');
+                    if(!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(normalized))return;
+                    final code=int.parse(normalized,radix:16);
+                    final color=Color(0xFF000000|code);
+                    refresh(()=>picked=color);
+                    for(final entry in <int>[0,1,2]){
+                      rgb[entry].text=[
+                        (color.r*255).round(),(color.g*255).round(),
+                        (color.b*255).round()][entry].toString();
+                    }
+                  }),
+              ]),
+            )),
+            actions:[
+              TextButton(onPressed:()=>Navigator.pop(dialog),
+                child:const Text('Cancel')),
+              FilledButton(onPressed:()=>Navigator.pop(dialog,picked),
+                child:const Text('Use Color')),
+            ],
+          );
+        }));
+      if(result!=null){
+        _custom=result;
+        await _replaceBackground(color:result);
+      }
+    }finally{
+      hex.dispose();
+      for(final controller in rgb)controller.dispose();
     }
   }
 
   void _startGesture(DragStartDetails d,Size size){
-    final point=Offset(d.localPosition.dx/size.width,d.localPosition.dy/size.height);
+    final point=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0),
+      (d.localPosition.dy/size.height).clamp(0.0,1.0));
     if(_tool=='Crop'){
       _activeCropHandle=null;
       final corners=_cropCorners;
@@ -729,7 +1251,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         }
       }
     }else if(_tool=='Erase'){
+      if(_busy)return;
       _stroke..clear()..add(point);
+      _strokeRepaint.value++;
     }
   }
   void _changeGesture(DragUpdateDetails d,Size size){
@@ -764,23 +1288,42 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }else if(_tool=='Erase'){
       final point=Offset((d.localPosition.dx/size.width).clamp(0,1).toDouble(),
         (d.localPosition.dy/size.height).clamp(0,1).toDouble());
-      _stroke.add(point);
+      if(_stroke.isEmpty || (_stroke.last-point).distanceSquared>0.00000025){
+        _stroke.add(point);
+        _strokeRepaint.value++;
+      }
     }
   }
   void _finishGesture(){
     if(_tool!='Erase'||_stroke.isEmpty)return;
-    final points=_stroke.map((p)=><String,Object?>{
-      'x':p.dx,'y':p.dy}).toList();
-    _stroke.clear();
-    unawaited(_apply(_eraseMode.toLowerCase(),{
-      'points':points,'radius':_eraseRadius,'softness':_softness,
-    }));
+    final pending=_LiveEraseStroke(List.unmodifiable(_stroke),_eraseMode,
+      _eraseRadius,_softness);
+    setState((){
+      _pendingErase.add(pending);
+      _stroke.clear();
+    });
+    _eraseQueue=_eraseQueue.then((_)async{
+      final before=_bytes;
+      if(before==null)return;
+      final next=await ImageEditingEngine.edit(before,
+        pending.mode.toLowerCase(),{
+          'points':[for(final p in pending.points){'x':p.dx,'y':p.dy}],
+          'radius':pending.radius,'softness':pending.softness,
+        });
+      await _commit(before,next,'Manual ${pending.mode.toLowerCase()}');
+      if(mounted)setState(()=>_pendingErase.remove(pending));
+    }).catchError((Object e){
+      if(mounted){
+        setState(()=>_pendingErase.remove(pending));
+        _message('Could not complete this erase stroke.');
+      }
+    });
   }
 
   /// Slider feedback uses the GPU color-matrix while dragging; final
   /// full-quality pixels are processed off the UI isolate on release.
   Widget _liveAdjustment(Widget child){
-    if(_tool!='Adjust')return child;
+    if(_brightness==1&&_contrast==1&&_saturation==1&&_exposure==0)return child;
     final saturation=_saturation;
     const lr=.2126,lg=.7152,lb=.0722;
     final scale=_brightness*_contrast*math.pow(2,_exposure).toDouble();
@@ -806,18 +1349,27 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           child:CustomPaint(painter:_CheckerPainter())),
         if(_pendingBackgroundColor!=null && _pendingBackgroundColor!=Colors.transparent)
           ColoredBox(color:_pendingBackgroundColor!),
-        _liveAdjustment(_fastFilterPreview(Image.memory(
-          _pendingBackgroundColor!=null && _cutoutBytes!=null?_cutoutBytes!:_bytes!,fit:BoxFit.fill,
-          cacheWidth:(width*MediaQuery.devicePixelRatioOf(context)).round().clamp(1,1920),
-          gaplessPlayback:true,filterQuality:FilterQuality.medium))),
-        if(_tool=='Crop')CustomPaint(painter:_CropPainter(_cropCorners,
+        _liveAdjustment(_fastFilterPreview(
+          Transform.rotate(angle:_fineAngle*math.pi/180,
+            child:(_instantCrop!=null&&_erasePreview!=null)
+              ?CustomPaint(painter:_InstantCropPainter(
+                image:_erasePreview!,crop:_instantCrop!))
+              :(_tool=='Erase'&&_erasePreview!=null)
+              ?CustomPaint(painter:_RealtimeEraserPainter(
+                image:_erasePreview!,restoration:_eraseRestoration,
+                pending:_pendingErase,active:_stroke,mode:_eraseMode,
+                radius:_eraseRadius,softness:_softness,
+                repaintTrigger:_strokeRepaint))
+              :Image.memory(
+                  _pendingBackgroundColor!=null&&_cutoutBytes!=null?
+                    _cutoutBytes!:_bytes!,fit:BoxFit.fill,
+                  cacheWidth:(width*MediaQuery.devicePixelRatioOf(context))
+                    .round().clamp(1,1920),
+                  gaplessPlayback:true,filterQuality:FilterQuality.medium)))),
+        if(_tool=='Crop'&&_instantCrop==null)
+          CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
-        if(_busy && _tool=='Background')Positioned(right:12,top:12,
-          child:AnimatedBuilder(animation:_magicController,
-            builder:(context,child)=>Transform.rotate(
-              angle:_magicController.value*math.pi*2,child:child),
-            child:const CircleAvatar(backgroundColor:Color(0xCC765ADB),
-              child:Icon(Icons.auto_fix_high_rounded,color:Colors.white)))),
+
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
@@ -826,6 +1378,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           onPanStart:(d)=>_startGesture(d,size),
           onPanUpdate:(d)=>_changeGesture(d,size),
           onPanEnd:(_)=>_finishGesture(),
+          onPanCancel:_finishGesture,
           child:canvas,
         );
       }else{
@@ -854,35 +1407,36 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
   }
   String _toolTitle(String tool)=>switch(tool){
     'Background'=>'Background Removal',
+    'Photo Enhancer'=>'Photo Enhancer',
     'Compress'=>'Compression',
     'Crop'=>'Freeform Crop',
     'Erase'=>'Manual Erase',
     'Adjust'=>'Adjustments',
+    'Straighten'=>'Straighten',
     _=>tool,
   };
   IconData _toolIcon(String tool)=>switch(tool){
-    'Background'=>Icons.person_outline_rounded,
+    'Background'=>Icons.auto_fix_high_rounded,
+    'Photo Enhancer'=>Icons.auto_awesome_rounded,
     'Compress'=>Icons.compress_rounded,
-    'Crop'=>Icons.crop_rotate_rounded,
-    'Filters'=>Icons.filter_vintage_outlined,
-    'Erase'=>Icons.auto_fix_off,
+    'Crop'=>Icons.crop_free_rounded,
+    'Straighten'=>Icons.straighten_rounded,
+    'Filters'=>Icons.filter_rounded,
+    'Erase'=>Icons.auto_fix_off_rounded,
     _=>Icons.tune_rounded,
   };
   void _selectTool(String tool){
-    if(_busy)return;
-    if(_tool=='Background'&&tool!='Background'&&_pendingBackgroundColor!=null){
-      unawaited(_finalizeBackgroundPreview().then((_){
-        if(mounted)setState(()=>_tool=tool);
-      }));
-      return;
-    }
-    if(_tool=='Filters'&&tool!='Filters'&&_pendingFilter!=null){
-      unawaited(_finalizeFilter().then((_){
-        if(mounted)setState(()=>_tool=tool);
-      }));
-      return;
-    }
+    if(_tool==tool)return;
+    // No worker job, image re-encode or full-screen animated crossfade on tab
+    // changes. Lazy-build the brush bitmap only when Erase is first selected.
     setState(()=>_tool=tool);
+    if(_controlScroll.hasClients)_controlScroll.jumpTo(0);
+    if(tool=='Erase' && _bytes!=null){
+      unawaited(_cacheEraseImage(_bytes!));
+      if(_eraseRestoration==null && _originalBytes!=null){
+        unawaited(_cacheEraseImage(_originalBytes!,original:true));
+      }
+    }
   }
 
   Widget _toolTab(String tool,{bool vertical=false}){
@@ -912,25 +1466,51 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     );
   }
 
-  Widget _toolStrip()=>SizedBox(height:62,
-    child:ListView(scrollDirection:Axis.horizontal,
-      padding:const EdgeInsets.symmetric(horizontal:12,vertical:4),
-      children:[
-        for(final tool in _tools)
-          Padding(padding:const EdgeInsets.only(right:7),
-            child:_toolTab(tool)),
-      ]));
+  Widget _toolStrip()=>Padding(
+    padding:const EdgeInsets.fromLTRB(10,4,10,10),
+    child:Container(height:78,
+      decoration:BoxDecoration(
+        color:Theme.of(context).colorScheme.surface.withValues(alpha:.94),
+        borderRadius:BorderRadius.circular(19),
+        border:Border.all(color:FileTheme.violet.withValues(alpha:.24)),
+        boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.08),
+          blurRadius:12,offset:const Offset(0,4))]),
+      child:ListView(scrollDirection:Axis.horizontal,
+        padding:const EdgeInsets.symmetric(horizontal:7,vertical:7),
+        children:[for(final tool in _tools)Padding(
+          padding:const EdgeInsets.symmetric(horizontal:3),
+          child:_professionalTool(tool))]),
+    ));
+  Widget _professionalTool(String tool){
+    final selected=_tool==tool;
+    return Material(color:selected?FileTheme.violet.withValues(alpha:.17):
+      Colors.transparent,borderRadius:BorderRadius.circular(12),
+      child:InkWell(onTap:()=>_selectTool(tool),
+        borderRadius:BorderRadius.circular(12),
+        child:Container(width:76,padding:const EdgeInsets.symmetric(
+          horizontal:3,vertical:5),
+          child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+            Icon(_toolIcon(tool),size:25,color:selected?
+              FileTheme.violet:FileTheme.foreground(context)),
+            const SizedBox(height:5),
+            Text(tool,maxLines:1,overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontSize:10.5,fontWeight:selected?
+                FontWeight.w800:FontWeight.w500,
+                color:FileTheme.foreground(context))),
+          ]))),
+    );
+  }
 
   Widget _controls()=>SingleChildScrollView(
-    key:ValueKey('panel-'+_tool),
+    controller:_controlScroll,
+    physics:const ClampingScrollPhysics(),
     padding:const EdgeInsets.fromLTRB(16,12,16,14),
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
       Text(_toolTitle(_tool),style:Theme.of(context).textTheme.titleMedium
         ?.copyWith(fontWeight:FontWeight.w800)),
       const SizedBox(height:8),
-      AnimatedSwitcher(duration:const Duration(milliseconds:220),
-        switchInCurve:Curves.easeOutCubic,
-        child:KeyedSubtree(key:ValueKey(_tool),child:_toolControls())),
+      // Avoid dual-page AnimatedSwitcher layouts during every tool change.
+      _toolControls(),
     ]));
 
   Widget _emptyCanvas({required bool wide}){
@@ -989,7 +1569,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         borderRadius:BorderRadius.circular(wide?22:18),
         border:Border.all(color:FileTheme.violet.withValues(alpha:.15))),
       child:Column(children:[
-        if(_busy)const LinearProgressIndicator(minHeight:3),
+        if(_busy&&_processingAction!='background'&&
+          _processingAction!='crop'&&_processingAction!='straighten')
+          const LinearProgressIndicator(minHeight:2),
         Expanded(child:_bytes==null?_emptyCanvas(wide:wide):
           Padding(padding:EdgeInsets.all(wide?14:8),
             child:RepaintBoundary(child:_preview()))),
@@ -1031,9 +1613,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
     }else if(_tool=='Background'&&_pendingBackgroundColor!=null){
       await _finalizeBackgroundPreview();
     }else if(_tool=='Crop'){
-      _commitCrop();
+      await _commitCrop();
     }else if(_tool=='Adjust'){
-      _commitAdjust();
+      await _commitAdjust();
+    }else if(_tool=='Straighten'){
+      await _commitStraighten();
     }else if(_tool=='Compress'){
       await _compress();
     }else{
@@ -1176,7 +1760,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
           onPressed:_bytes==null||_busy?null:()=>_export('save'),
           icon:const Icon(Icons.download_rounded,size:19)),
         IconButton(tooltip:'Send to File Share Cart',visualDensity:VisualDensity.compact,
-          onPressed:_bytes==null||_busy?null:()=>_export('cart'),
+          onPressed:_bytes==null?null:()=>_export('cart'),
           icon:const Icon(Icons.shopping_cart_outlined,size:19)),
         _menu(),
       ]),
@@ -1186,6 +1770,160 @@ class _ImageEditingPageState extends State<ImageEditingPage> with SingleTickerPr
         constraints.maxWidth>=900?_desktopWorkspace():_mobileWorkspace()),
     ),
   );
+}
+
+class _SaturationValuePicker extends CustomPainter {
+  const _SaturationValuePicker(this.color);
+  final HSVColor color;
+  @override void paint(Canvas canvas,Size size){
+    final rect=Offset.zero & size;
+    canvas.drawRect(rect,Paint()..shader=ui.Gradient.linear(
+      const Offset(0,0),Offset(size.width,0),
+      [Colors.white,HSVColor.fromAHSV(1,color.hue,1,1).toColor()]));
+    canvas.drawRect(rect,Paint()..shader=ui.Gradient.linear(
+      const Offset(0,0),Offset(0,size.height),
+      [Colors.transparent,Colors.black]));
+    final point=Offset(color.saturation*size.width,
+      (1-color.value)*size.height);
+    canvas.drawCircle(point,8,Paint()..color=Colors.white
+      ..style=PaintingStyle.stroke..strokeWidth=3);
+    canvas.drawCircle(point,9.5,Paint()..color=Colors.black54
+      ..style=PaintingStyle.stroke..strokeWidth=1);
+  }
+  @override bool shouldRepaint(covariant _SaturationValuePicker old)=>
+    old.color!=color;
+}
+class _HueColorPicker extends CustomPainter {
+  const _HueColorPicker(this.hue);
+  final double hue;
+  @override void paint(Canvas canvas,Size size){
+    canvas.drawRRect(RRect.fromRectAndRadius(
+      Offset.zero & size,const Radius.circular(10)),
+      Paint()..shader=ui.Gradient.linear(
+        const Offset(0,0),Offset(size.width,0),[
+          for(var i=0;i<=6;i++)
+            HSVColor.fromAHSV(1,i*60.0,1,1).toColor(),
+        ]));
+    final x=(hue/360).clamp(0,1)*size.width;
+    canvas.drawCircle(Offset(x,size.height/2),size.height*.44,
+      Paint()..color=Colors.white..style=PaintingStyle.stroke
+        ..strokeWidth=3);
+  }
+  @override bool shouldRepaint(covariant _HueColorPicker old)=>old.hue!=hue;
+}
+
+class _InstantCropPainter extends CustomPainter{
+  const _InstantCropPainter({required this.image,required this.crop});
+  final ui.Image image;
+  final Rect crop;
+  @override void paint(Canvas canvas,Size size){
+    final source=Rect.fromLTRB(crop.left*image.width,
+      crop.top*image.height,crop.right*image.width,
+      crop.bottom*image.height);
+    canvas.drawImageRect(image,source,Offset.zero&size,
+      Paint()..filterQuality=FilterQuality.medium);
+  }
+  @override bool shouldRepaint(covariant _InstantCropPainter old)=>
+    old.image!=image||old.crop!=crop;
+}
+
+class _LiveEraseStroke {
+  const _LiveEraseStroke(this.points,this.mode,this.radius,this.softness);
+  final List<Offset> points;
+  final String mode;
+  final double radius,softness;
+}
+
+/// Low-resolution cached bitmap stays on the GPU. Each touch updates only
+/// the stroke mask; the full-resolution pixel operation is queued separately.
+class _RealtimeEraserPainter extends CustomPainter {
+  _RealtimeEraserPainter({required this.image,required this.restoration,
+    required this.pending,required this.active,required this.mode,
+    required this.radius,required this.softness,
+    required this.repaintTrigger}):super(repaint:repaintTrigger);
+  final Listenable repaintTrigger;
+  final ui.Image image;
+  final ui.Image? restoration;
+  final List<_LiveEraseStroke> pending;
+  final List<Offset> active;
+  final String mode;
+  final double radius,softness;
+
+  @override void paint(Canvas canvas,Size size){
+    final bounds=Offset.zero & size;
+    final imageRect=Rect.fromLTWH(0,0,image.width.toDouble(),image.height.toDouble());
+    canvas.saveLayer(bounds,Paint());
+    canvas.clipRect(bounds);
+    canvas.drawImageRect(image,imageRect,bounds,Paint()..filterQuality=FilterQuality.medium);
+    void stroke(List<Offset> points,String operation,double r,double feather){
+      if(points.isEmpty)return;
+      final width=r*math.min(size.width,size.height)*2;
+      final path=Path()..moveTo(points.first.dx*size.width,points.first.dy*size.height);
+      for(final point in points.skip(1)){
+        path.lineTo(point.dx*size.width,point.dy*size.height);
+      }
+      if(operation=='Restore'&&restoration!=null){
+        final original=restoration!;
+        final p=Paint()..style=PaintingStyle.stroke
+          ..strokeWidth=width..strokeCap=StrokeCap.round
+          ..strokeJoin=StrokeJoin.round
+          ..shader=ui.ImageShader(original,ui.TileMode.clamp,ui.TileMode.clamp,
+            Matrix4.diagonal3Values(size.width/original.width,
+              size.height/original.height,1).storage);
+        if(points.length==1){
+          canvas.drawCircle(Offset(points.first.dx*size.width,
+            points.first.dy*size.height),width/2,p..style=PaintingStyle.fill);
+        }else{
+          canvas.drawPath(path,p);
+        }
+      }else{
+        final p=Paint()..blendMode=BlendMode.clear
+          ..isAntiAlias=true..color=Colors.black
+          ..strokeWidth=width..strokeCap=StrokeCap.round
+          ..strokeJoin=StrokeJoin.round..style=PaintingStyle.stroke;
+        if(points.length==1){
+          canvas.drawCircle(Offset(points.first.dx*size.width,
+            points.first.dy*size.height),width/2,p..style=PaintingStyle.fill);
+        }else{
+          canvas.drawPath(path,p);
+        }
+      }
+    }
+    for(final item in pending)stroke(
+      item.points,item.mode,item.radius,item.softness);
+    stroke(active,mode,radius,softness);
+    canvas.restore();
+  }
+  @override bool shouldRepaint(covariant _RealtimeEraserPainter old)=>true;
+}
+class _FullMagicPainter extends CustomPainter {
+  const _FullMagicPainter(this.progress);
+  final double progress;
+  @override void paint(Canvas canvas,Size size){
+    final sweep=progress*1.4-.2;
+    final x=sweep*size.width;
+    final area=Rect.fromLTWH(x-size.width*.26,0,
+      size.width*.52,size.height);
+    canvas.drawRect(area,Paint()..shader=ui.Gradient.linear(
+      Offset(area.left,0),Offset(area.right,0),[
+        const Color(0x008E69FF),const Color(0x667D5BE3),
+        const Color(0x22F8DFFF),const Color(0x008E69FF)]));
+    for(var i=0;i<22;i++){
+      final t=i*1.618;
+      final px=(progress*size.width*1.3 + i*size.width/22)%(size.width+40)-20;
+      final py=(.5+.46*math.sin(t+progress*math.pi*2))*size.height;
+      final brightness=(.5+.5*math.sin(progress*math.pi*4+i)).clamp(0.0,1.0);
+      final radius=1.2+brightness*3.8;
+      final p=Paint()..color=Colors.white.withValues(alpha:.25+.65*brightness);
+      canvas.drawCircle(Offset(px,py),radius,p);
+      canvas.drawLine(Offset(px-radius*2.5,py),
+        Offset(px+radius*2.5,py),p..strokeWidth=1.3);
+      canvas.drawLine(Offset(px,py-radius*2.5),
+        Offset(px,py+radius*2.5),p);
+    }
+  }
+  @override bool shouldRepaint(covariant _FullMagicPainter old)=>
+    old.progress!=progress;
 }
 
 class _CheckerPainter extends CustomPainter {
@@ -1262,7 +2000,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     unawaited(ImageEditingHistory.instance.load());
   }
   Future<void> _cart(ImageEditingDraft draft)async{
-    final original=File(draft.filePath);
+    final original=File(draft.originalFilePath??draft.filePath);
     final root=await getApplicationSupportDirectory();
     final cart=Directory('${root.path}${Platform.pathSeparator}image_editing_cart');
     await cart.create(recursive:true);
@@ -1281,7 +2019,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
             ImageEditingPage(draft:entry)));
         case 'share':
           await SharePlus.instance.share(ShareParams(
-            files:[XFile(entry.filePath)]));
+            files:[XFile(entry.originalFilePath??entry.filePath)]));
         case 'cart':
           await _cart(entry);
         case 'download':

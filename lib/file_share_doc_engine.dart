@@ -1,0 +1,532 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:archive/archive.dart';
+import 'package:xml/xml.dart' as xml;
+
+/// An offline non-destructive editor of existing OOXML text containers.
+/// It never writes over the original and leaves non-text package entries intact.
+class FileShareDocEngine {
+  FileShareDocEngine._(this.source,this.displayName,this.kind,
+    this.blocks,this.archive,this.parts);
+  final File source;
+  final String displayName;
+  final String kind;
+  final List<DocBlock> blocks;
+  final Archive? archive;
+  final Map<String,xml.XmlDocument> parts;
+  static const textFormats={'txt','md','markdown','html','htm','css','js','ts',
+    'json','xml','yaml','yml','csv','log','sql','py','dart','java','kt','ini',
+    'sh','bat','ps1','svg'};
+  static const officeFormats={'docx','docm','dotx','xlsx','xlsm','xltx',
+    'pptx','pptm','ppsx','potx','odt','ods','odp'};
+  static const viewOnly={'pdf','doc','rtf','xls','xlsb','ppt','epub',
+    'zip','jpg','jpeg','png','webp','gif','bmp','heic','mp3','wav',
+    'mp4','mkv','mov','flac','ogg','stl','heif','avif','ico',
+    '3gp','avi','m4v','webm','mpeg','mpg','ts','m4a','aac','amr',
+    'opus','srt','vtt','nfo'};
+  static String ext(String path)=>path.toLowerCase().split('.').last;
+  static bool canEdit(String path)=>textFormats.contains(ext(path))||
+    officeFormats.contains(ext(path));
+  static bool canView(String path)=>canEdit(path)||viewOnly.contains(ext(path));
+  static Iterable<xml.XmlElement> named(xml.XmlNode node,String name)=>
+    node.descendants.whereType<xml.XmlElement>().where((n)=>n.name.local==name);
+  static List<xml.XmlElement> slots(xml.XmlDocument doc,String kind)=>
+    doc.descendants.whereType<xml.XmlElement>().where((node){
+      if({'docx','docm','dotx'}.contains(kind)){
+        return node.name.local=='p'&&node.name.prefix=='w' &&
+          !node.ancestors.whereType<xml.XmlElement>()
+            .any((parent)=>parent.name.local=='p'&&parent.name.prefix=='w');
+      }
+      if({'pptx','pptm','ppsx','potx'}.contains(kind))
+        return node.name.local=='p'&&node.name.prefix=='a';
+      if({'xlsx','xlsm','xltx'}.contains(kind))return node.name.local=='c';
+      return node.name.local=='p'||node.name.local=='h';
+    }).toList();
+
+  /// Create a minimal valid DOCX package with correct OOXML relationships.
+  static Future<File> createBlankDocx(Directory folder) async {
+    await folder.create(recursive:true);
+    final stamp=DateTime.now().microsecondsSinceEpoch.toString();
+    final file=File(folder.path+Platform.pathSeparator+'new_document_'+stamp+'.docx');
+    const types='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      '<Default Extension="xml" ContentType="application/xml"/>'
+      '<Override PartName="/word/document.xml" '
+      'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      '</Types>';
+    const relations='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      '<Relationship Id="rId1" '
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+      'Target="word/document.xml"/></Relationships>';
+    const document='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body><w:p><w:r><w:t>New document</w:t></w:r></w:p>'
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>'
+      '</w:sectPr></w:body></w:document>';
+    final archive=Archive()
+      ..add(ArchiveFile.string('[Content_Types].xml',types))
+      ..add(ArchiveFile.string('_rels/.rels',relations))
+      ..add(ArchiveFile.string('word/document.xml',document));
+    await file.writeAsBytes(ZipEncoder().encodeBytes(archive),flush:true);
+    return file;
+  }
+
+  static Future<FileShareDocEngine> open(File file,{String? filename}) async {
+    if(!await file.exists())throw StateError('File unavailable');
+    if(await file.length()>32*1024*1024)
+      throw StateError('File is larger than 32 MB safety limit');
+    final type=ext(filename??file.path);
+    if(textFormats.contains(type)){
+      return FileShareDocEngine._(file,filename??file.uri.pathSegments.last,type,[
+        DocBlock('text','Document',await file.readAsString(),'text',0)
+      ],null,{});
+    }
+    if(!officeFormats.contains(type)){
+      throw UnsupportedError('No document editing engine for .'+type);
+    }
+    final zip=ZipDecoder().decodeBytes(await file.readAsBytes());
+    if(zip.length>10000||zip.fold<int>(0,(a,f)=>a+f.size)>256*1024*1024){
+      throw StateError('Unsafe Office archive size');
+    }
+    final paths=<String>[];
+    if({'docx','docm','dotx'}.contains(type)){
+      paths.add('word/document.xml');
+      paths.addAll(zip.where((f)=>RegExp(
+        r'^word/(header[0-9]+|footer[0-9]+|footnotes|endnotes)\.xml$')
+        .hasMatch(f.name)).map((f)=>f.name).toList()..sort());
+    }else if({'xlsx','xlsm','xltx'}.contains(type)){
+      paths.addAll(zip.where((f)=>
+        RegExp(r'^xl/worksheets/sheet[0-9]+\.xml$').hasMatch(f.name))
+        .map((f)=>f.name).toList()..sort());
+    }else if({'pptx','pptm','ppsx','potx'}.contains(type)){
+      paths.addAll(zip.where((f)=>
+        RegExp(r'^ppt/slides/slide[0-9]+\.xml$').hasMatch(f.name))
+        .map((f)=>f.name).toList()..sort());
+    }else{
+      paths.add('content.xml');
+    }
+    if({'xlsx','xlsm','xltx'}.contains(type) &&
+      zip.findFile('xl/workbook.xml')!=null){
+      paths.add('xl/workbook.xml');
+    }
+    final shared=<String>[];
+    if({'xlsx','xlsm','xltx'}.contains(type)){
+      final file=zip.findFile('xl/sharedStrings.xml');
+      if(file!=null){
+        final tree=xml.XmlDocument.parse(utf8.decode(file.content));
+        for(final row in named(tree,'si')){
+          shared.add(named(row,'t').map((e)=>e.innerText).join());
+        }
+      }
+    }
+    final blocks=<DocBlock>[];
+    final parts=<String,xml.XmlDocument>{};
+    for(final path in paths){
+      final file=zip.findFile(path);
+      if(file==null)continue;
+      if(file.size>24*1024*1024)throw StateError('Oversized XML part');
+      final tree=xml.XmlDocument.parse(utf8.decode(file.content));
+      parts[path]=tree;
+      final nodes=slots(tree,type);
+      for(var i=0;i<nodes.length;i++){
+        final node=nodes[i];
+        var label=path.split('/').last;
+        String value;
+        if({'xlsx','xlsm','xltx'}.contains(type)){
+          final existingFormula=node.children.whereType<xml.XmlElement>()
+            .where((e)=>e.name.local=='f').firstOrNull;
+          label=node.attributes.where((a)=>a.name.local=='r')
+            .map((a)=>a.value).firstOrNull??label;
+          final cellType=node.attributes.where((a)=>a.name.local=='t')
+            .map((a)=>a.value).firstOrNull??'n';
+          final raw=node.children.whereType<xml.XmlElement>()
+            .where((e)=>e.name.local=='v').map((e)=>e.innerText)
+            .firstOrNull??'';
+          final id=int.tryParse(raw)??-1;
+          value=existingFormula!=null
+            ?'='+existingFormula.innerText
+            :cellType=='s'?(id>=0&&id<shared.length?shared[id]:''):
+            cellType=='inlineStr'
+            ?named(node,'t').map((e)=>e.innerText).join():raw;
+        }else{
+          value={'odt','ods','odp'}.contains(type)
+            ?node.innerText:named(node,'t').map((e)=>e.innerText).join();
+        }
+        if(value.isNotEmpty){
+          blocks.add(DocBlock(path+'#'+i.toString(),label,value,path,i));
+        }
+      }
+    }
+    return FileShareDocEngine._(file,filename??file.uri.pathSegments.last,
+      type,blocks,zip,parts);
+  }
+
+  void apply(Map<String,String> changed){
+    for(final block in blocks){
+      final value=changed[block.id];
+      if(value==null||value==block.original||block.part=='text')continue;
+      final tree=parts[block.part];
+      if(tree==null)continue;
+      final nodes=slots(tree,kind);
+      if(block.index>=nodes.length)continue;
+      final node=nodes[block.index];
+      if({'xlsx','xlsm','xltx'}.contains(kind)){
+        if(value.startsWith('=')&&value.length>1){
+          final expression=value.substring(1).trim();
+          if(expression.isEmpty)throw const FormatException('Empty Excel formula');
+          node.attributes.removeWhere((a)=>a.name.local=='t');
+          node.children.removeWhere((n)=>n is xml.XmlElement &&
+            {'f','v','is'}.contains(n.name.local));
+          node.children.add(xml.XmlElement(xml.XmlName('f'),[],
+            [xml.XmlText(expression)]));
+          // Excel and WPS recalculate on open, no stale cached value.
+          node.children.add(xml.XmlElement(xml.XmlName('v')));
+          continue;
+        }
+        node.children.removeWhere((n)=>n is xml.XmlElement &&
+          n.name.local=='f');
+        final oldType=node.attributes.where((a)=>a.name.local=='t')
+          .map((a)=>a.value).firstOrNull??'n';
+        final numeric=RegExp(
+          r'^[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?$')
+          .hasMatch(value.trim());
+        if(oldType=='n' && numeric){
+          node.children.removeWhere((n)=>n is xml.XmlElement &&
+            (n.name.local=='v'||n.name.local=='is'));
+          node.children.add(xml.XmlElement(xml.XmlName('v'),[],
+            [xml.XmlText(value.trim())]));
+          continue;
+        }
+        node.attributes.removeWhere((a)=>a.name.local=='t');
+        node.attributes.add(xml.XmlAttribute(xml.XmlName('t'),'inlineStr'));
+        node.children.removeWhere((n)=>n is xml.XmlElement &&
+          (n.name.local=='v'||n.name.local=='is'));
+        node.children.add(xml.XmlElement(xml.XmlName('is'),[],[
+          xml.XmlElement(xml.XmlName('t'),[],[xml.XmlText(value)])
+        ]));
+      }else if({'odt','ods','odp'}.contains(kind)){
+        final leafText=node.descendants.whereType<xml.XmlText>().toList();
+        if(leafText.isEmpty){node.children.add(xml.XmlText(value));}
+        else{
+          leafText.first.value=value;
+          for(final text in leafText.skip(1))text.value='';
+        }
+      }else{
+        final runs=named(node,'t').toList();
+        if(runs.isEmpty)continue;
+        runs.first.children..clear()..add(xml.XmlText(value));
+        for(final run in runs.skip(1))run.children.clear();
+        if({'docx','docm','dotx'}.contains(kind)){
+          runs.first.attributes.removeWhere((a)=>a.name.local=='space');
+          runs.first.attributes.add(
+            xml.XmlAttribute(xml.XmlName('space','xml'),'preserve'));
+        }
+      }
+    }
+  }
+
+  void _requestSpreadsheetRecalc() {
+    if(!{'xlsx','xlsm','xltx'}.contains(kind))return;
+    final workbook=parts['xl/workbook.xml'];
+    if(workbook==null)return;
+    final root=workbook.rootElement;
+    var calc=root.childElements.where((e)=>e.name.local=='calcPr').firstOrNull;
+    if(calc==null){
+      calc=xml.XmlElement(xml.XmlName('calcPr'));
+      root.children.add(calc);
+    }
+    calc.setAttribute('fullCalcOnLoad','1');
+    calc.setAttribute('forceFullCalc','1');
+  }
+
+  /// Apply whole-paragraph Word text formatting to existing runs.
+  /// Only the explicitly changed blocks are touched.
+  void applyWordFormatting(Map<String,Set<String>> flags) {
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    for(final block in blocks){
+      final choices=flags[block.id];
+      if(choices==null)continue;
+      final doc=parts[block.part];
+      if(doc==null)continue;
+      final paragraphs=slots(doc,kind);
+      if(block.index>=paragraphs.length)continue;
+      final paragraph=paragraphs[block.index];
+      final runs=paragraph.descendants.whereType<xml.XmlElement>()
+        .where((element)=>element.name.local=='r' &&
+          element.name.prefix=='w' &&
+          element.ancestorElements.any((a)=>identical(a,paragraph))).toList();
+      for(final run in runs){
+        var properties=run.childElements
+          .where((child)=>child.name.local=='rPr' &&
+            child.name.prefix=='w').firstOrNull;
+        if(properties==null){
+          properties=xml.XmlElement(xml.XmlName('rPr','w'));
+          run.children.insert(0,properties);
+        }
+        properties.children.removeWhere((node)=>node is xml.XmlElement &&
+          node.name.prefix=='w' &&
+          {'b','i','u'}.contains(node.name.local));
+        if(choices.contains('bold')){
+          properties.children.add(xml.XmlElement(xml.XmlName('b','w')));
+        }
+        if(choices.contains('italic')){
+          properties.children.add(xml.XmlElement(xml.XmlName('i','w')));
+        }
+        if(choices.contains('underline')){
+          properties.children.add(xml.XmlElement(xml.XmlName('u','w'),[
+            xml.XmlAttribute(xml.XmlName('val','w'),'single')]));
+        }
+      }
+    }
+  }
+
+  /// Change paragraph alignment without replacing its text or other run styles.
+  void applyWordAlignment(Map<String,String> alignment){
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    for(final block in blocks){
+      final selected=alignment[block.id];
+      if(!{'left','center','right','both'}.contains(selected))continue;
+      final document=parts[block.part];
+      if(document==null)continue;
+      final paragraphs=slots(document,kind);
+      if(block.index>=paragraphs.length)continue;
+      final paragraph=paragraphs[block.index];
+      var props=paragraph.childElements
+        .where((n)=>n.name.local=='pPr'&&n.name.prefix=='w').firstOrNull;
+      if(props==null){
+        props=xml.XmlElement(xml.XmlName('pPr','w'));
+        paragraph.children.insert(0,props);
+      }
+      props.children.removeWhere((node)=>node is xml.XmlElement &&
+        node.name.local=='jc' && node.name.prefix=='w');
+      props.children.add(xml.XmlElement(xml.XmlName('jc','w'),[
+        xml.XmlAttribute(xml.XmlName('val','w'),selected!)]));
+    }
+  }
+
+  /// Update page dimensions and margins for every Word section. Exact
+  /// measurements are stored in OOXML twips (1/1440 inch).
+  void applyWordPageLayout({
+    String paper='A4',
+    bool landscape=false,
+    int marginsTwips=1440,
+  }){
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    if(!{'A4','Letter','Legal'}.contains(paper)){
+      throw ArgumentError.value(paper,'paper','Unsupported Word page');
+    }
+    if(marginsTwips<0||marginsTwips>4320){
+      throw ArgumentError.value(marginsTwips,'marginsTwips');
+    }
+    final document=parts['word/document.xml'];
+    if(document==null)return;
+    final body=document.descendants.whereType<xml.XmlElement>()
+      .where((node)=>node.name.local=='body'&&node.name.prefix=='w')
+      .firstOrNull;
+    if(body==null)return;
+    final dimensions=switch(paper){
+      'Letter'=><int>[12240,15840],
+      'Legal'=><int>[12240,20160],
+      _=><int>[11906,16838],
+    };
+    final width=landscape?dimensions[1]:dimensions[0];
+    final height=landscape?dimensions[0]:dimensions[1];
+    final sections=document.descendants.whereType<xml.XmlElement>()
+      .where((node)=>node.name.local=='sectPr'&&node.name.prefix=='w')
+      .toList();
+    if(sections.isEmpty){
+      final newSection=xml.XmlElement(xml.XmlName('sectPr','w'));
+      body.children.add(newSection);
+      sections.add(newSection);
+    }
+    for(final section in sections){
+      var size=section.childElements
+        .where((n)=>n.name.local=='pgSz'&&n.name.prefix=='w').firstOrNull;
+      if(size==null){
+        size=xml.XmlElement(xml.XmlName('pgSz','w'));
+        section.children.insert(0,size);
+      }
+      size.setAttribute('w:w',width.toString());
+      size.setAttribute('w:h',height.toString());
+      size.setAttribute('w:orient',landscape?'landscape':'portrait');
+      var margins=section.childElements
+        .where((n)=>n.name.local=='pgMar'&&n.name.prefix=='w').firstOrNull;
+      if(margins==null){
+        margins=xml.XmlElement(xml.XmlName('pgMar','w'));
+        section.children.add(margins);
+      }
+      for(final side in ['top','bottom','left','right']){
+        margins.setAttribute('w:'+side,marginsTwips.toString());
+      }
+    }
+  }
+
+  static xml.XmlElement _wordTable(WordTableSpec spec){
+    if(spec.rows<1||spec.rows>20||spec.columns<1||spec.columns>12){
+      throw ArgumentError('Word table must have 1–20 rows and 1–12 columns');
+    }
+    final table=xml.XmlElement(xml.XmlName('tbl','w'),[],[
+      xml.XmlElement(xml.XmlName('tblPr','w'),[],[
+        xml.XmlElement(xml.XmlName('tblW','w'),[
+          xml.XmlAttribute(xml.XmlName('w','w'),'0'),
+          xml.XmlAttribute(xml.XmlName('type','w'),'auto'),
+        ])
+      ])
+    ]);
+    final grid=xml.XmlElement(xml.XmlName('tblGrid','w'));
+    for(var col=0;col<spec.columns;col++){
+      grid.children.add(xml.XmlElement(xml.XmlName('gridCol','w'),[
+        xml.XmlAttribute(xml.XmlName('w','w'),
+          (9200~/spec.columns).toString())
+      ]));
+    }
+    table.children.add(grid);
+    for(var row=0;row<spec.rows;row++){
+      final tr=xml.XmlElement(xml.XmlName('tr','w'));
+      for(var col=0;col<spec.columns;col++){
+        final cellValue=spec.values.length>row*spec.columns+col
+          ?spec.values[row*spec.columns+col]:'';
+        final tc=xml.XmlElement(xml.XmlName('tc','w'),[],[
+          xml.XmlElement(xml.XmlName('tcPr','w'),[],[
+            xml.XmlElement(xml.XmlName('tcW','w'),[
+              xml.XmlAttribute(xml.XmlName('w','w'),
+                (9200~/spec.columns).toString()),
+              xml.XmlAttribute(xml.XmlName('type','w'),'dxa'),
+            ])
+          ]),
+          xml.XmlElement(xml.XmlName('p','w'),[],[
+            xml.XmlElement(xml.XmlName('r','w'),[],[
+              xml.XmlElement(xml.XmlName('t','w'),[
+                xml.XmlAttribute(xml.XmlName('space','xml'),'preserve')
+              ],[xml.XmlText(cellValue)])
+            ])
+          ])
+        ]);
+        tr.children.add(tc);
+      }
+      table.children.add(tr);
+    }
+    return table;
+  }
+
+  /// Structural Word edits: insert paragraphs after an existing paragraph,
+  /// delete the selected paragraph, or both. Reverse index order ensures
+  /// changes do not shift the indices of blocks not processed yet.
+  void applyWordStructure({
+    Map<String,List<String>> insertedAfter=const {},
+    Map<String,List<WordTableSpec>> tablesAfter=const {},
+    Set<String> deleted=const {},
+  }){
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    final ordered=List<DocBlock>.of(blocks)
+      ..sort((a,b){
+        final byPart=a.part.compareTo(b.part);
+        return byPart!=0?byPart:b.index.compareTo(a.index);
+      });
+    for(final block in ordered){
+      if(!deleted.contains(block.id)&&
+         !(insertedAfter[block.id]?.isNotEmpty??false)&&
+         !(tablesAfter[block.id]?.isNotEmpty??false))continue;
+      final doc=parts[block.part];
+      if(doc==null)continue;
+      final paragraphs=slots(doc,kind);
+      if(block.index>=paragraphs.length)continue;
+      final original=paragraphs[block.index];
+      final parent=original.parent;
+      if(parent is! xml.XmlElement)continue;
+      final index=parent.children.indexOf(original);
+      final additions=insertedAfter[block.id]??const <String>[];
+      var insertion=index+1;
+      for(final text in additions.take(100)){
+        final paragraph=xml.XmlElement(xml.XmlName('p','w'),[],[
+          xml.XmlElement(xml.XmlName('r','w'),[],[
+            xml.XmlElement(xml.XmlName('t','w'),[
+              xml.XmlAttribute(xml.XmlName('space','xml'),'preserve')
+            ],[xml.XmlText(text)])
+          ])
+        ]);
+        parent.children.insert(insertion++,paragraph);
+      }
+      for(final table in tablesAfter[block.id]??const <WordTableSpec>[]){
+        parent.children.insert(insertion++,_wordTable(table));
+      }
+      if(deleted.contains(block.id)){
+        original.remove();
+      }
+    }
+  }
+
+  Future<File> saveCopy(Map<String,String> changed,Directory dir,
+      {Map<String,Set<String>> formatChanges=const {},
+       Map<String,String> alignmentChanges=const {},
+       Map<String,List<String>> insertedAfter=const {},
+       Map<String,List<WordTableSpec>> tablesAfter=const {},
+       Set<String> deletedParagraphs=const {},
+       String? pagePaper,
+       bool pageLandscape=false,
+       int pageMarginTwips=1440}) async {
+    await dir.create(recursive:true);
+    final filename=displayName;
+    final dot=filename.lastIndexOf('.');
+    final basename=(dot<0?filename:filename.substring(0,dot))
+      .replaceAll(RegExp(r'[^a-zA-Z0-9._ -]'),'_');
+    var counter=0;
+    late File target;
+    do{
+      final suffix=counter==0?'_edited':'_edited_'+counter.toString();
+      counter++;
+      target=File(dir.path+Platform.pathSeparator+basename+suffix+'.'+kind);
+    }while(await target.exists());
+    if(archive==null){
+      await target.writeAsString(changed['text']??blocks.first.original,flush:true);
+      return target;
+    }
+    apply(changed);
+    if({'xlsx','xlsm','xltx'}.contains(kind) &&
+      blocks.any((block)=>changed.containsKey(block.id) &&
+        changed[block.id]!.startsWith('=') &&
+        changed[block.id]!=block.original)){
+      _requestSpreadsheetRecalc();
+    }
+    if(formatChanges.isNotEmpty)applyWordFormatting(formatChanges);
+    if(alignmentChanges.isNotEmpty)applyWordAlignment(alignmentChanges);
+    if(insertedAfter.isNotEmpty||deletedParagraphs.isNotEmpty||tablesAfter.isNotEmpty){
+      applyWordStructure(insertedAfter:insertedAfter,
+        tablesAfter:tablesAfter,deleted:deletedParagraphs);
+    }
+    if(pagePaper!=null)applyWordPageLayout(
+      paper:pagePaper,landscape:pageLandscape,
+      marginsTwips:pageMarginTwips);
+    final rebuilt=Archive();
+    for(final part in archive!){
+      if(!part.isFile){
+        rebuilt.add(ArchiveFile.directory(part.name));
+      }else{
+        final xmlPart=parts[part.name];
+        rebuilt.add(ArchiveFile.bytes(part.name,
+          xmlPart==null?part.content:utf8.encode(xmlPart.toXmlString())));
+      }
+    }
+    await target.writeAsBytes(ZipEncoder().encodeBytes(rebuilt),flush:true);
+    final verify=ZipDecoder().decodeBytes(await target.readAsBytes());
+    if(verify.length!=archive!.length){
+      await target.delete();
+      throw StateError('Office package validation failed');
+    }
+    return target;
+  }
+}
+class DocBlock {
+  const DocBlock(this.id,this.title,this.original,this.part,this.index);
+  final String id,title,original,part;
+  final int index;
+}
+
+class WordTableSpec {
+  const WordTableSpec(this.rows,this.columns,[this.values=const []]);
+  final int rows,columns;
+  final List<String> values;
+}
