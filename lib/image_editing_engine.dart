@@ -6,6 +6,32 @@ import 'package:image/image.dart' as img;
 /// CPU-intensive raster operations run in an isolate, never inside a frame.
 /// Flutter/Impeller renders the zoomable canvas, animated controls and gestures.
 class ImageEditingEngine {
+  /// Only feed a bounded preview to ML Kit. Returned mask coordinates are
+  /// scaled to the full edited image when the background action is applied.
+  /// This avoids native segmentation OOM on 12/48 MP phone photos.
+  static Future<Uint8List> segmentationInput(Uint8List bytes)=>
+    compute(_segmentationInput,bytes);
+  static Uint8List _segmentationInput(Uint8List bytes){
+    final source=img.decodeImage(bytes);
+    if(source==null)throw const FormatException('Invalid image');
+    const maxSide=1280;
+    final length=math.max(source.width,source.height);
+    final scaled=length>maxSide
+      ?img.copyResize(source,
+        width:math.max(1,(source.width*maxSide/length).round()),
+        height:math.max(1,(source.height*maxSide/length).round()),
+        interpolation:img.Interpolation.average)
+      :source;
+    if(scaled.numChannels==4){
+      final base=img.Image(width:scaled.width,height:scaled.height,
+        numChannels:3);
+      img.fill(base,color:img.ColorRgb8(255,255,255));
+      img.compositeImage(base,scaled);
+      return Uint8List.fromList(img.encodeJpg(base,quality:85));
+    }
+    return Uint8List.fromList(img.encodeJpg(scaled,quality:85));
+  }
+
   static Future<List<int>> dimensions(Uint8List bytes)=>compute(_readSize,bytes);
   static List<int> _readSize(Uint8List bytes){
     final source=img.decodeImage(bytes);
