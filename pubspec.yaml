@@ -44,6 +44,8 @@ flutter:
     - assets/gander/docx-preview.min.js
     - assets/gander/marked.umd.js
     - assets/gander/purify.min.js
+    - assets/gander/xlsx.full.min.js
+    - assets/gander/pptx/
     - cloudflare/worker.js
     - cloudflare/schema.sql
     - cloudflare/public/guest.html
