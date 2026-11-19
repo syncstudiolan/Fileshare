@@ -148,7 +148,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: file-share-android-signed-release-apk
-          path: build/app/outputs/flutter-apk/FileShare-ARM64-Signed-Test.apk
+          path: build/app/outputs/flutter-apk/FileShare-Android-ARM64-Release.apk
           if-no-files-found: error
       - name: Build special full-backend emulator-only debug APK
         if: github.event_name == 'workflow_dispatch'
