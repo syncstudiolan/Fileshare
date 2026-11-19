@@ -654,12 +654,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         await _saveDraft();
         await _saveSession();
       }
-      // Sharing uses the untouched imported photo. Edited pixels stay in History.
-      final data=(cart||action=='share')?(_originalBytes??_bytes):_bytes;
+      // Every outgoing action must use the LAST COMMITTED EDITED snapshot.
+      // The original is preserved separately only for Restore Original.
+      // If a processing operation is underway, use the most recent finished
+      // snapshot rather than selecting the untouched import.
+      final data=_bytes;
       if(data==null)return;
       final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8
         ?'jpg':'png';
-      final name='${cart||action=='share'?'original':'edited'}_${DateTime.now().millisecondsSinceEpoch}.$type';
+      final name='edited_${DateTime.now().microsecondsSinceEpoch}.$type';
       if(cart){
         final directory=await getApplicationSupportDirectory();
         final folder=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
@@ -2066,7 +2069,8 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     unawaited(ImageEditingHistory.instance.load());
   }
   Future<void> _cart(ImageEditingDraft draft)async{
-    final original=File(draft.originalFilePath??draft.filePath);
+    // History's Cart always sends the saved edited stage, not import bytes.
+    final original=File(draft.filePath);
     final root=await getApplicationSupportDirectory();
     final cart=Directory('${root.path}${Platform.pathSeparator}image_editing_cart');
     await cart.create(recursive:true);
@@ -2085,7 +2089,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
             ImageEditingPage(draft:entry)));
         case 'share':
           await SharePlus.instance.share(ShareParams(
-            files:[XFile(entry.originalFilePath??entry.filePath)]));
+            files:[XFile(entry.filePath)]));
         case 'cart':
           await _cart(entry);
         case 'download':
