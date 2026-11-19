@@ -20,7 +20,7 @@
 - **Alignment:** left/center/right/justified; **structure:** insert/delete paragraphs
 - Insert true OOXML Word tables via specified row/column count; inserted table cells become selectable text blocks on re-open
 - Word A4/Letter/Legal, portrait/landscape and page margins in twips; original layout is unchanged until settings are edited
-- XLSX/XLSM/XLTX existing cell text and numeric values, independent shared string changes; original formula cells protected
+- XLSX/XLSM/XLTX existing cell text and numeric values, independent shared string changes; existing formulas can be edited as `=...` expressions; unchanged formulas stay intact. Modified formulas request recalculation on a spreadsheet app's next open; this is not an in-app formula evaluator
 - PPTX/PPTM/PPSX/POTX existing slide text; original package parts preserved in normal cases
 - ODT/ODS/ODP text blocks and HTML/Markdown/TXT/CSV/JSON/XML/source files as text
 - OOXML content is repackaged into a new ZIP-based document with simple entry-count validation; file byte sizes bounded
@@ -41,7 +41,7 @@
 ## Explicitly not implemented or not claimed
 This is **not yet** an MS Office/WPS-quality WYSIWYG editing suite. Missing:
 - Word true on-page rich-text selection and editing, complete ribbon, fonts/sizes/colors, stable mixed-run fidelity, collaborative editing, complex drawing/object operations, advanced header/footer and tables, comments and tracked changes
-- Excel formula creation/evaluation, sheet insertion/deletion, graphical workbook editor, pivot tables, charts and conditional-format authoring
+- Excel full formula evaluation, blank cell insertion and sheet insertion/deletion, graphical workbook editor, pivot tables, charts and conditional-format authoring
 - PowerPoint slide insertion/reorder, shape movement, transition/animation editor, slide masters and full embedded-media editing
 - General editable audio/video/PDF/3D/ZIP contents, full legacy formats and feature parity for every Gander viewer type
 - Full app/browser/OS-level QA, corpus-based OOXML compatibility, strict asset sandbox and security sign-off
