@@ -208,6 +208,39 @@ void main(){
     expect(cells[1].toXmlString(),contains('A1*2'));
   });
 
+  test('Word paper layout and inserted table survive save-copy',()async{
+    final file=await office('docx',{
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:p><w:r><w:t>Before table</w:t></w:r></w:p>'
+        '<w:sectPr/></w:body></w:document>'
+    });
+    final model=await FileShareDocEngine.open(file);
+    final result=await model.saveCopy({},
+      Directory(temporary.path+'/table'),
+      tablesAfter:{model.blocks.single.id:[
+        const WordTableSpec(2,3,
+          ['One','Two','Three','Four','Five','Six'])]},
+      pagePaper:'Legal',pageLandscape:true,pageMarginTwips:720);
+    final zip=ZipDecoder().decodeBytes(await result.readAsBytes());
+    final tree=xml.XmlDocument.parse(utf8.decode(
+      zip.findFile('word/document.xml')!.content));
+    final tables=tree.descendants.whereType<xml.XmlElement>()
+      .where((n)=>n.name.local=='tbl').toList();
+    expect(tables.length,1);
+    final cells=tree.descendants.whereType<xml.XmlElement>()
+      .where((n)=>n.name.local=='tc').toList();
+    expect(cells.length,6);
+    expect(cells.first.innerText,'One');
+    final page=tree.descendants.whereType<xml.XmlElement>()
+      .firstWhere((n)=>n.name.local=='pgSz');
+    expect(page.getAttribute('w:orient'),'landscape');
+    expect(page.getAttribute('w:w'),'20160');
+    final margin=tree.descendants.whereType<xml.XmlElement>()
+      .firstWhere((n)=>n.name.local=='pgMar');
+    expect(margin.getAttribute('w:top'),'720');
+  });
+
   test('unknown format correctly rejects editing',(){
     expect(FileShareDocEngine.canEdit('scan.pdf'),false);
     expect(FileShareDocEngine.canView('scan.pdf'),true);
