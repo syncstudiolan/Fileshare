@@ -211,53 +211,74 @@ class ImageEditingEngine {
     });
 
   static Uint8List _compressOperation(Map<String, Object?> request) {
-    final decoded = img.decodeImage(request['bytes'] as Uint8List);
-    if (decoded == null) throw const FormatException('Invalid image');
-    var source = decoded;
-    final format = request['format'] as String;
-    final targetBytes = (request['targetKb'] as int).clamp(1, 500000).toInt() * 1024;
+    final decoded=img.decodeImage(request['bytes'] as Uint8List);
+    if(decoded==null)throw const FormatException('Invalid image');
+    var source=decoded;
+    final format=request['format'] as String;
+    final target=(request['targetKb'] as int).clamp(1,500000).toInt()*1024;
+    final preferred=(request['quality'] as int).clamp(5,100).toInt();
     if(format=='PNG'){
-      var result=Uint8List.fromList(img.encodePng(source,level:9));
-      if(result.length<=targetBytes)return result;
-      for(var i=0;i<12;i++){
-        final width=(source.width*.82).round();
-        final height=(source.height*.82).round();
-        if(width<32||height<32)break;
-        source=img.copyResize(source,width:width,height:height);
-        result=Uint8List.fromList(img.encodePng(source,level:9));
-        if(result.length<=targetBytes)break;
+      // PNG is lossless. If the requested size is impossible at the original
+      // dimensions, explicitly reduce dimensions rather than pretending the
+      // slider alone changes PNG quality.
+      Uint8List result=Uint8List.fromList(img.encodePng(source,level:6));
+      if(result.length<=target)return result;
+      for(var step=0;step<22;step++){
+        final factor=math.sqrt(target/result.length).clamp(.62,.88);
+        final width=math.max(1,(source.width*factor).floor());
+        final height=math.max(1,(source.height*factor).floor());
+        if(width==source.width && height==source.height)break;
+        source=img.copyResize(source,width:width,height:height,
+          interpolation:img.Interpolation.average);
+        result=Uint8List.fromList(img.encodePng(source,level:6));
+        if(result.length<=target)return result;
       }
-      return result;
+      throw StateError('Target too small for a usable lossless PNG; '
+        'try JPEG or choose a larger size');
     }
-    var quality = (request['quality'] as int).clamp(1, 100).toInt();
-    Uint8List encode(int q) => Uint8List.fromList(img.encodeJpg(source, quality: q));
-    var result = encode(quality);
-    if (result.length <= targetBytes) return result;
-    // Target-size search is bounded and saves the smallest valid result.
-    var low = 5, high = quality;
-    Uint8List? withinTarget;
-    for (var i = 0; i < 8 && low <= high; i++) {
-      final mid = (low + high) ~/ 2;
-      final test = encode(mid);
-      if (test.length <= targetBytes) {
-        withinTarget = test;
-        low = mid + 1;
-      } else {
-        high = mid - 1;
+    // JPEG has no alpha channel; flatten a cutout onto white instead of
+    // emitting black/undefined pixels where the background was removed.
+    if(source.numChannels==4){
+      final white=img.Image(width:source.width,height:source.height,
+        numChannels:3);
+      img.fill(white,color:img.ColorRgb8(255,255,255));
+      img.compositeImage(white,source);
+      source=white;
+    }
+    Uint8List encode(int quality)=>
+      Uint8List.fromList(img.encodeJpg(source,quality:quality));
+    Uint8List search(){
+      var low=35,high=preferred;
+      Uint8List? best;
+      // Favor a useful quality floor; shrink resolution if the target cannot
+      // hold 35+ quality, instead of rendering faces at JPEG quality 5.
+      if(preferred<35){low=preferred;high=preferred;}
+      for(var iteration=0;iteration<8 && low<=high;iteration++){
+        final mid=(low+high)~/2;
+        final sample=encode(mid);
+        if(sample.length<=target){best=sample;low=mid+1;}
+        else {high=mid-1;}
       }
+      return best??Uint8List(0);
     }
-    if (withinTarget != null) return withinTarget;
-    // For very small requested files lower resolution rather than pretending
-    // that a quality setting alone can always hit an arbitrary target.
-    for (var i = 0; i < 7; i++) {
-      final width = (source.width * .82).round();
-      final height = (source.height * .82).round();
-      if (width < 64 || height < 64) break;
-      source = img.copyResize(source, width: width, height: height);
-      result = encode(38);
-      if (result.length <= targetBytes) break;
+    var result=search();
+    if(result.isNotEmpty)return result;
+    // Estimate the next dimensions using the actual measured compressed
+    // size, not a constant 18% repeated blind shrink. This retains more
+    // face detail for extremely small size targets.
+    for(var step=0;step<18;step++){
+      final trial=encode(math.min(preferred,50));
+      final factor=math.sqrt(target/trial.length).clamp(.65,.90);
+      final width=math.max(1,(source.width*factor).floor());
+      final height=math.max(1,(source.height*factor).floor());
+      if(width==source.width&&height==source.height)break;
+      source=img.copyResize(source,width:width,height:height,
+        interpolation:img.Interpolation.average);
+      result=search();
+      if(result.isNotEmpty)return result;
     }
-    return result;
+    throw StateError('Cannot meet this size without losing all detail. '
+      'Try a slightly larger target.');
   }
 
   /// No AI model on Windows is silently claimed: this explicitly labeled
