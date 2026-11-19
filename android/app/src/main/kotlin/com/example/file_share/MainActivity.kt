@@ -18,6 +18,8 @@ import android.os.IBinder
 import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import android.content.ContentValues
@@ -51,6 +53,38 @@ class FileShareApplication : Application() {
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL_NAME)
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
+                "installDownloadedApk" -> try {
+                    val path = call.argument<String>("path")
+                        ?: throw IllegalArgumentException("Missing verified APK path")
+                    val file = File(path).canonicalFile
+                    val updates = File(filesDir, "updates").canonicalFile
+                    require(file.isFile && file.name.endsWith(".apk") &&
+                        file.parentFile?.canonicalFile == updates) {
+                        "Only an internal verified app update can be installed"
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                        !packageManager.canRequestPackageInstalls()) {
+                        val permission = Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:$packageName"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(permission)
+                        result.error("INSTALL_PERMISSION_REQUIRED",
+                            "Enable Install unknown apps for File Share, then tap Install again.", null)
+                    } else {
+                        val uri = FileProvider.getUriForFile(
+                            this, "$packageName.files", file)
+                        val install = Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri,
+                                "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        startActivity(install)
+                        result.success(null)
+                    }
+                } catch (e: Exception) {
+                    result.error("APK_INSTALL_FAILED", e.message, null)
+                }
                 "openUpstreamPdfTools" -> try {
                     val options = call.arguments as? Map<*, *>
                     val path = options?.get("path") as? String
@@ -407,7 +441,7 @@ class FileShareApplication : Application() {
         else Notification.Builder(this)
         manager.notify(
             (System.currentTimeMillis() % Int.MAX_VALUE).toInt(),
-            notice.setSmallIcon(android.R.drawable.stat_sys_download_done)
+            notice.setSmallIcon(R.drawable.ic_file_share_notification)
                 .setContentTitle("File from " + sender)
                 .setContentText(name)
                 .setStyle(Notification.BigTextStyle().bigText(name))
@@ -463,7 +497,7 @@ class LanKeepAliveService : Service() {
             Notification.Builder(this, "fileshare_lan")
         else Notification.Builder(this)
         val notification = notice
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setSmallIcon(R.drawable.ic_file_share_notification)
             .setContentTitle("File Share • LAN ready")
             .setContentText("Ready to receive files on local Wi-Fi")
             .setContentIntent(open).setOngoing(true).build()
