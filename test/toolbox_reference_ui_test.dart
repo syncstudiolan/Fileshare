@@ -37,14 +37,14 @@ void main(){
     expect(find.byTooltip('Redo'),findsOneWidget);
   });
 
-  testWidgets('Android-only PDF Toolbox provides a clear desktop warning',
+  testWidgets('PDF Toolbox provides a clear Windows warning while iPhone is supported',
     (tester)async{
     await tester.pumpWidget(const MaterialApp(home:FileShareToolboxPage()));
     await tester.enterText(find.byType(TextField),'pdf');
     await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced PDF Editing Tools'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('These tools are only available on Android/mobile.'),findsOneWidget);
+    expect(find.textContaining('PDF editing is available on Android and iPhone.'),findsOneWidget);
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
   });
