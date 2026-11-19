@@ -1,83 +1,64 @@
-# File Share Doc — source integration / validation record
+# File Share Doc — implementation and outstanding validation
 
-Status: **Draft PR #6: source integrated, NOT fully implemented or device-validated**.
+**Repository:** `syncstudiolan/Fileshare`  
+**Branch:** `draft/live-scanner-smooth-editor-tools`  
+**Pull request:** Draft PR #6  
+**Status:** Extensive source integration committed. Not fully MS Office/WPS compatible. Flutter/Android/Windows tests not run.
 
-## Completed in this branch
-- Toolbox shows **File Share Doc** separately from existing **File Share** LAN tool.
-- Unified transfer cards route editable Word/Excel/PowerPoint/text formats to
-  File Share Doc instead of routing DOCX through destructive text-to-PDF conversion.
-- Browses Android and Windows local files, including providers that yield byte
-  streams rather than readable paths.
-- Creates a minimal, valid, local DOCX with standard OOXML relationships.
-- Offline editable text fields for:
-  - DOCX/DOCM/DOTX paragraphs plus header, footer and note part text.
-  - XLSX/XLSM/XLTX cells (shared strings become independent inline strings;
-    formula cells are intentionally protected, numeric cells retain numeric type).
-  - PPTX/PPTM/PPSX/POTX slide text.
-  - ODT/ODS/ODP paragraphs and text.
-  - HTML/HTM, Markdown, TXT, CSV, JSON, XML, SVG and source/text formats as text.
-- Basic DOCX whole-paragraph **Bold / Italic / Underline** controls stored in actual WordprocessingML runs. Mixed formatting within edited paragraphs may still change.
-- Find/Replace, search, word count, non-destructive `_edited` copies, ZIP package
-  re-encoding, basic ZIP integrity verification, Android public Downloads and
-  Windows folder-picker export, LAN queue send to unified dashboard.
-- **DOCX view**: Gander's exact vendored **docx-preview 0.4.1** and
-  **JSZip 3.10.1** bytes are bundled as Flutter assets. An offline token-scoped
-  loopback server feeds the document and the local JavaScript to Android WebView
-  or Windows WebView2, avoiding WebView2's 2MB NavigateToString limit.
-  All external origins blocked by CSP and WebView URL navigation policy;
-  iframe creation sandboxed before document rendering.
-- HTML and Markdown have a separate sanitized in-app preview using exact Gander-vendored `marked` and `DOMPurify` JavaScript (non-HTML resources and remote links blocked).
-- Existing image editing and Android PDF tools are retained; ZIP/EPUB archive
-  listing is built in; audio/video/legacy files may require an installed
-  platform viewer.
-- Gander, docx-preview, JSZip, marked and DOMPurify third-party licenses copied to
-  `third_party/GANDER_VIEWER_LICENSES.md`.
-- Source regression tests: `test/file_share_doc_engine_test.dart` for basic
-  Word, Excel, PowerPoint, HTML, OpenDocument and file-copy preservation.
+## Implemented: user-facing Toolbox / common UI
+- Separate **File Share Doc** tool, leaving existing File Share LAN tool and Android PDF editor intact
+- New Word DOCX, native file picker, SAF staging for non-path providers, names preserved from LAN/QR transfer cards
+- Undoable source preservation by non-destructive Save Copy, Android public Downloads / Windows folder picker export
+- Search, Find & Replace, word count, large-document text-field virtualization
+- Integrated existing LAN queue for edited-document transfer; prevents sharing unsaved edits
+- Existing Image Editor opened for photos and Android PDF tools remain Android-only
+- Windows PDFs open read-only in embedded WebView2; no PDF editing on Windows
 
-## Exact functionality boundaries (do not market as Word/WPS feature parity)
-- Gander upstream is a file **viewer**, not a document editor.
-- Gander's advanced `docx-pages.js`, `docx-lines.js` and native Kotlin
-  bridge are **not** ported. The current document preview runs unmodified
-  docx-preview and may differ from Gander/Word in pagination.
-- The edit interface currently changes existing text containers only.
-  It does **not** provide a complete Word ribbon, insert/delete paragraphs, advanced styles,
-  complete header/footer formatting, comments, shapes, live spellcheck, tracked changes,
-  robust WYSIWYG or multi-user editing.
-- XLSX is a cell-text editor, **not** a formula engine, Excel-style grid,
-  chart editor, pivot-table editor or complete sheet reflow.
-- PPTX supports modifying slide text, **not** slide master/layout,
-  animations, transitions or shape placement.
-- Some original run-by-run mixed formatting may be altered when all text in a
-  paragraph is replaced in one existing run. More elaborate DOCX fidelity
-  needs a structural editor with full OOXML round-trip semantics.
-- PDF editing continues to be Android-only by existing policy.
-- Legacy .doc/.xls/.ppt, EPUB, ZIP, media and 3D formats are not all
-  editable and some still open using an external viewer; not all Gander
-  viewer formats have been ported.
-- No claim is made that XML text editing reproduces Microsoft Office or WPS
-  fidelity or that every arbitrary Office file will round-trip correctly.
+## Implemented: Word / Excel / PowerPoint text-level editing
+- DOCX/DOCM/DOTX existing paragraph text, headers, footers, footnotes/endnotes where present
+- **Bold, Italic, Underline** paragraph-level OOXML run properties
+- **Alignment:** left/center/right/justified; **structure:** insert/delete paragraphs
+- Insert true OOXML Word tables via specified row/column count; inserted table cells become selectable text blocks on re-open
+- Word A4/Letter/Legal, portrait/landscape and page margins in twips; original layout is unchanged until settings are edited
+- XLSX/XLSM/XLTX existing cell text and numeric values, independent shared string changes; original formula cells protected
+- PPTX/PPTM/PPSX/POTX existing slide text; original package parts preserved in normal cases
+- ODT/ODS/ODP text blocks and HTML/Markdown/TXT/CSV/JSON/XML/source files as text
+- OOXML content is repackaged into a new ZIP-based document with simple entry-count validation; file byte sizes bounded
 
-## Required validation (none of the following has been executed)
-1. Flutter toolchain: `flutter pub get`, `dart format`, `flutter analyze`.
-2. `flutter test test/file_share_doc_engine_test.dart`.
-3. Android debug build / Windows debug build **only when user authorizes builds**.
-4. Android 8+ / current Android: filesystem picker, native WebView, localhost
-   network-security policy, no remote requests, saved Downloads.
-5. Windows 10/11: NuGet and WebView2 Runtime, writable custom WebView2
-   profile, read-only installation directory, native folder selection.
-6. Real DOCX/Excel/PPTX round-trip tests with tables, images, headers, charts,
-   formulas, embedded links, styles, multi-lingual text and damaged files.
-7. Fuzz/size/zip-bomb tests; Verify no data loss and no external network
-   connections from malicious documents.
+## Implemented: Gander's offline document-viewing engines (Android + Windows code)
+- **Word:** original Gander `docx.html`, `docx.js`, `docx-pages.js`, `docx-lines.js`, night mode, search, `app.js`, `app.css`, `find.js`, docx-preview 0.4.1, JSZip 3.10.1
+- **Spreadsheet:** Gander's SheetJS CE library, worksheet tabs, cell selection, text search; preview limited to 1,000 rows × 100 columns per sheet
+- **PowerPoint:** Gander's PPTXjs, patched `gander-pptx.js`, supporting jQuery/JSZip2/D3/NVD3 libraries, original slide CSS
+- **Legacy Word/OpenDocument:** Gander's `.doc/.odt/.rtf` JS readers, styles, layout and picture helpers
+- **EPUB:** Gander's EPUB chapter/book engine and CSS address sanitizer, search
+- **Markdown/HTML:** Gander's marked + DOMPurify with sanitized offline markup preview
+- **ZIP:** nested entries browsed, opened in appropriate editor/viewer, added, renamed and deleted, saved as new ZIP
+- **Windows PDF:** WebView2 native PDF renderer over localhost HTTP Range support
+- Multimedia, some graphic formats, STL/3D and legacy .ppt still use OS viewers or specialized existing tools; **not fully ported from Gander**
+- Server-bound files and JS are delivered through per-viewer random token-scoped loopback HTTP URLs (no document cloud upload)
+- Android local cleartext network-security exception, WebView URL policies and CSP; vendored licenses in `third_party/GANDER_VIEWER_LICENSES.md`
 
-## References
-- https://github.com/mokshablr/gander
-- https://github.com/VolodymyrBaydalka/docxjs
-- https://stuk.github.io/jszip/
-- Gander's original full application is MIT; its vendored libraries retain
-  their own licenses. The viewer is offline and takes only user-selected files.
+## Explicitly not implemented or not claimed
+This is **not yet** an MS Office/WPS-quality WYSIWYG editing suite. Missing:
+- Word true on-page rich-text selection and editing, complete ribbon, fonts/sizes/colors, stable mixed-run fidelity, collaborative editing, complex drawing/object operations, advanced header/footer and tables, comments and tracked changes
+- Excel formula creation/evaluation, sheet insertion/deletion, graphical workbook editor, pivot tables, charts and conditional-format authoring
+- PowerPoint slide insertion/reorder, shape movement, transition/animation editor, slide masters and full embedded-media editing
+- General editable audio/video/PDF/3D/ZIP contents, full legacy formats and feature parity for every Gander viewer type
+- Full app/browser/OS-level QA, corpus-based OOXML compatibility, strict asset sandbox and security sign-off
 
-**Never mark fully complete or ready to release until functionality and the
-above checks have passed. No merge, deploy, workflow dispatch, APK/EXE build
-or release has been performed for this change.**
+The Gander repository is a VIEWER; porting Gander does not produce a complete Office-compatible editing engine. Even if all source tests pass, DOCX/XLSX/PPTX fidelity needs real cross-suite round-trip testing.
+
+## Test/source validation status
+- **Syntax-level source checks only:** original/adapted Gander JavaScript was syntax-parsed using V8; all tested modules parsed
+- **Regression tests authored** in `test/file_share_doc_engine_test.dart` for creating Word, editing DOCX text/style/structure, inserting tables, Legal landscape layout, Excel shared-string/numeric/formula integrity, PPTX slide text, ODT text and source preservation
+- These Dart/Flutter tests are **unrun**
+- Flutter `pub get`, `flutter analyze`, `flutter test` **unrun**, because the source-editing environment lacks the Flutter/Dart SDK
+- Android and Windows runtime, WebView2/plugin compatibility, real document round-trips and hardware tests **unrun at user's request to defer device tests**
+- Builds, workflow dispatch, PR merge, deploy and releases **not performed**
+- No 100%-complete or production-ready claim can be made until missing features are implemented and validation passes
+
+## Third-party
+- Gander: https://github.com/mokshablr/gander (MIT)
+- docx-preview: https://github.com/VolodymyrBaydalka/docxjs (Apache-2.0)
+- JSZip: https://stuk.github.io/jszip/ (MIT)
+- SheetJS CE, PPTXjs, D3, marked, DOMPurify and others: licenses reproduced from Gander in `third_party/GANDER_VIEWER_LICENSES.md`
