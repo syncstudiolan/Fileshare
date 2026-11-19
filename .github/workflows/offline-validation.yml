@@ -19,7 +19,7 @@ permissions:
 jobs:
   preview_validation:
     # Before merging PR #6, run actual analyzer/tests/Android compilation.
-    if: github.event_name == 'pull_request'
+    if: false # Windows installer only
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -62,7 +62,7 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
   android:
-    if: github.event_name != 'pull_request'
+    if: false # Windows installer only; no Android build
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -163,8 +163,9 @@ jobs:
   windows:
     # Still produce the Windows installer if Android signing secrets are missing.
     # The needs edge serializes Windows after Android; no parallel release builds.
-    if: always() && github.event_name != 'pull_request'
-    needs: android
+    if: github.event_name != 'pull_request'
+    # Windows-only build; do not depend on Android signing or Android build.
+
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
@@ -178,6 +179,25 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
+      - name: Preinstall ONNX Runtime 1.28.3 for Windows CMake
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '1.28.3'
+          $name = "onnxruntime-win-x64-$version"
+          $root = Join-Path (Get-Location) 'build/windows/x64/plugins/flutter_onnxruntime/onnxruntime'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v$version/$name.zip"
+          & curl.exe -fSL --retry 3 --retry-delay 3 -o $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download ONNX Runtime $version" }
+          Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
+          $include = Join-Path $root "$name/include/onnxruntime_cxx_api.h"
+          $library = Join-Path $root "$name/lib/onnxruntime.lib"
+          $dll = Join-Path $root "$name/lib/onnxruntime.dll"
+          foreach ($item in @($include, $library, $dll)) {
+            if (-not (Test-Path $item)) { throw "Missing ONNX runtime dependency: $item" }
+          }
       - name: Build optimized Windows release bundle
         run: flutter build windows --release
       - name: Record Windows release bundle size
@@ -247,7 +267,7 @@ jobs:
 
   android_background_emulator:
     name: Verify Android background TCP receive and notification
-    if: github.event_name == 'workflow_dispatch'
+    if: false # Windows installer only
     needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -301,31 +321,26 @@ jobs:
           if-no-files-found: warn
 
   publish_release:
-    name: Publish Android + Windows installer release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.android.result == 'success' && needs.windows.result == 'success'
-    needs: [android, windows]
+    name: Publish Windows installer only
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.windows.result == 'success'
+    needs: [windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: file-share-android-signed-release-apk
-          path: release
-      - uses: actions/download-artifact@v4
-        with:
           name: file-share-windows-installer
           path: release
-      - name: Create versioned GitHub release with both packages
+      - name: Publish unsigned Windows Program Files installer
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          test -s release/FileShare-Android-ARM64-Release.apk
           test -s release/FileShare-Windows-Setup.exe
-          tag="fileshare-v0.1.0-build-${{ github.run_number }}"
-          gh release create "$tag" release/FileShare-Android-ARM64-Release.apk release/FileShare-Windows-Setup.exe \
+          tag="fileshare-windows-v0.1.0-build-${{ github.run_number }}"
+          gh release create "$tag" release/FileShare-Windows-Setup.exe \
             --repo "${{ github.repository }}" --target "${{ github.sha }}" \
-            --title "File Share Android ARM64 and Windows Installer" \
-            --notes "Android production-key signed ARM64 APK and Windows Program Files setup (Inno Setup). Source: ${{ github.sha }}."
+            --title "File Share Windows Installer" \
+            --notes "Unsigned Windows x64 Inno Setup installer for C:\\Program Files\\File Share. Source: ${{ github.sha }}. Android not built."
