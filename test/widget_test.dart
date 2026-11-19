@@ -6,8 +6,10 @@ import 'package:file_share/account_directory.dart';
 import 'package:file_share/personal_cloud.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   test('Real TCP LAN transfer delivers bytes and receives exactly one event',
       () async {
     final root = await Directory.systemTemp.createTemp('file_share_tcp_test_');
