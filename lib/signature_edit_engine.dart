@@ -5,8 +5,10 @@ import 'package:image/image.dart' as img;
 
 /// Normalized signature crop. The source file is never overwritten.
 class SignatureCrop {
-  const SignatureCrop(this.left,this.top,this.right,this.bottom);
+  const SignatureCrop(this.left,this.top,this.right,this.bottom,{this.quad});
   final double left,top,right,bottom;
+  /// TL, TR, BR, BL coordinates for perspective rectification.
+  final List<double>? quad;
   static const full=SignatureCrop(0,0,1,1);
 }
 
@@ -16,7 +18,7 @@ class SignatureEditEngine {
   static Future<Uint8List> preview(Uint8List original,SignatureCrop crop,
     String filter) => compute(_signatureTransform, {
       'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
-      'filter':filter,'preview':true,
+      'filter':filter,'preview':true,'quad':crop.quad,
     });
 
   static Future<Uint8List> exactJpeg(Uint8List original,SignatureCrop crop,
@@ -27,6 +29,7 @@ class SignatureEditEngine {
     return compute(_signatureTransform,{
       'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
       'filter':filter,'preview':false,'target':kilobytes*1024,
+      'quad':crop.quad,
     });
   }
 
@@ -86,7 +89,28 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
     .clamp(1,decoded.width-x).toInt();
   final height=math.max(1,(bottom*decoded.height).ceil()-y)
     .clamp(1,decoded.height-y).toInt();
-  var cropped=img.copyCrop(decoded,x:x,y:y,width:width,height:height);
+  img.Image cropped;
+  final quad=(request['quad'] as List?)?.cast<double>();
+  if(quad!=null && quad.length==8){
+    final p=<img.Point>[];
+    for(var i=0;i<8;i+=2){
+      p.add(img.Point(quad[i].clamp(0.0,1.0)*decoded.width,
+        quad[i+1].clamp(0.0,1.0)*decoded.height));
+    }
+    double distance(img.Point a,img.Point b)=>
+      math.sqrt(math.pow(a.x-b.x,2)+math.pow(a.y-b.y,2));
+    final w=math.max(distance(p[0],p[1]),distance(p[3],p[2]))
+      .round().clamp(1,8192).toInt();
+    final h=math.max(distance(p[0],p[3]),distance(p[1],p[2]))
+      .round().clamp(1,8192).toInt();
+    if(w<4||h<4)throw StateError('Perspective selection is too small');
+    cropped=img.copyRectify(decoded,topLeft:p[0],topRight:p[1],
+      bottomRight:p[2],bottomLeft:p[3],
+      interpolation:img.Interpolation.linear,
+      toImage:img.Image(width:w,height:h,numChannels:4));
+  }else{
+    cropped=img.copyCrop(decoded,x:x,y:y,width:width,height:height);
+  }
   final filter=request['filter'] as String;
   // Flatten any transparency onto white, so ink remains a real signature.
   for(var py=0;py<cropped.height;py++) {
