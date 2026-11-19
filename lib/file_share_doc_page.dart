@@ -56,6 +56,18 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   }
   Future<void> _selectFile()async{
     if(_busy)return;
+    if(_dirty){
+      final discard=await showDialog<bool>(context:context,builder:(dialog)=>
+        AlertDialog(title:const Text('Unsaved edits'),
+          content:const Text('Open another file without saving your changes?'),
+          actions:[
+            TextButton(onPressed:()=>Navigator.pop(dialog,false),
+              child:const Text('Keep Editing')),
+            FilledButton(onPressed:()=>Navigator.pop(dialog,true),
+              child:const Text('Discard Changes')),
+          ]));
+      if(discard!=true)return;
+    }
     try{
       final selected=await FilePicker.pickFiles(type:FileType.any);
       if(selected.isEmpty)return;
@@ -178,6 +190,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   Future<void> _send() async{
     final file=_saved??_source;
     if(file==null||_busy)return;
+    if(_dirty){
+      _message('Save your edits before sending to File Share.');
+      return;
+    }
     setState((){_busy=true;_status='Adding document to LAN queue…';});
     try{
       if(!appLan.started)await appLan.start();
@@ -187,8 +203,12 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     finally{if(mounted)setState(()=>_busy=false);}
   }
   Future<void> _viewSpecialized()async{
-    final file=_source;
+    final file=_saved??_source;
     if(file==null||_busy)return;
+    if(_dirty){
+      _message('Save a copy to preview the latest edits.');
+      return;
+    }
     final ext=FileShareDocEngine.ext(file.path);
     try{
       if(['md','markdown','html','htm'].contains(ext)){
@@ -252,7 +272,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
             onPressed:_busy?null:_selectFile,tooltip:'Open another file',
             icon:const Icon(Icons.folder_open_outlined)),
           if(doc!=null)IconButton(
-            onPressed:_busy||!_dirty?null:_save,tooltip:'Save edited copy',
+            onPressed:_busy?null:_save,tooltip:'Save edited copy',
             icon:const Icon(Icons.save_outlined)),
         ]),
       body:Container(
@@ -292,7 +312,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                   icon:const Icon(Icons.visibility_outlined),
                   label:const Text('View')),
                 if(doc!=null)FilledButton.icon(
-                  onPressed:_busy||!_dirty?null:_save,
+                  onPressed:_busy?null:_save,
                   icon:const Icon(Icons.save_outlined),
                   label:const Text('Save Copy')),
                 if(doc!=null)OutlinedButton.icon(
