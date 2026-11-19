@@ -108,6 +108,10 @@ class FileShareDocEngine {
     }else{
       paths.add('content.xml');
     }
+    if({'xlsx','xlsm','xltx'}.contains(type) &&
+      zip.findFile('xl/workbook.xml')!=null){
+      paths.add('xl/workbook.xml');
+    }
     final shared=<String>[];
     if({'xlsx','xlsm','xltx'}.contains(type)){
       final file=zip.findFile('xl/sharedStrings.xml');
@@ -132,8 +136,8 @@ class FileShareDocEngine {
         var label=path.split('/').last;
         String value;
         if({'xlsx','xlsm','xltx'}.contains(type)){
-          if(node.children.whereType<xml.XmlElement>()
-            .any((e)=>e.name.local=='f'))continue;
+          final existingFormula=node.children.whereType<xml.XmlElement>()
+            .where((e)=>e.name.local=='f').firstOrNull;
           label=node.attributes.where((a)=>a.name.local=='r')
             .map((a)=>a.value).firstOrNull??label;
           final cellType=node.attributes.where((a)=>a.name.local=='t')
@@ -142,7 +146,9 @@ class FileShareDocEngine {
             .where((e)=>e.name.local=='v').map((e)=>e.innerText)
             .firstOrNull??'';
           final id=int.tryParse(raw)??-1;
-          value=cellType=='s'?(id>=0&&id<shared.length?shared[id]:''):
+          value=existingFormula!=null
+            ?'='+existingFormula.innerText
+            :cellType=='s'?(id>=0&&id<shared.length?shared[id]:''):
             cellType=='inlineStr'
             ?named(node,'t').map((e)=>e.innerText).join():raw;
         }else{
@@ -168,8 +174,20 @@ class FileShareDocEngine {
       if(block.index>=nodes.length)continue;
       final node=nodes[block.index];
       if({'xlsx','xlsm','xltx'}.contains(kind)){
-        if(node.children.whereType<xml.XmlElement>()
-          .any((e)=>e.name.local=='f'))continue;
+        if(value.startsWith('=')&&value.length>1){
+          final expression=value.substring(1).trim();
+          if(expression.isEmpty)throw const FormatException('Empty Excel formula');
+          node.attributes.removeWhere((a)=>a.name.local=='t');
+          node.children.removeWhere((n)=>n is xml.XmlElement &&
+            {'f','v','is'}.contains(n.name.local));
+          node.children.add(xml.XmlElement(xml.XmlName('f'),[],
+            [xml.XmlText(expression)]));
+          // Excel and WPS recalculate on open, no stale cached value.
+          node.children.add(xml.XmlElement(xml.XmlName('v')));
+          continue;
+        }
+        node.children.removeWhere((n)=>n is xml.XmlElement &&
+          n.name.local=='f');
         final oldType=node.attributes.where((a)=>a.name.local=='t')
           .map((a)=>a.value).firstOrNull??'n';
         final numeric=RegExp(
@@ -208,6 +226,20 @@ class FileShareDocEngine {
         }
       }
     }
+  }
+
+  void _requestSpreadsheetRecalc() {
+    if(!{'xlsx','xlsm','xltx'}.contains(kind))return;
+    final workbook=parts['xl/workbook.xml'];
+    if(workbook==null)return;
+    final root=workbook.rootElement;
+    var calc=root.childElements.where((e)=>e.name.local=='calcPr').firstOrNull;
+    if(calc==null){
+      calc=xml.XmlElement(xml.XmlName('calcPr'));
+      root.children.add(calc);
+    }
+    calc.setAttribute('fullCalcOnLoad','1');
+    calc.setAttribute('forceFullCalc','1');
   }
 
   /// Apply whole-paragraph Word text formatting to existing runs.
@@ -453,6 +485,12 @@ class FileShareDocEngine {
       return target;
     }
     apply(changed);
+    if({'xlsx','xlsm','xltx'}.contains(kind) &&
+      blocks.any((block)=>changed.containsKey(block.id) &&
+        changed[block.id]!.startsWith('=') &&
+        changed[block.id]!=block.original)){
+      _requestSpreadsheetRecalc();
+    }
     if(formatChanges.isNotEmpty)applyWordFormatting(formatChanges);
     if(alignmentChanges.isNotEmpty)applyWordAlignment(alignmentChanges);
     if(insertedAfter.isNotEmpty||deletedParagraphs.isNotEmpty||tablesAfter.isNotEmpty){
