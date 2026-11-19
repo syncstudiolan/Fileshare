@@ -42,6 +42,8 @@ flutter:
   assets:
     - assets/gander/jszip3.min.js
     - assets/gander/docx-preview.min.js
+    - assets/gander/marked.umd.js
+    - assets/gander/purify.min.js
     - cloudflare/worker.js
     - cloudflare/schema.sql
     - cloudflare/public/guest.html
