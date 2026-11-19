@@ -13,8 +13,8 @@ permissions:
 
 jobs:
   preview_validation:
-    # Draft PR #6 is code-only by request: do not run builds or releases.
-    if: github.event_name == 'pull_request' && github.event.pull_request.number != 6
+    # Before merging PR #6, run actual analyzer/tests/Android compilation.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -42,16 +42,13 @@ jobs:
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
       - name: Build File Share Android PDF Tools test APK
-        if: github.event.pull_request.number == 6
         run: flutter build apk --debug --target-platform android-arm64
       - name: Verify test APK debug signature
-        if: github.event.pull_request.number == 6
         shell: bash
         run: |
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           "$signer" verify --verbose build/app/outputs/flutter-apk/app-debug.apk
       - name: Upload Android PDF Tools test APK
-        if: github.event.pull_request.number == 6
         uses: actions/upload-artifact@v4
         with:
           name: file-share-pdf-tools-android-debug
@@ -137,7 +134,8 @@ jobs:
           if-no-files-found: error
 
   windows:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
+    needs: android
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
