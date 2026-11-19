@@ -132,9 +132,11 @@ class FileShareApplication : Application() {
                         Thread {
                             try {
                                 val converted = DocxPreviewPdf.convert(File(path), cacheDir)
-                                runOnUiThread { result.success(converted.absolutePath) }
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    result.success(converted.absolutePath)
+                                }
                             } catch (e: Exception) {
-                                runOnUiThread {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
                                     result.error("DOCX_CONVERSION_FAILED", e.message, null)
                                 }
                             }
