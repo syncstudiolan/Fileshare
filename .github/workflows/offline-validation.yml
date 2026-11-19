@@ -179,24 +179,27 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
-      - name: Preinstall ONNX Runtime 1.28.3 for Windows CMake
+      - name: Preinstall available ONNX Runtime 1.26.0 and pin Windows CMake
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '1.28.3'
+          $version = '1.26.0'
           $name = "onnxruntime-win-x64-$version"
+          $cmake = 'windows/CMakeLists.txt'
+          $source = Get-Content $cmake -Raw
+          if ($source -notmatch 'include\\(flutter/generated_plugins\\.cmake\\)') { throw 'Flutter generated plugins CMake include missing' }
+          $source = $source -replace 'include\\(flutter/generated_plugins\\.cmake\\)', "set(ONNXRUNTIME_VERSION `"$version`")`ninclude(flutter/generated_plugins.cmake)"
+          Set-Content -Path $cmake -Value $source
           $root = Join-Path (Get-Location) 'build/windows/x64/plugins/flutter_onnxruntime/onnxruntime'
           New-Item -ItemType Directory -Force -Path $root | Out-Null
           $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
           $url = "https://github.com/microsoft/onnxruntime/releases/download/v$version/$name.zip"
-          & curl.exe -fSL --retry 3 --retry-delay 3 -o $zip $url
-          if ($LASTEXITCODE -ne 0) { throw "Failed to download ONNX Runtime $version" }
+          & curl.exe -fSL --retry 2 --retry-delay 3 -o $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "Official ONNX Runtime Windows package unavailable: $url" }
           Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
-          $include = Join-Path $root "$name/include/onnxruntime_cxx_api.h"
-          $library = Join-Path $root "$name/lib/onnxruntime.lib"
-          $dll = Join-Path $root "$name/lib/onnxruntime.dll"
-          foreach ($item in @($include, $library, $dll)) {
-            if (-not (Test-Path $item)) { throw "Missing ONNX runtime dependency: $item" }
+          foreach ($relative in @("include/onnxruntime_cxx_api.h","lib/onnxruntime.lib","lib/onnxruntime.dll")) {
+            $item = Join-Path $root "$name/$relative"
+            if (-not (Test-Path $item)) { throw "Incomplete ONNX Runtime archive: $item" }
           }
       - name: Build optimized Windows release bundle
         run: flutter build windows --release
