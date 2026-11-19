@@ -286,17 +286,43 @@ class FileShareApp extends StatefulWidget {
   State<FileShareApp> createState() => _FileShareAppState();
 }
 
-class _FileShareAppState extends State<FileShareApp> {
+class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver {
   late ThemeMode _mode = widget.initialMode;
   static final navigatorKey=GlobalKey<NavigatorState>();
+  Timer? _updateCheckTimer;
+  bool _wasBackgrounded=false;
 
   @override void initState(){
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if(widget.enableBackends) {
+      _updateCheckTimer=Timer.periodic(const Duration(minutes:45),(_)=>
+        unawaited(FileShareUpdates.instance.check(startup:true)));
+    }
     FileShareUpdates.instance.initializeVersion(
       const String.fromEnvironment('FILE_SHARE_VERSION',defaultValue:'0.1.0'),
       const int.fromEnvironment('FILE_SHARE_BUILD_NUMBER',defaultValue:1));
-    WidgetsBinding.instance.addPostFrameCallback((_) =>
-      unawaited(FileShareUpdates.instance.check(startup:true)));
+    if(widget.enableBackends) {
+      WidgetsBinding.instance.addPostFrameCallback((_) =>
+        unawaited(FileShareUpdates.instance.check(startup:true)));
+    }
+  }
+
+  @override void didChangeAppLifecycleState(AppLifecycleState state){
+    if(state==AppLifecycleState.paused || state==AppLifecycleState.detached)
+      _wasBackgrounded=true;
+    if(state==AppLifecycleState.resumed && _wasBackgrounded){
+      _wasBackgrounded=false;
+      FileShareUpdates.instance.startNewForegroundSession();
+      if(widget.enableBackends)
+        unawaited(FileShareUpdates.instance.check(startup:true));
+    }
+  }
+
+  @override void dispose(){
+    _updateCheckTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
 
