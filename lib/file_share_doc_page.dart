@@ -14,6 +14,7 @@ import 'gander_presentation_preview_page.dart';
 import 'file_share_windows_pdf_viewer.dart';
 import 'gander_epub_preview_page.dart';
 import 'gander_archive_browser_page.dart';
+import 'gander_prose_preview_page.dart';
 import 'image_editing_page.dart';
 import 'main.dart' show FileTheme, FileCardOpenRouter, appLan;
 import 'transfer_downloads.dart';
@@ -435,6 +436,17 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     final ext=FileShareDocEngine.ext(
       _saved==null?(_displayName??file.path):file.path);
     try{
+      if(['doc','rtf','odt'].contains(ext)){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderProsePreviewPage(document:file,
+            name:_saved==null?_displayName:null)));
+        return;
+      }
+      if(['ods'].contains(ext)){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderSpreadsheetPreviewPage(document:file)));
+        return;
+      }
       if(['xlsx','xlsm','xltx','xls','xlsb'].contains(ext)){
         await Navigator.of(context).push(MaterialPageRoute<void>(
           builder:(_)=>GanderSpreadsheetPreviewPage(document:file)));
