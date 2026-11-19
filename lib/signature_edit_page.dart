@@ -63,6 +63,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   Future<void> _load(File file)async{
     if(_busy)return;
+    _filterRevision++;
+    _filterTimer?.cancel();
     setState(()=>_busy=true);
     try {
       final bytes=await file.readAsBytes();
@@ -174,6 +176,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   Future<void> _applyCrop()async{
     final source=_original;
     if(source==null||_busy)return;
+    _filterRevision++;
     _filterTimer?.cancel();
     setState(()=>_busy=true);
     try{
