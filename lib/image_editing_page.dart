@@ -2093,8 +2093,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
     final name='edited_${DateTime.now().microsecondsSinceEpoch}.${isJpg?'jpg':'png'}';
     final file=await original.copy('${cart.path}${Platform.pathSeparator}$name');
     ImageEditingCart.instance.add(file,name);
-    if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content:Text('Added to File Share Cart')));
+    if(mounted)FileShareTopNotice.show(context,'Added to File Share Cart');
   }
   Future<void> _historyAction(ImageEditingDraft entry,String action)async{
     try{
@@ -2129,8 +2128,7 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
           }
       }
     }catch(_){
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content:Text('Image action failed. Please retry.')));
+      if(mounted)FileShareTopNotice.show(context,'Image action failed. Please retry.');
     }
   }
 
