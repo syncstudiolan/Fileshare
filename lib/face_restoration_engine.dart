@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -75,6 +76,14 @@ class FaceRestorationEngine {
     double strength=.65,
   }) async {
     if(normalizedRoi.length!=4)throw ArgumentError('Expected face region');
+    // GFPGAN's 170MB native ONNX tensor runtime can abort mobile processes,
+    // bypassing Dart exceptions. Use an isolate-based gentle face retouch
+    // on Android/iOS instead, preserving all pixels outside the selection.
+    if(Platform.isAndroid||Platform.isIOS){
+      return compute(_mobileFaceRetouch,{
+        'source':source,'roi':normalizedRoi,'strength':strength,
+      });
+    }
     final image=img.decodeImage(source);
     if(image==null)throw const FormatException('Unsupported image');
     final left=(normalizedRoi[0]*image.width).round().clamp(0,image.width-1).toInt();
@@ -138,4 +147,37 @@ class FaceRestorationEngine {
       await session.close();
     }
   }
+}
+
+/// Conservative and bounded mobile fallback; not a generative GFPGAN model.
+/// The original face/identity stays intact and the rest of the photo is untouched.
+Uint8List _mobileFaceRetouch(Map<String,Object?> request){
+  final source=request['source'] as Uint8List;
+  final region=(request['roi'] as List).cast<double>();
+  final amount=(request['strength'] as double).clamp(0.0,1.0);
+  final image=img.decodeImage(source);
+  if(image==null)throw const FormatException('Unsupported image');
+  final left=(region[0]*image.width).round().clamp(0,image.width-1).toInt();
+  final top=(region[1]*image.height).round().clamp(0,image.height-1).toInt();
+  final right=(region[2]*image.width).round().clamp(left+1,image.width).toInt();
+  final bottom=(region[3]*image.height).round().clamp(top+1,image.height).toInt();
+  final w=right-left,h=bottom-top;
+  if(w<40||h<40)throw StateError('Selected face region is too small');
+  final cropped=img.copyCrop(image,x:left,y:top,width:w,height:h);
+  final adjusted=img.adjustColor(cropped,
+    contrast:1+.07*amount,saturation:1+.03*amount);
+  final featherWidth=math.max(1,math.min(w,h)*.08);
+  for(var y=0;y<h;y++){
+    for(var x=0;x<w;x++){
+      final edge=math.min(math.min(x,w-1-x),math.min(y,h-1-y));
+      final mix=amount*(edge/featherWidth).clamp(0.0,1.0);
+      final before=image.getPixel(left+x,top+y),after=adjusted.getPixel(x,y);
+      int channel(num oldV,num newV)=>
+        (oldV+(newV-oldV)*mix).round().clamp(0,255).toInt();
+      image.setPixelRgba(left+x,top+y,
+        channel(before.r,after.r),channel(before.g,after.g),
+        channel(before.b,after.b),before.a.toInt());
+    }
+  }
+  return Uint8List.fromList(img.encodePng(image,level:1));
 }
