@@ -28,6 +28,7 @@ jobs:
           python3 -m pip install --quiet Pillow
           python3 tool/generate_brand_assets.py
           flutter pub get
+          python3 tool/ios/install_native_pdf.py
       - name: Verify iOS branded icon and source compatibility
         run: |
           set -euo pipefail
