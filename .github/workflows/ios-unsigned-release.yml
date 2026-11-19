@@ -25,7 +25,16 @@ jobs:
         run: |
           flutter config --enable-ios
           flutter create --platforms=ios --project-name file_share .
+          python3 -m pip install --quiet Pillow
+          python3 tool/generate_brand_assets.py
           flutter pub get
+      - name: Verify iOS branded icon and source compatibility
+        run: |
+          set -euo pipefail
+          test -s ios/Runner/Assets.xcassets/AppIcon.appiconset/fs-store.png
+          test -s ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter test
       - name: Configure minimum iOS, privacy and local network usage
         run: |
           python3 - <<'PY'
@@ -69,8 +78,10 @@ jobs:
         run: |
           set -euo pipefail
           version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
-          flutter build ios --release --no-codesign --build-name="$version" \
-            --build-number="${{ github.run_number }}" \
+          flutter build ios --release --no-codesign \
+            --tree-shake-icons --obfuscate \
+            --split-debug-info=build/ios-symbols \
+            --build-name="$version" --build-number="${{ github.run_number }}" \
             --dart-define=FILE_SHARE_VERSION="$version" \
             --dart-define=FILE_SHARE_BUILD_NUMBER="${{ github.run_number }}"
       - name: Assemble unsigned IPA (requires signing before installation)
@@ -84,6 +95,12 @@ jobs:
           zip -qry release/FileShare-iOS-UNSIGNED.ipa Payload
           unzip -tq release/FileShare-iOS-UNSIGNED.ipa
           file "$app/Runner"
+          python3 - <<'PY'
+          import os
+          path='release/FileShare-iOS-UNSIGNED.ipa'
+          print('Unsigned iOS IPA size:',round(os.path.getsize(path)/1048576,2),'MiB')
+          assert os.path.getsize(path)<300*1048576, 'iOS package too large'
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: file-share-ios-unsigned-ipa
