@@ -179,27 +179,34 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
-      - name: Preinstall available ONNX Runtime 1.26.0 and pin Windows CMake
+      - name: Supply ONNX Runtime native Windows files from official NuGet package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '1.26.0'
+          $version = '1.28.3'
           $name = "onnxruntime-win-x64-$version"
-          $cmake = 'windows/CMakeLists.txt'
-          $source = Get-Content $cmake -Raw
-          if ($source -notmatch 'include\(flutter/generated_plugins\.cmake\)') { throw 'Flutter generated plugins CMake include missing' }
-          $source = $source -replace 'include\(flutter/generated_plugins\.cmake\)', "set(ONNXRUNTIME_VERSION `"$version`")`ninclude(flutter/generated_plugins.cmake)"
-          Set-Content -Path $cmake -Value $source
-          $root = Join-Path (Get-Location) 'build/windows/x64/plugins/flutter_onnxruntime/onnxruntime'
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
-          $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
-          $url = "https://github.com/microsoft/onnxruntime/releases/download/v$version/$name.zip"
-          & curl.exe -fSL --retry 2 --retry-delay 3 -o $zip $url
-          if ($LASTEXITCODE -ne 0) { throw "Official ONNX Runtime Windows package unavailable: $url" }
-          Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
-          foreach ($relative in @("include/onnxruntime_cxx_api.h","lib/onnxruntime.lib","lib/onnxruntime.dll")) {
-            $item = Join-Path $root "$name/$relative"
-            if (-not (Test-Path $item)) { throw "Incomplete ONNX Runtime archive: $item" }
+          $root = Join-Path (Get-Location) "build/windows/x64/plugins/flutter_onnxruntime/onnxruntime/$name"
+          $nuget = Join-Path $env:RUNNER_TEMP 'onnxruntime-nuget'
+          New-Item -ItemType Directory -Force -Path $root,$nuget | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'onnxruntime.nupkg'
+          $url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$version/microsoft.ml.onnxruntime.$version.nupkg"
+          & curl.exe -fSL --retry 3 --retry-delay 3 -o $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "NuGet ONNX Runtime download failed: $url" }
+          Copy-Item $zip "$zip.zip"
+          Expand-Archive -LiteralPath "$zip.zip" -DestinationPath $nuget -Force
+          $headers = Get-ChildItem $nuget -Recurse -File -Filter onnxruntime_cxx_api.h | Select-Object -First 1
+          $libraries = Get-ChildItem $nuget -Recurse -File -Filter onnxruntime.lib | Where-Object { $_.FullName -match 'win-x64' } | Select-Object -First 1
+          $dlls = Get-ChildItem $nuget -Recurse -File -Filter onnxruntime.dll | Where-Object { $_.FullName -match 'win-x64' } | Select-Object -First 1
+          if (-not $headers -or -not $libraries -or -not $dlls) {
+            Get-ChildItem $nuget -Recurse -File | Where-Object { $_.Name -like '*onnxruntime*' } | Select-Object -ExpandProperty FullName
+            throw 'NuGet package missing required x64 library, DLL or C++ headers'
+          }
+          New-Item -ItemType Directory -Force -Path "$root/include","$root/lib" | Out-Null
+          Copy-Item (Join-Path $headers.DirectoryName '*') "$root/include" -Recurse -Force
+          Copy-Item $libraries.FullName "$root/lib/onnxruntime.lib" -Force
+          Copy-Item $dlls.FullName "$root/lib/onnxruntime.dll" -Force
+          foreach ($required in @("$root/include/onnxruntime_cxx_api.h","$root/lib/onnxruntime.lib","$root/lib/onnxruntime.dll")) {
+            if (-not (Test-Path $required)) { throw "ONNX dependency not ready: $required" }
           }
       - name: Build optimized Windows release bundle
         run: flutter build windows --release
