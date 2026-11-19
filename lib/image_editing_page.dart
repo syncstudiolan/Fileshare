@@ -40,6 +40,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
+  bool _cropDirty=false;
   bool _exporting=false;
   final _targetKbController=TextEditingController(text:'500');
   String? _selectedFilter;
@@ -240,6 +241,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _undo.clear();_redo.clear();_steps.clear();
         _pendingFilter=null;_selectedFilter=null;_pendingBackgroundColor=null;
         _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropDirty=false;
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
         _error=null;
@@ -262,6 +264,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     await EditorSessionStore.instance.save('image',id,{
       'tool':_tool,'format':_format,
       'cropMode':_cropMode,'crop':[_crop.left,_crop.top,_crop.right,_crop.bottom],
+      'cropDirty':_cropDirty,
       'cropRatio':_cropRatio,
       'cropCorners':[for(final p in _cropCorners)[p.dx,p.dy]],
       'eraseRadius':_eraseRadius,'softness':_softness,'eraseMode':_eraseMode,
@@ -290,6 +293,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       if(tool!=null&&_tools.contains(tool))_tool=tool;
       _format=state['format'] as String? ??_format;
       _cropMode=state['cropMode'] as String? ??_cropMode;
+      _cropDirty=state['cropDirty'] as bool? ??false;
       _cropRatio=state['cropRatio'] as String? ??_cropRatio;
       final crop=state['crop'];
       if(crop is List&&crop.length==4)_crop=Rect.fromLTRB(
@@ -389,6 +393,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       if(dimensions!=null)_ratio=dimensions[0]/dimensions[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropDirty=false;
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
@@ -417,6 +422,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _bytes=next;
       _ratio=size[0]/size[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
+      _cropDirty=false;
       _cropCorners=[const Offset(.06,.06),const Offset(.94,.06),
         const Offset(.94,.94),const Offset(.06,.94)];
     });
@@ -680,8 +686,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         if(_pendingFilter!=null)await _finalizeFilter();
         if(_fineAngle.abs()>=.001)await _commitStraighten();
         if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-        if(_cropMode=='Perspective Crop' && _tool=='Crop' ||
-            _crop!=const Rect.fromLTWH(.06,.06,.88,.88)) {
+        if(_cropDirty) {
           await _commitCrop();
         }
         if(_brightness!=1||_contrast!=1||
@@ -1150,6 +1155,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   void _setCropRatio(String ratio){
     setState((){
       _cropRatio=ratio;
+      _cropDirty=true;
       final value=switch(ratio){
         '1:1'=>1.0,'4:3'=>4/3,'16:9'=>16/9,'A4'=>210/297,
         _=>_ratio,
@@ -1396,6 +1402,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_tool=='Crop'){
       final dx=d.delta.dx/size.width,dy=d.delta.dy/size.height;
       setState((){
+        _cropDirty=true;
         final index=_activeCropHandle;
         if(_cropMode=='Normal Crop'&&index!=null){
           const minimum=.025;
