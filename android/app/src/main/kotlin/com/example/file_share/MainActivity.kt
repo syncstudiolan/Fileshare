@@ -148,12 +148,42 @@ class FileShareApplication : Application() {
                     }
                 }
                 "startLanService" -> try {
-                    val intent = Intent(this, LanKeepAliveService::class.java)
-                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent)
-                    else startService(intent)
+                    val background = getSharedPreferences(
+                        "file_share_background", Context.MODE_PRIVATE)
+                    if (!background.contains("lan_boot_receiver_enabled")) {
+                        background.edit().putBoolean("lan_boot_receiver_enabled", true).apply()
+                    }
+                    if (background.getBoolean("lan_boot_receiver_enabled", true)) {
+                        val intent = Intent(this, LanKeepAliveService::class.java)
+                        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent)
+                        else startService(intent)
+                    }
                     result.success(true)
                 } catch (e: Exception) {
                     result.error("BACKGROUND_RESTRICTED", e.message, null)
+                }
+                "setLanBootReceiver" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    getSharedPreferences("file_share_background", Context.MODE_PRIVATE)
+                        .edit().putBoolean("lan_boot_receiver_enabled", enabled).apply()
+                    if (enabled) {
+                        try {
+                            val intent = Intent(this, LanKeepAliveService::class.java)
+                            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent)
+                            else startService(intent)
+                        } catch (e: Exception) {
+                            result.error("BACKGROUND_RESTRICTED", e.message, null)
+                            return@setMethodCallHandler
+                        }
+                    } else {
+                        stopService(Intent(this, LanKeepAliveService::class.java))
+                    }
+                    result.success(enabled)
+                }
+                "getLanBootReceiver" -> {
+                    result.success(getSharedPreferences(
+                        "file_share_background", Context.MODE_PRIVATE)
+                        .getBoolean("lan_boot_receiver_enabled", true))
                 }
                 "stopLanService" -> {
                     stopService(Intent(this, LanKeepAliveService::class.java))
