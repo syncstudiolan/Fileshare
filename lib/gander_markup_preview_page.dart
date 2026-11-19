@@ -40,7 +40,8 @@ class _GanderMarkupPreviewPageState extends State<GanderMarkupPreviewPage>{
       }
       final isMarkdown=['md','markdown'].contains(
         widget.document.path.toLowerCase().split('.').last);
-      final quoted=jsonEncode(text);
+      // Never let untrusted HTML close the trusted inline script tag.
+      final quoted=jsonEncode(text).replaceAll('<',r'\u003C');
       final html=StringBuffer()
         ..write('<!doctype html><html><head><meta charset="utf-8">')
         ..write('<meta name="viewport" content="width=device-width,initial-scale=1">')
