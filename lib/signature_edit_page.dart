@@ -30,11 +30,15 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   double _aspect=1.8;
   SignatureCrop _crop=SignatureCrop.full;
   String _filter='Original',_tool='Crop';
+  double _filterIntensity=1;
+  Timer? _filterTimer;
+  int _filterRevision=0;
   int _target=20;
   final _targetController=TextEditingController(text:'20');
   final _picker=ImagePicker();
   static const _filters=['Original','Black & White','Grayscale',
-    'Blue Ink','Dark Ink'];
+    'Blue Ink','Dark Ink','Red Ink','Green Ink','High Contrast',
+    'Soft Ink','Sepia','Invert','Clean Paper','Pencil'];
   static const _tabs=['Crop','Compress','Filters'];
   String _cropMode='Normal';
   int _corner=-1; // 0..3 corners, 4..7 edge midpoints, -2 interior drag.
@@ -52,12 +56,15 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   @override
   void dispose(){
+    _filterTimer?.cancel();
     _targetController.dispose();
     super.dispose();
   }
 
   Future<void> _load(File file)async{
     if(_busy)return;
+    _filterRevision++;
+    _filterTimer?.cancel();
     setState(()=>_busy=true);
     try {
       final bytes=await file.readAsBytes();
@@ -71,6 +78,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         _quad=[const Offset(.08,.08),const Offset(.92,.08),
           const Offset(.92,.92),const Offset(.08,.92)];
         _filter='Original';
+        _filterIntensity=1;
         _error=null;
       });
     }catch(e){
@@ -118,7 +126,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     setState(()=>_busy=true);
     try{
       final data=await SignatureEditEngine.exactJpeg(
-        _original!,_selection,_filter,target);
+        _original!,_selection,_filter,target,
+        intensity:_filterIntensity);
       if(data.length!=target*1024)throw StateError('Exact size check failed');
       final name='Signature_${DateTime.now().millisecondsSinceEpoch}_${target}KB.jpg';
       if(action=='cart'){
@@ -146,16 +155,51 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   Future<void> _changeFilter(String filter)async{
     if(_original==null||_busy)return;
-    setState(()=>_busy=true);
+    setState(()=>_filter=filter);
+    await _refreshFilterPreview();
+  }
+
+  Future<void> _refreshFilterPreview()async{
+    final current=_original;
+    if(current==null||_busy)return;
+    final version=++_filterRevision;
     try{
       final result=await SignatureEditEngine.preview(
-        _original!,SignatureCrop.full,filter);
-      if(mounted)setState((){
-        _filter=filter;
-        _preview=result;
+        current,SignatureCrop.full,_filter,
+        intensity:_filterIntensity);
+      if(mounted&&version==_filterRevision)setState(()=>_preview=result);
+    }catch(e){
+      if(mounted&&version==_filterRevision)_show('Filter failed: $e');
+    }
+  }
+
+  Future<void> _applyCrop()async{
+    final source=_original;
+    if(source==null||_busy)return;
+    _filterRevision++;
+    _filterTimer?.cancel();
+    setState(()=>_busy=true);
+    try{
+      final cropped=await SignatureEditEngine.applyCrop(source,_selection);
+      final dimensions=await compute(_signatureDimensions,cropped);
+      final preview=await SignatureEditEngine.preview(
+        cropped,SignatureCrop.full,_filter,
+        intensity:_filterIntensity);
+      if(!mounted)return;
+      setState((){
+        _original=cropped;
+        _preview=preview;
+        _aspect=dimensions[0]/dimensions[1];
+        _crop=SignatureCrop.full;
+        _quad=[const Offset(0,0),const Offset(1,0),
+          const Offset(1,1),const Offset(0,1)];
+        _cropMode='Normal';
+        _error=null;
       });
-    }catch(e){_show('Filter failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+      _show('Crop applied. Save, share or add to Cart.');
+    }catch(e){
+      if(mounted)_show('Could not apply crop: $e');
+    }finally{if(mounted)setState(()=>_busy=false);}
   }
 
   SignatureCrop get _selection => _cropMode=='Perspective'
@@ -330,6 +374,11 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           selected:{_cropMode},
           onSelectionChanged:_busy?null:(choice)=>_setMode(choice.first)),
         const SizedBox(height:12),
+        SizedBox(width:double.infinity,child:FilledButton.icon(
+          onPressed:_busy||_original==null?null:_applyCrop,
+          icon:const Icon(Icons.check_circle_outline_rounded),
+          label:const Text('Apply Crop'))),
+        const SizedBox(height:8),
         OutlinedButton.icon(
           onPressed:()=>setState((){
             _crop=SignatureCrop.full;
@@ -338,6 +387,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           }),
           icon:const Icon(Icons.restart_alt),
           label:const Text('Reset Crop')),
+
       ]);
     }
     if(_tool=='Compress'){
@@ -391,13 +441,29 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         Text('Signature Filters',style:TextStyle(
           fontWeight:FontWeight.w800,fontSize:16)),
       ]),
-      const Text('Crop handles remain active while applying filters.'),
+      const Text('Select a filter and adjust its intensity. '
+        'Crop handles remain available in the Crop tab.'),
       const SizedBox(height:10),
       Wrap(spacing:9,runSpacing:9,children:[
         for(final filter in _filters)ChoiceChip(
           label:Text(filter),selected:_filter==filter,
           onSelected:_busy?null:(_)=>_changeFilter(filter)),
       ]),
+      const SizedBox(height:12),
+      Row(children:[
+        const Icon(Icons.tune_rounded,size:18,color:FileTheme.violet),
+        const SizedBox(width:8),
+        const Expanded(child:Text('Filter strength')),
+        Text('${(_filterIntensity*100).round()}%',
+          style:const TextStyle(fontWeight:FontWeight.w700)),
+      ]),
+      Slider(value:_filterIntensity,min:0,max:1,divisions:20,
+        onChanged:_busy?null:(value){
+          setState(()=>_filterIntensity=value);
+          _filterTimer?.cancel();
+          _filterTimer=Timer(const Duration(milliseconds:140),
+            ()=>unawaited(_refreshFilterPreview()));
+        }),
     ]);
   }
 

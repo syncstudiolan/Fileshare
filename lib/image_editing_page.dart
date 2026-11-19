@@ -541,11 +541,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
       }
       await _commit(current,result,_enhanceFaceMode
-        ? 'GFPGAN Face Restoration'
-        : 'Photo Enhancer Real-ESRGAN ${_enhanceScale}x');
+        ? (Platform.isAndroid||Platform.isIOS ? 'Safe mobile face retouch' : 'GFPGAN Face Restoration')
+        : (Platform.isAndroid||Platform.isIOS
+            ?'Safe mobile photo enhancement'
+            :'Photo Enhancer Real-ESRGAN ${_enhanceScale}x'));
       _message(_enhanceFaceMode
-        ? 'Face restoration applied to the selected area'
-        : 'Photo enhanced with Real-ESRGAN ${_enhanceScale}x');
+        ? (Platform.isAndroid||Platform.isIOS ? 'Face retouch applied to the selected area' : 'Face restoration applied to the selected area')
+        : (Platform.isAndroid||Platform.isIOS
+            ?'Photo enhanced with safe mobile image processing'
+            :'Photo enhanced with Real-ESRGAN ${_enhanceScale}x'));
     }catch(e){
       _message('Photo Enhancer could not finish: $e');
     }finally{
@@ -1236,21 +1240,16 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(_busy)return;
     if(_cropMode=='Normal Crop'){
       final crop=_crop;
-      final before=_bytes;
-      final ratio=_ratio;
-      if(before==null)return;
-      setState((){
-        _instantCrop=crop;
-        _ratio=ratio*crop.width/crop.height;
-      });
+      if(_bytes==null)return;
+      // Do not change canvas aspect ratio before the cropped bitmap is
+      // committed. The speculative ratio/CustomPainter path could stretch
+      // the old image and leave a transparent gutter along the right edge.
+      // The worker performs the crop; _commit reads the resulting pixel
+      // dimensions and atomically updates _ratio and image bytes.
       await _apply('crop',{
         'x':crop.left,'y':crop.top,'w':crop.width,'h':crop.height,
-      },description:'Normal crop').whenComplete((){
-        if(mounted)setState((){
-          _instantCrop=null;
-          if(identical(_bytes,before))_ratio=ratio;
-        });
-      });
+      },description:'Normal crop');
+      if(mounted && !_cropDirty)_resetZoom();
       return;
     }
     final points=_cropCorners;
