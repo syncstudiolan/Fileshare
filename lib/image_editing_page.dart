@@ -687,14 +687,28 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       await _eraseQueue;
       if(!_busy){
         if(_pendingFilter!=null)await _finalizeFilter();
+        if(_pendingFilter!=null){
+          _message('Filter still pending. Retry Apply before exporting.');return;
+        }
         if(_fineAngle.abs()>=.001)await _commitStraighten();
+        if(_fineAngle.abs()>=.001){
+          _message('Rotation not finished. Retry Apply before exporting.');return;
+        }
         if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-        if(_cropDirty) {
-          await _commitCrop();
+        if(_pendingBackgroundColor!=null){
+          _message('Background change still pending. Retry before exporting.');return;
+        }
+        if(_cropDirty)await _commitCrop();
+        if(_cropDirty){
+          _message('Crop not finished. Retry Apply before exporting.');return;
         }
         if(_brightness!=1||_contrast!=1||
             _saturation!=1||_exposure!=0){
           await _commitAdjust();
+        }
+        if(_brightness!=1||_contrast!=1||
+            _saturation!=1||_exposure!=0){
+          _message('Adjustments not finished. Retry before exporting.');return;
         }
       }
       if(cart){
@@ -1191,12 +1205,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _commitStraighten()async{
     final degrees=_fineAngle;
     if(degrees.abs()<.001)return;
+    final previous=_bytes;
     await _apply('straighten',{'degrees':degrees,'autoCrop':_straightenAutoCrop},
       description:'Straighten ${degrees.toStringAsFixed(1)}°');
-    if(mounted)setState(()=>_fineAngle=0);
+    // Do not discard the live rotation if its raster export failed.
+    if(mounted && !identical(previous,_bytes))setState(()=>_fineAngle=0);
   }
   Future<void> _commitAdjust()async{
     if(_busy)return;
+    final previous=_bytes;
     final options=<String,Object?>{
       'brightness':_brightness,'contrast':_contrast,
       'saturation':_saturation,'exposure':_exposure,
@@ -1205,6 +1222,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _brightness=1;_contrast=1;_saturation=1;_exposure=0;
     });
     await _apply('adjust',options);
+    if(mounted && identical(previous,_bytes)){
+      // Failed operation: keep the adjustments visible, not silently lost.
+      setState((){
+        _brightness=options['brightness'] as double;
+        _contrast=options['contrast'] as double;
+        _saturation=options['saturation'] as double;
+        _exposure=options['exposure'] as double;
+      });
+    }
   }
   Future<void> _commitCrop()async{
     if(_busy)return;
