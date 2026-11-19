@@ -42,9 +42,15 @@ Future<void> main([List<String> args = const []]) async {
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
   final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
+  final androidBackgroundEnabled = Platform.isAndroid &&
+    (await prefs.getBool('android_receive_background') ?? true);
+  // Receiver availability is independent from the first-run login screen.
   final offline = ciLanTest || previousOffline || windowsSmoke ||
-    Platform.isWindows || (Platform.isAndroid &&
-      (await prefs.getBool('android_receive_background') ?? true));
+    Platform.isWindows;
+  // Restore the encrypted session before drawing Profile/Login, without a
+  // network call. The dashboard may re-check the restored session later.
+  try { await PersonalCloud.instance.restore(); }
+  catch (e) { debugPrint('Saved cloud session unavailable: $e'); }
   appLan.onReceived = (file) => Platform.isAndroid
       ? const MethodChannel('file_share.native').invokeMethod<void>(
           'notifyReceived', {'name': file.name, 'sender': file.peer})
@@ -63,7 +69,8 @@ Future<void> main([List<String> args = const []]) async {
       await WindowsBackground.instance.enableDefaultStart(prefs);
     }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
   }
-  if (offline && (Platform.isAndroid || Platform.isWindows)) {
+  if ((offline || androidBackgroundEnabled) &&
+      (Platform.isAndroid || Platform.isWindows)) {
     unawaited(appLan.start().catchError((Object e) {
       debugPrint('Background LAN start failed: $e');
     }));
@@ -79,7 +86,7 @@ Future<void> main([List<String> args = const []]) async {
       'dark' => ThemeMode.dark,
       _ => ThemeMode.system,
     },
-    offlineDefault: offline,
+    offlineDefault: offline || PersonalCloud.instance.signedIn,
   ));
 }
 
@@ -1985,12 +1992,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         }
         if (mounted) setState(() {});
       }).catchError((Object e) { _snack('LAN start failed: ' + e.toString()); });
-      PersonalCloud.instance.restore().then((_) async {
-        await PersonalCloud.instance.cleanupLocalCache();
+      PersonalCloud.instance.cleanupLocalCache().then((_) {
         _resumeCloudInbox();
       }).catchError((Object e) {
-          _snack('Personal cloud storage unavailable: ' + e.toString());
-        });
+        _snack('Personal cloud cache unavailable: ' + e.toString());
+      });
     });
   }
 
