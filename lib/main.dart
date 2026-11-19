@@ -1923,6 +1923,140 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _showSamples = true;
   bool _refreshing = false;
   bool _desktopSidebarVisible = true;
+  final Map<String,TimelineGroup> _selectedCards={};
+  bool _bulkBusy=false;
+  String _keyOf(TimelineGroup g)=>g.lan!=null
+    ?'lan:${g.lan!.first.id}':'qr:${g.cloud!.first.id}';
+  void _toggleCard(TimelineGroup g){
+    if(_bulkBusy)return;
+    final key=_keyOf(g);
+    setState((){
+      if(_selectedCards.containsKey(key))_selectedCards.remove(key);
+      else _selectedCards[key]=g;
+    });
+  }
+  void _selectAllCards(List<TimelineGroup> groups){
+    if(_bulkBusy)return;
+    setState((){for(final g in groups)_selectedCards[_keyOf(g)]=g;});
+  }
+  Future<void> _downloadCards()async{
+    if(_selectedCards.isEmpty||_bulkBusy)return;
+    final cards=List<TimelineGroup>.of(_selectedCards.values);
+    setState(()=>_bulkBusy=true);
+    var success=0,failed=0,skipped=0;
+    try{
+      for(final g in cards){
+        for(final f in g.lan??<LanFile>[]){
+          if((f.incoming&&f.state!=TransferState.delivered)||
+             !await File(f.path).exists()){skipped++;continue;}
+          try{
+            final saved=await TransferDownloads.instance.export(File(f.path),f.name);
+            if(saved==null){skipped++;continue;}
+            await TransferDownloads.instance.markSaved('lan_${f.id}');
+            success++;
+          }catch(_){failed++;}
+        }
+        for(final f in g.cloud??<CloudFile>[]){
+          try{
+            final file=await PersonalCloud.instance.download(f);
+            final saved=await TransferDownloads.instance.export(file,f.name);
+            if(saved==null){skipped++;continue;}
+            await TransferDownloads.instance.markSaved('cloud_${f.id}');
+            success++;
+          }catch(_){failed++;}
+        }
+      }
+      if(mounted)_snack('$success downloaded · $skipped skipped · $failed failed');
+    }finally{
+      if(mounted)setState((){
+        _bulkBusy=false;_selectedCards.clear();
+      });
+    }
+  }
+  Future<void> _deleteCards()async{
+    if(_selectedCards.isEmpty||_bulkBusy)return;
+    final lanIds=<String>{},cloudIds=<String>{};
+    for(final g in _selectedCards.values){
+      for(final f in g.lan??<LanFile>[])lanIds.add(f.id);
+      for(final f in g.cloud??<CloudFile>[])cloudIds.add(f.id);
+    }
+    final count=lanIds.length+cloudIds.length;
+    final confirm=await showDialog<bool>(context:context,builder:(dialog)=>
+      AlertDialog(
+        title:const Text('Delete selected cards?'),
+        content:Text('$count file(s) will be deleted. '
+          '${cloudIds.isEmpty?'':'Guest QR files will also be deleted from cloud storage. '}'
+          'This action cannot be undone.'),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),
+            child:const Text('Cancel')),
+          FilledButton.icon(onPressed:()=>Navigator.pop(dialog,true),
+            icon:const Icon(Icons.delete_outline_rounded),
+            label:const Text('Delete')),
+        ],
+      ));
+    if(confirm!=true||!mounted)return;
+    setState(()=>_bulkBusy=true);
+    var deleted=0,failed=0;
+    try{
+      for(final id in lanIds){
+        if(!appLan.files.any((f)=>f.id==id))continue;
+        try{await appLan.remove(id);deleted++;}catch(_){failed++;}
+      }
+      for(final id in cloudIds){
+        final matches=PersonalCloud.instance.files.where((f)=>f.id==id);
+        if(matches.isEmpty)continue;
+        try{await PersonalCloud.instance.deleteRemote(matches.first);deleted++;}
+        catch(_){failed++;}
+      }
+      if(mounted)_snack('$deleted deleted${failed==0?'':' · $failed failed'}');
+    }finally{
+      if(mounted)setState((){
+        _bulkBusy=false;_selectedCards.clear();
+      });
+    }
+  }
+  Widget _multiSelectCard(TimelineGroup g){
+    final selected=_selectedCards.containsKey(_keyOf(g));
+    final active=_selectedCards.isNotEmpty;
+    final card=g.lan!=null
+      ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
+        onDelete:_delete,onShare:_share,onTools:_openFileTools)
+      :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
+        onDelete:_deleteCloud,onShare:_shareCloud,
+        onPreview:_previewCloud,onTools:_openCloudTools);
+    return Padding(
+      key:ValueKey(_keyOf(g)),
+      padding:const EdgeInsets.symmetric(vertical:3),
+      child:GestureDetector(
+        behavior:HitTestBehavior.opaque,
+        onLongPress:()=>_toggleCard(g),
+        onTap:active?()=>_toggleCard(g):null,
+        child:Stack(children:[
+          AbsorbPointer(absorbing:active,
+            child:AnimatedContainer(
+              duration:const Duration(milliseconds:160),
+              decoration:BoxDecoration(
+                color:selected?FileTheme.violet.withValues(alpha:.08):null,
+                borderRadius:BorderRadius.circular(26),
+                border:Border.all(color:selected
+                  ?FileTheme.violet:Colors.transparent,width:1.5)),
+              child:card)),
+          if(active)Positioned(top:10,right:10,
+            child:AnimatedContainer(
+              duration:const Duration(milliseconds:140),
+              width:30,height:30,
+              decoration:BoxDecoration(
+                shape:BoxShape.circle,
+                color:selected?FileTheme.violet:
+                  Theme.of(context).colorScheme.surface,
+                border:Border.all(color:FileTheme.violet,width:1.5)),
+              child:Icon(selected?Icons.check_rounded:Icons.circle_outlined,
+                size:18,color:selected?Colors.white:FileTheme.violet))),
+        ]),
+      ),
+    );
+  }
   final _sidebarVisibleNotifier = ValueNotifier<bool>(true);
   final _desktopNavigator = GlobalKey<NavigatorState>();
 
@@ -2526,10 +2660,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('File Transfer', style: TextStyle(fontSize: wide ? 21 : 17,
+                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 17,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
-                      Text(appLan.peers.length.toString() + ' nearby LAN devices · ' +
+                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN devices · ' +
                         (appLan.receivingEnabled ? 'LAN active'
                           : (appLan.started ? 'LAN receiver reconnecting'
                             : 'Starting LAN')) +
@@ -2538,18 +2672,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
                     ])),
-                  IconButton(tooltip: 'QR design preview',
-                    onPressed: () => _navigate('My QR'),
-                    icon: const Icon(Icons.qr_code_2_rounded,
-                      color: FileTheme.violet)),
-                  AppearanceButton(mode: widget.mode, onChange: widget.onMode),
-                  IconButton(tooltip:'Refresh nearby LAN devices',
-                    onPressed:_refreshing?null:_refreshNearby,
-                    icon:AnimatedRotation(
-                      turns:_refreshing?2:0,
-                      duration:const Duration(milliseconds:1100),
-                      curve:Curves.linear,
-                      child:const Icon(Icons.refresh_rounded,color:FileTheme.violet))),
+                  if(_selectedCards.isNotEmpty)...[
+                    IconButton(tooltip:'Select all visible cards',
+                      onPressed:_bulkBusy?null:()=>_selectAllCards(groups),
+                      icon:const Icon(Icons.select_all_rounded,
+                        color:FileTheme.violet)),
+                    IconButton(tooltip:'Download selected files',
+                      onPressed:_bulkBusy?null:_downloadCards,
+                      icon:const Icon(Icons.download_rounded,
+                        color:FileTheme.violet)),
+                    IconButton(tooltip:'Delete selected cards',
+                      onPressed:_bulkBusy?null:_deleteCards,
+                      icon:const Icon(Icons.delete_outline_rounded,
+                        color:FileTheme.pink)),
+                    IconButton(tooltip:'Exit selection mode',
+                      onPressed:_bulkBusy?null:()=>setState(()=>_selectedCards.clear()),
+                      icon:const Icon(Icons.close_rounded)),
+                    if(_bulkBusy)const SizedBox(width:17,height:17,
+                      child:CircularProgressIndicator(strokeWidth:2)),
+                  ]else...[
+                    IconButton(tooltip:'QR design preview',
+                      onPressed:()=>_navigate('My QR'),
+                      icon:const Icon(Icons.qr_code_2_rounded,
+                        color:FileTheme.violet)),
+                    AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+                    IconButton(tooltip:'Refresh nearby LAN devices',
+                      onPressed:_refreshing?null:_refreshNearby,
+                      icon:AnimatedRotation(
+                        turns:_refreshing?2:0,
+                        duration:const Duration(milliseconds:1100),
+                        curve:Curves.linear,
+                        child:const Icon(Icons.refresh_rounded,
+                          color:FileTheme.violet))),
+                  ],
                 ]),
               ),
             ),
@@ -2593,14 +2748,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   reverse: true,
                   padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
                   itemCount: groups.length,
-                  itemBuilder: (_, i) => groups[i].lan != null
-                    ? LiveTransferCard(items: groups[i].lan!,
-                        onSave: _saveReceived, onDelete: _delete,
-                        onShare: _share, onTools: _openFileTools)
-                    : CloudInboxCard(items: groups[i].cloud!,
-                        onSave: _saveCloud, onDelete: _deleteCloud,
-                        onShare: _shareCloud, onPreview: _previewCloud,
-                        onTools: _openCloudTools))
+                  itemBuilder: (_, i) => _multiSelectCard(groups[i]))
               : useDemo
                 ? ListView.builder(
                     padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
