@@ -52,4 +52,23 @@ void main(){
         source(),SignatureCrop.full,'Original',0),
       throwsArgumentError);
   });
+  test('5 KB export supports perspective corners and filter',()async{
+    final quad=SignatureCrop(0,0,1,1,quad:[
+      .10,.08, .94,.04, .89,.94, .06,.88,
+    ]);
+    final preview=await SignatureEditEngine.preview(source(),quad,'Blue Ink');
+    final decoded=img.decodeJpg(preview);
+    expect(decoded,isNotNull);
+    expect(decoded!.width,greaterThan(10));
+    final file=await SignatureEditEngine.exactJpeg(
+      source(),quad,'Dark Ink',5);
+    expect(file.length,5120);
+    expect(img.decodeJpg(file),isNotNull);
+  });
+
+  test('targets below 5 KB are rejected',()async{
+    expect(()=>SignatureEditEngine.exactJpeg(
+      source(),SignatureCrop.full,'Original',4),throwsArgumentError);
+  });
+
 }
