@@ -48,6 +48,7 @@ flutter:
     - assets/gander/pptx/
     - assets/gander/docx/
     - assets/gander/epub/
+    - assets/gander/prose/
     - cloudflare/worker.js
     - cloudflare/schema.sql
     - cloudflare/public/guest.html
