@@ -76,7 +76,7 @@ void main(){
         '<c r="C1"><f>SUM(1,2)</f><v>3</v></c></row></sheetData></worksheet>'
     });
     final engine=await FileShareDocEngine.open(file);
-    expect(engine.blocks.length,2);
+    expect(engine.blocks.length,3);
     final out=await engine.saveCopy({engine.blocks.first.id:'Changed'},
       Directory(temporary.path+'/saved'));
     final archive=ZipDecoder().decodeBytes(await out.readAsBytes());
@@ -195,7 +195,7 @@ void main(){
         '<c r="B1"><f>A1*2</f><v>6</v></c></row></sheetData></worksheet>'
     });
     final model=await FileShareDocEngine.open(file);
-    expect(model.blocks.length,1);
+    expect(model.blocks.length,2);
     final output=await model.saveCopy({model.blocks.first.id:'42.5'},
       Directory(temporary.path+'/numeric'));
     final zip=ZipDecoder().decodeBytes(await output.readAsBytes());
@@ -239,6 +239,34 @@ void main(){
     final margin=tree.descendants.whereType<xml.XmlElement>()
       .firstWhere((n)=>n.name.local=='pgMar');
     expect(margin.getAttribute('w:top'),'720');
+  });
+
+  test('Excel formula edit updates expression and recalc flag',()async{
+    final file=await office('xlsx',{
+      'xl/workbook.xml':
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheets><sheet name="Sheet1" sheetId="1"/></sheets></workbook>',
+      'xl/worksheets/sheet1.xml':
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetData><row r="1"><c r="A1"><v>2</v></c>'
+        '<c r="B1"><f>A1*3</f><v>6</v></c></row></sheetData></worksheet>'
+    });
+    final engine=await FileShareDocEngine.open(file);
+    final formula=engine.blocks.firstWhere((b)=>b.title=='B1');
+    expect(formula.original,'=A1*3');
+    final edited=await engine.saveCopy({formula.id:'=A1*4'},
+      Directory(temporary.path+'/formula'));
+    final zip=ZipDecoder().decodeBytes(await edited.readAsBytes());
+    final worksheet=xml.XmlDocument.parse(utf8.decode(
+      zip.findFile('xl/worksheets/sheet1.xml')!.content));
+    final f=worksheet.descendants.whereType<xml.XmlElement>()
+      .firstWhere((e)=>e.name.local=='f');
+    expect(f.innerText,'A1*4');
+    final workbook=xml.XmlDocument.parse(utf8.decode(
+      zip.findFile('xl/workbook.xml')!.content));
+    final calc=workbook.descendants.whereType<xml.XmlElement>()
+      .firstWhere((e)=>e.name.local=='calcPr');
+    expect(calc.getAttribute('fullCalcOnLoad'),'1');
   });
 
   test('unknown format correctly rejects editing',(){
