@@ -138,7 +138,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     find.dispose();replace.dispose();
   }
   int get _wordCount=>_controllers.values.fold<int>(0,(count,c)=>
-    count+c.text.trim().split(RegExp(r'\\s+'))
+    count+c.text.trim().split(RegExp(r'\s+'))
       .where((s)=>s.isNotEmpty).length);
 
   Future<void> _save() async {
