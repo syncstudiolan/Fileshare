@@ -16,22 +16,31 @@ class SignatureCrop {
 /// background-removal and unrelated photo tools.
 class SignatureEditEngine {
   static Future<Uint8List> preview(Uint8List original,SignatureCrop crop,
-    String filter) => compute(_signatureTransform, {
+    String filter,{double intensity=1}) => compute(_signatureTransform, {
       'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
       'filter':filter,'preview':true,'quad':crop.quad,
+      'intensity':intensity,
     });
 
   static Future<Uint8List> exactJpeg(Uint8List original,SignatureCrop crop,
-    String filter,int kilobytes) {
+    String filter,int kilobytes,{double intensity=1}) {
     if(kilobytes<5||kilobytes>10240) {
       throw ArgumentError('Target must be between 5 and 10,240 KB');
     }
     return compute(_signatureTransform,{
       'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
       'filter':filter,'preview':false,'target':kilobytes*1024,
-      'quad':crop.quad,
+      'quad':crop.quad,'intensity':intensity,
     });
   }
+
+  /// Commit the crop at source resolution, not from the small preview.
+  /// Subsequent edits work on this saved cropped source and the handles reset.
+  static Future<Uint8List> applyCrop(Uint8List original,SignatureCrop crop)=>
+    compute(_signatureTransform,{
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':'Original','cropOnly':true,'quad':crop.quad,
+    });
 
   /// JPEG comments are standards-compliant and do not alter image pixels.
   /// This guarantees exactly N * 1024 bytes IF the actual compressed signature
@@ -111,7 +120,12 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   }else{
     cropped=img.copyCrop(decoded,x:x,y:y,width:width,height:height);
   }
+  if(request['cropOnly']==true){
+    return Uint8List.fromList(img.encodePng(cropped,level:1));
+  }
   final filter=request['filter'] as String;
+  final intensity=((request['intensity'] as num?)?.toDouble()??1)
+    .clamp(0.0,1.0);
   // Flatten any transparency onto white, so ink remains a real signature.
   for(var py=0;py<cropped.height;py++) {
     for(var px=0;px<cropped.width;px++) {
@@ -132,10 +146,39 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
           final strength=255-grey;
           red=255-strength;green=255-(strength*.72).round();
           blue=255-(strength*.12).round();
+        case 'Red Ink':
+          final ink=255-grey;
+          red=255-(ink*.10).round();green=255-ink;blue=255-ink;
+        case 'Green Ink':
+          final ink=255-grey;
+          red=255-ink;green=255-(ink*.32).round();blue=255-ink;
         case 'Dark Ink':
           final ink=(grey*.62).round().clamp(0,255).toInt();
           red=ink;green=ink;blue=ink;
+        case 'High Contrast':
+          final mono=((grey-128)*1.7+128).round().clamp(0,255).toInt();
+          red=mono;green=mono;blue=mono;
+        case 'Soft Ink':
+          final soft=(grey*.83+25).round().clamp(0,255).toInt();
+          red=soft;green=soft;blue=soft;
+        case 'Sepia':
+          red=(.393*r+.769*g+.189*b).round().clamp(0,255).toInt();
+          green=(.349*r+.686*g+.168*b).round().clamp(0,255).toInt();
+          blue=(.272*r+.534*g+.131*b).round().clamp(0,255).toInt();
+        case 'Invert':
+          red=255-r;green=255-g;blue=255-b;
+        case 'Clean Paper':
+          final adjusted=((grey-128)*1.3+155).round().clamp(0,255).toInt();
+          red=adjusted;green=adjusted;blue=adjusted;
+        case 'Pencil':
+          final pencil=(grey<195 ? grey*.7 : grey*.93)
+            .round().clamp(0,255).toInt();
+          red=pencil;green=pencil;blue=pencil;
       }
+      // Live intensity blends each selected preset with the original pixel.
+      red=(r+(red-r)*intensity).round().clamp(0,255).toInt();
+      green=(g+(green-g)*intensity).round().clamp(0,255).toInt();
+      blue=(b+(blue-b)*intensity).round().clamp(0,255).toInt();
       cropped.setPixelRgb(px,py,red,green,blue);
     }
   }
