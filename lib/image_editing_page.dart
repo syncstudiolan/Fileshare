@@ -429,7 +429,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         }
         final dir=await getTemporaryDirectory();
         final temporary=File('${dir.path}/segment_${DateTime.now().microsecondsSinceEpoch}.png');
-        await temporary.writeAsBytes(data,flush:true);
+        final bounded=await ImageEditingEngine.segmentationInput(data);
+        await temporary.writeAsBytes(bounded,flush:true);
         final segmenter=SelfieSegmenter(mode:SegmenterMode.single);
         try {
           final result=await segmenter.processImage(
@@ -454,23 +455,27 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         engine='U²-NetP (ONNX)';
       }
       Future<void> plain() async {
-        final dimensions=await ImageEditingEngine.dimensions(data);
+        final bounded=await ImageEditingEngine.segmentationInput(data);
+        final dimensions=await ImageEditingEngine.dimensions(bounded);
         width=dimensions[0];height=dimensions[1];
         mask=await ImageEditingEngine.simpleBackgroundMask(
-          data,tolerance:_tolerance);
+          bounded,tolerance:_tolerance);
         engine='Plain-color edge segmentation';
       }
       if(_backgroundEngine=='Google ML Kit'){
         await mlKit();
       }else if(_backgroundEngine=='U²-NetP (ONNX)'){
-        await u2NetP();
+        // Android's native ONNX backend can terminate the process before
+        // Dart catches an exception. Use stable ML Kit there instead.
+        if(Platform.isAndroid)await mlKit();
+        else {try{await u2NetP();}catch(_){await plain();}}
       }else if(_backgroundEngine=='Plain-color'){
         await plain();
       }else if(Platform.isAndroid){
         try{await mlKit();}
-        catch(_){await u2NetP();}
+        catch(_){await plain();}
       }else if(Platform.isWindows){
-        await u2NetP();
+        try{await u2NetP();}catch(_){await plain();}
       }else{
         await plain();
       }
@@ -531,9 +536,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _processingAction='background';
     setState(()=>_busy=true);
     try {
-      final dimensions=await ImageEditingEngine.dimensions(data);
+      final bounded=await ImageEditingEngine.segmentationInput(data);
+      final dimensions=await ImageEditingEngine.dimensions(bounded);
       final mask=await ImageEditingEngine.simpleBackgroundMask(
-        data,tolerance:_tolerance);
+        bounded,tolerance:_tolerance);
       final result=await ImageEditingEngine.edit(data,'background',{
         'mask':mask,'maskWidth':dimensions[0],'maskHeight':dimensions[1],
       });
