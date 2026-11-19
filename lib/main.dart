@@ -2132,14 +2132,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     child: _navContents(pinned: false),
   );
 
-  Widget _desktopSidebar() => Container(
-    width: 248,
-    decoration: BoxDecoration(
-      color: FileTheme.surface(context).withValues(alpha: .93),
-      border: Border(right: BorderSide(
-        color: FileTheme.violet.withValues(alpha: .13))),
+  Widget _desktopSidebar() => Material(
+    color: FileTheme.surface(context).withValues(alpha: .93),
+    child: Container(
+      width: 248,
+      decoration: BoxDecoration(
+        border: Border(right: BorderSide(
+          color: FileTheme.violet.withValues(alpha: .13))),
+      ),
+      child: _navContents(pinned: true),
     ),
-    child: _navContents(pinned: true),
   );
 
 
