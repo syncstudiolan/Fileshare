@@ -1549,7 +1549,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             _enhanceBefore!=null && _enhanceAfter!=null &&
             identical(_bytes,_enhanceAfter))...[
           ClipRect(
-            clipper:_BeforeAfterClipper(_compareFraction),
+            clipper:PhotoBeforeAfterClipper(_compareFraction),
             child:Image.memory(_enhanceBefore!,
               width:width,height:height,fit:BoxFit.fill,
               gaplessPlayback:false,filterQuality:FilterQuality.medium),
@@ -2479,12 +2479,12 @@ class ImageEditingLauncherPage extends StatelessWidget {
   );
 }
 
-class _BeforeAfterClipper extends CustomClipper<Rect> {
-  const _BeforeAfterClipper(this.fraction);
+class PhotoBeforeAfterClipper extends CustomClipper<Rect> {
+  const PhotoBeforeAfterClipper(this.fraction);
   final double fraction;
   @override Rect getClip(Size size)=>
     Rect.fromLTWH(0,0,size.width*fraction.clamp(0.0,1.0),size.height);
-  @override bool shouldReclip(covariant _BeforeAfterClipper old)=>
+  @override bool shouldReclip(covariant PhotoBeforeAfterClipper old)=>
     old.fraction!=fraction;
 }
 
