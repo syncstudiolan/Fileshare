@@ -330,11 +330,60 @@ class FileShareDocEngine {
     }
   }
 
+  static xml.XmlElement _wordTable(WordTableSpec spec){
+    if(spec.rows<1||spec.rows>20||spec.columns<1||spec.columns>12){
+      throw ArgumentError('Word table must have 1–20 rows and 1–12 columns');
+    }
+    final table=xml.XmlElement(xml.XmlName('tbl','w'),[],[
+      xml.XmlElement(xml.XmlName('tblPr','w'),[],[
+        xml.XmlElement(xml.XmlName('tblW','w'),[
+          xml.XmlAttribute(xml.XmlName('w','w'),'0'),
+          xml.XmlAttribute(xml.XmlName('type','w'),'auto'),
+        ])
+      ])
+    ]);
+    final grid=xml.XmlElement(xml.XmlName('tblGrid','w'));
+    for(var col=0;col<spec.columns;col++){
+      grid.children.add(xml.XmlElement(xml.XmlName('gridCol','w'),[
+        xml.XmlAttribute(xml.XmlName('w','w'),
+          (9200~/spec.columns).toString())
+      ]));
+    }
+    table.children.add(grid);
+    for(var row=0;row<spec.rows;row++){
+      final tr=xml.XmlElement(xml.XmlName('tr','w'));
+      for(var col=0;col<spec.columns;col++){
+        final cellValue=spec.values.length>row*spec.columns+col
+          ?spec.values[row*spec.columns+col]:'';
+        final tc=xml.XmlElement(xml.XmlName('tc','w'),[],[
+          xml.XmlElement(xml.XmlName('tcPr','w'),[],[
+            xml.XmlElement(xml.XmlName('tcW','w'),[
+              xml.XmlAttribute(xml.XmlName('w','w'),
+                (9200~/spec.columns).toString()),
+              xml.XmlAttribute(xml.XmlName('type','w'),'dxa'),
+            ])
+          ]),
+          xml.XmlElement(xml.XmlName('p','w'),[],[
+            xml.XmlElement(xml.XmlName('r','w'),[],[
+              xml.XmlElement(xml.XmlName('t','w'),[
+                xml.XmlAttribute(xml.XmlName('space','xml'),'preserve')
+              ],[xml.XmlText(cellValue)])
+            ])
+          ])
+        ]);
+        tr.children.add(tc);
+      }
+      table.children.add(tr);
+    }
+    return table;
+  }
+
   /// Structural Word edits: insert paragraphs after an existing paragraph,
   /// delete the selected paragraph, or both. Reverse index order ensures
   /// changes do not shift the indices of blocks not processed yet.
   void applyWordStructure({
     Map<String,List<String>> insertedAfter=const {},
+    Map<String,List<WordTableSpec>> tablesAfter=const {},
     Set<String> deleted=const {},
   }){
     if(!{'docx','docm','dotx'}.contains(kind))return;
@@ -345,7 +394,8 @@ class FileShareDocEngine {
       });
     for(final block in ordered){
       if(!deleted.contains(block.id)&&
-         !(insertedAfter[block.id]?.isNotEmpty??false))continue;
+         !(insertedAfter[block.id]?.isNotEmpty??false)&&
+         !(tablesAfter[block.id]?.isNotEmpty??false))continue;
       final doc=parts[block.part];
       if(doc==null)continue;
       final paragraphs=slots(doc,kind);
@@ -366,8 +416,10 @@ class FileShareDocEngine {
         ]);
         parent.children.insert(insertion++,paragraph);
       }
+      for(final table in tablesAfter[block.id]??const <WordTableSpec>[]){
+        parent.children.insert(insertion++,_wordTable(table));
+      }
       if(deleted.contains(block.id)){
-        // Keep at least one empty body paragraph if deleting the only one.
         original.remove();
       }
     }
@@ -377,6 +429,7 @@ class FileShareDocEngine {
       {Map<String,Set<String>> formatChanges=const {},
        Map<String,String> alignmentChanges=const {},
        Map<String,List<String>> insertedAfter=const {},
+       Map<String,List<WordTableSpec>> tablesAfter=const {},
        Set<String> deletedParagraphs=const {},
        String? pagePaper,
        bool pageLandscape=false,
@@ -400,8 +453,9 @@ class FileShareDocEngine {
     apply(changed);
     if(formatChanges.isNotEmpty)applyWordFormatting(formatChanges);
     if(alignmentChanges.isNotEmpty)applyWordAlignment(alignmentChanges);
-    if(insertedAfter.isNotEmpty||deletedParagraphs.isNotEmpty){
-      applyWordStructure(insertedAfter:insertedAfter,deleted:deletedParagraphs);
+    if(insertedAfter.isNotEmpty||deletedParagraphs.isNotEmpty||tablesAfter.isNotEmpty){
+      applyWordStructure(insertedAfter:insertedAfter,
+        tablesAfter:tablesAfter,deleted:deletedParagraphs);
     }
     if(pagePaper!=null)applyWordPageLayout(
       paper:pagePaper,landscape:pageLandscape,
@@ -429,4 +483,10 @@ class DocBlock {
   const DocBlock(this.id,this.title,this.original,this.part,this.index);
   final String id,title,original,part;
   final int index;
+}
+
+class WordTableSpec {
+  const WordTableSpec(this.rows,this.columns,[this.values=const []]);
+  final int rows,columns;
+  final List<String> values;
 }
