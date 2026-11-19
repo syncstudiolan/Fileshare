@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
 import 'app_top_notice.dart';
+import 'photo_magic_processing_overlay.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
@@ -39,6 +40,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   String? _error;
   bool _busy=false, _cropResize=false, _showOriginal=false;
   bool _imagePickerBusy=false;
+  bool _exporting=false;
+  final _targetKbController=TextEditingController(text:'500');
   String? _selectedFilter;
   String? _pendingFilter;
   Uint8List? _filterBase;
@@ -97,6 +100,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   @override void dispose(){
     _erasePreview?.dispose();
     _eraseRestoration?.dispose();
+    _targetKbController.dispose();
     _transformController.dispose();
     _controlScroll.dispose();
     _strokeRepaint.dispose();
@@ -311,6 +315,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _faceUseCrop=state['faceUseCrop'] as bool? ?? false;
       _quality=(state['quality'] as num?)?.toInt()??_quality;
       _targetKb=(state['targetKb'] as num?)?.toInt()??_targetKb;
+      _targetKbController.text=_targetKb.toString();
       _brightness=number(state['brightness'],_brightness);
       _contrast=number(state['contrast'],_contrast);
       _saturation=number(state['saturation'],_saturation);
@@ -632,6 +637,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   Future<void> _compress()async{
     final bytes=_bytes;
     if(bytes==null||_busy)return;
+    _processingAction='compress';
     setState(()=>_busy=true);
     try{
       final result=await ImageEditingEngine.compress(bytes,
@@ -643,12 +649,16 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       await _commit(bytes,result,'Compress $_targetKb KB ($_format)');
       _message('Exported ${(result.length/1024).toStringAsFixed(1)} KB');
     }catch(e){_message('Compression failed: $e');}
-    finally{if(mounted)setState(()=>_busy=false);}
+    finally{
+      _processingAction=null;
+      if(mounted)setState(()=>_busy=false);
+    }
   }
 
   Future<void> _export(String action)async {
     final cart=action=='cart';
-    if(_bytes==null)return;
+    if(_bytes==null||_exporting)return;
+    _exporting=true;
     try{
       // The cart remains tappable during AI processing. Wait for the edit
       // to commit rather than accidentally exporting the pre-edit original.
@@ -670,8 +680,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         if(_pendingFilter!=null)await _finalizeFilter();
         if(_fineAngle.abs()>=.001)await _commitStraighten();
         if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-        if(_tool=='Crop'&&(_cropMode=='Perspective Crop'||
-            _crop!=const Rect.fromLTWH(.06,.06,.88,.88))){
+        if(_cropMode=='Perspective Crop' && _tool=='Crop' ||
+            _crop!=const Rect.fromLTWH(.06,.06,.88,.88)) {
           await _commitCrop();
         }
         if(_brightness!=1||_contrast!=1||
@@ -712,6 +722,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         if(saved!=null)_message('Image saved successfully');
       }
     }catch(e){_message('Export failed: $e');}
+    finally{_exporting=false;}
   }
 
   void _message(String value){
@@ -1645,7 +1656,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           const LinearProgressIndicator(minHeight:2),
         Expanded(child:_bytes==null?_emptyCanvas(wide:wide):
           Padding(padding:EdgeInsets.all(wide?14:8),
-            child:RepaintBoundary(child:_preview()))),
+            child:RepaintBoundary(child:Stack(fit:StackFit.expand,children:[
+              _preview(),
+              if(_busy && (_processingAction=='background' ||
+                  _processingAction=='photo_enhance' ||
+                  _processingAction=='compress'))
+                PhotoMagicProcessingOverlay(label:switch(_processingAction){
+                  'photo_enhance'=>'Enhancing photo · please wait',
+                  'compress'=>'Optimizing image size · please wait',
+                  _=>'Removing background · please wait',
+                }),
+            ])))),
         Container(height:52,
           padding:const EdgeInsets.symmetric(horizontal:9),
           decoration:BoxDecoration(
