@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart' show FileTheme, fadePage;
 import 'image_editing_engine.dart';
+import 'app_top_notice.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
@@ -693,8 +694,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
 
   void _message(String value){
     if(!mounted)return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content:Text(value),duration:const Duration(seconds:3)));
+    FileShareTopNotice.show(context,value);
   }
 
   Widget _slider(String title,double value,double min,double max,
