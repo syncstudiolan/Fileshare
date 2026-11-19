@@ -26,6 +26,7 @@ class FileShareDocPage extends StatefulWidget {
 class _FileShareDocPageState extends State<FileShareDocPage>{
   File? _source;
   File? _saved;
+  String? _displayName;
   FileShareDocEngine? _document;
   final _controllers=<String,TextEditingController>{};
   final _wordStyles=<String,Set<String>>{};
@@ -38,7 +39,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   void initState(){
     super.initState();
     if(widget.sourcePath!=null){
-      unawaited(_openFile(File(widget.sourcePath!)));
+      unawaited(_openFile(File(widget.sourcePath!),
+        name:widget.sourceName));
     }
   }
   @override
@@ -117,19 +119,19 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
           DateTime.now().microsecondsSinceEpoch.toString()+'_'+name);
         await file.writeAsBytes(await entry.readAsBytes(),flush:true);
       }
-      await _openFile(file);
+      await _openFile(file,name:entry.name);
     }catch(e){_message('Cannot open file: '+e.toString());}
   }
-  Future<void> _openFile(File file) async {
+  Future<void> _openFile(File file,{String? name}) async {
     if(_busy)return;
     setState((){_busy=true;_status='Opening document…';});
     try{
       if(!await file.exists())throw StateError('Selected document is unavailable');
-      final allowed=FileShareDocEngine.canView(file.path);
+      final allowed=FileShareDocEngine.canView(name??file.path);
       if(!allowed)throw UnsupportedError('Unsupported file type');
-      final edit=FileShareDocEngine.canEdit(file.path);
+      final edit=FileShareDocEngine.canEdit(name??file.path);
       FileShareDocEngine? doc;
-      if(edit)doc=await FileShareDocEngine.open(file);
+      if(edit)doc=await FileShareDocEngine.open(file,filename:name);
       for(final c in _controllers.values)c.dispose();
       _controllers.clear();
       _wordStyles.clear();
@@ -146,6 +148,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       if(!mounted)return;
       setState((){
         _source=file;_saved=null;_document=doc;
+        _displayName=name??file.uri.pathSegments.last;
         _dirty=false;
         _status=edit
           ?'Edit the displayed text fields, then Save Copy. Complex Office '
@@ -232,7 +235,9 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     setState((){_busy=true;_status='Adding document to LAN queue…';});
     try{
       if(!appLan.started)await appLan.start();
-      await appLan.enqueue([file],names:[file.uri.pathSegments.last]);
+      await appLan.enqueue([file],names:[_saved==null
+        ?(_displayName??file.uri.pathSegments.last)
+        :file.uri.pathSegments.last]);
       _message('Document added to the unified LAN transfer dashboard');
     }catch(e){_message('Send failed: '+e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
@@ -244,7 +249,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       _message('Save a copy to preview the latest edits.');
       return;
     }
-    final ext=FileShareDocEngine.ext(file.path);
+    final ext=FileShareDocEngine.ext(
+      _saved==null?(_displayName??file.path):file.path);
     try{
       if(['md','markdown','html','htm'].contains(ext)){
         await Navigator.of(context).push(MaterialPageRoute<void>(
@@ -258,7 +264,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       }
       if(ext=='pdf'){
         final consumed=await FileCardOpenRouter.openEditor(
-          context,file.path,file.uri.pathSegments.last);
+          context,file.path,_displayName??file.uri.pathSegments.last);
         if(consumed)return;
       }
       if(['jpg','png','jpeg','webp','bmp','gif','heic'].contains(ext)){
@@ -335,7 +341,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                 icon:const Icon(Icons.note_add_outlined),
                 label:const Text('New Word Document')),
             ]else...[
-              Text(file.uri.pathSegments.last,
+              Text(_saved==null?(_displayName??file.uri.pathSegments.last)
+                :file.uri.pathSegments.last,
                 style:theme.textTheme.titleMedium?.copyWith(
                   fontWeight:FontWeight.w800)),
               const SizedBox(height:6),
