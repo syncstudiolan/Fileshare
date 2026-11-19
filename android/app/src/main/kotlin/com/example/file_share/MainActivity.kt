@@ -207,7 +207,8 @@ class FileShareApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        engine()
+        // Lazy engine creation: the Activity or foreground LAN service calls
+        // engine(). A disabled BOOT_COMPLETED receiver must not start Dart.
     }
 
     private fun safeZipSegment(input: String): String =
