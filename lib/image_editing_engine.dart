@@ -32,6 +32,27 @@ class ImageEditingEngine {
     return Uint8List.fromList(img.encodeJpg(scaled,quality:85));
   }
 
+  /// One-time bounded edit copy. Preserve the untouched high-resolution
+  /// original separately for restoration. Typical photos remain full-size.
+  static Future<Uint8List> prepareWorkingImage(Uint8List bytes)=>
+    compute(_prepareWorkingImage,bytes);
+  static Uint8List _prepareWorkingImage(Uint8List bytes){
+    final source=img.decodeImage(bytes);
+    if(source==null)throw const FormatException('Invalid image');
+    const maxPixels=6000000;
+    final pixels=source.width*source.height;
+    if(pixels<=maxPixels)return bytes;
+    final ratio=math.sqrt(maxPixels/pixels);
+    final scaled=img.copyResize(source,
+      width:math.max(1,(source.width*ratio).floor()),
+      height:math.max(1,(source.height*ratio).floor()),
+      interpolation:img.Interpolation.average);
+    if(scaled.numChannels==4){
+      return Uint8List.fromList(img.encodePng(scaled,level:1));
+    }
+    return Uint8List.fromList(img.encodeJpg(scaled,quality:95));
+  }
+
   static Future<List<int>> dimensions(Uint8List bytes)=>compute(_readSize,bytes);
   static List<int> _readSize(Uint8List bytes){
     final source=img.decodeImage(bytes);
