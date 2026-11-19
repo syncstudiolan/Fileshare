@@ -15,6 +15,8 @@ import 'lan_engine.dart';
 import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
+import 'file_share_doc_page.dart';
+import 'file_share_doc_engine.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
@@ -1265,7 +1267,13 @@ class FileCardOpenRouter {
 
   static Future<bool> openEditor(
     BuildContext context,String path,String name) async {
-    if (!isPdf(name) && !isDocx(name))return false;
+    if(FileShareDocEngine.canEdit(name)){
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder:(_)=>FileShareDocPage(
+          sourcePath:path,sourceName:name)));
+      return true;
+    }
+    if (!isPdf(name))return false;
     if (!Platform.isAndroid) {
       if (isPdf(name)) {
         await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
@@ -1279,12 +1287,7 @@ class FileCardOpenRouter {
     }
     try{
       final theme=Theme.of(context).brightness==Brightness.dark?'dark':'light';
-      var pdfPath=path;
-      if(isDocx(name)){
-        pdfPath=await const MethodChannel('file_share.native')
-          .invokeMethod<String>('convertDocxToPdf',{'path':path})??'';
-        if(pdfPath.isEmpty)throw StateError('DOCX conversion returned no PDF');
-      }
+      final pdfPath=path;
       if(!context.mounted)return true;
       await const MethodChannel('file_share.native').invokeMethod<void>(
         'openUpstreamPdfTools',{
