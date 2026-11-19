@@ -90,8 +90,10 @@ final class FileSharePDFKitController: UIViewController,
             target: self, action: #selector(merge))
         let pages = UIBarButtonItem(title: "Pages", style: .plain,
             target: self, action: #selector(pageActions))
-        toolbarItems = [camera, UIBarButtonItem.flexibleSpace(),
-            pages, UIBarButtonItem.flexibleSpace(), merge]
+        toolbarItems = [camera, UIBarButtonItem(barButtonSystemItem: .flexibleSpace,
+            target: nil, action: nil),
+            pages, UIBarButtonItem(barButtonSystemItem: .flexibleSpace,
+            target: nil, action: nil), merge]
         navigationController?.isToolbarHidden = false
     }
 
