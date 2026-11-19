@@ -249,8 +249,78 @@ class FileShareDocEngine {
     }
   }
 
+  /// Change paragraph alignment without replacing its text or other run styles.
+  void applyWordAlignment(Map<String,String> alignment){
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    for(final block in blocks){
+      final selected=alignment[block.id];
+      if(!{'left','center','right','both'}.contains(selected))continue;
+      final document=parts[block.part];
+      if(document==null)continue;
+      final paragraphs=slots(document,kind);
+      if(block.index>=paragraphs.length)continue;
+      final paragraph=paragraphs[block.index];
+      var props=paragraph.childElements
+        .where((n)=>n.name.local=='pPr'&&n.name.prefix=='w').firstOrNull;
+      if(props==null){
+        props=xml.XmlElement(xml.XmlName('pPr','w'));
+        paragraph.children.insert(0,props);
+      }
+      props.children.removeWhere((node)=>node is xml.XmlElement &&
+        node.name.local=='jc' && node.name.prefix=='w');
+      props.children.add(xml.XmlElement(xml.XmlName('jc','w'),[
+        xml.XmlAttribute(xml.XmlName('val','w'),selected!)]));
+    }
+  }
+
+  /// Structural Word edits: insert paragraphs after an existing paragraph,
+  /// delete the selected paragraph, or both. Reverse index order ensures
+  /// changes do not shift the indices of blocks not processed yet.
+  void applyWordStructure({
+    Map<String,List<String>> insertedAfter=const {},
+    Set<String> deleted=const {},
+  }){
+    if(!{'docx','docm','dotx'}.contains(kind))return;
+    final ordered=List<DocBlock>.of(blocks)
+      ..sort((a,b){
+        final byPart=a.part.compareTo(b.part);
+        return byPart!=0?byPart:b.index.compareTo(a.index);
+      });
+    for(final block in ordered){
+      if(!deleted.contains(block.id)&&
+         !(insertedAfter[block.id]?.isNotEmpty??false))continue;
+      final doc=parts[block.part];
+      if(doc==null)continue;
+      final paragraphs=slots(doc,kind);
+      if(block.index>=paragraphs.length)continue;
+      final original=paragraphs[block.index];
+      final parent=original.parent;
+      if(parent is! xml.XmlElement)continue;
+      final index=parent.children.indexOf(original);
+      final additions=insertedAfter[block.id]??const <String>[];
+      var insertion=index+1;
+      for(final text in additions.take(100)){
+        final paragraph=xml.XmlElement(xml.XmlName('p','w'),[],[
+          xml.XmlElement(xml.XmlName('r','w'),[],[
+            xml.XmlElement(xml.XmlName('t','w'),[
+              xml.XmlAttribute(xml.XmlName('space','xml'),'preserve')
+            ],[xml.XmlText(text)])
+          ])
+        ]);
+        parent.children.insert(insertion++,paragraph);
+      }
+      if(deleted.contains(block.id)){
+        // Keep at least one empty body paragraph if deleting the only one.
+        original.remove();
+      }
+    }
+  }
+
   Future<File> saveCopy(Map<String,String> changed,Directory dir,
-      {Map<String,Set<String>> formatChanges=const {}}) async {
+      {Map<String,Set<String>> formatChanges=const {},
+       Map<String,String> alignmentChanges=const {},
+       Map<String,List<String>> insertedAfter=const {},
+       Set<String> deletedParagraphs=const {}}) async {
     await dir.create(recursive:true);
     final filename=displayName;
     final dot=filename.lastIndexOf('.');
@@ -269,6 +339,10 @@ class FileShareDocEngine {
     }
     apply(changed);
     if(formatChanges.isNotEmpty)applyWordFormatting(formatChanges);
+    if(alignmentChanges.isNotEmpty)applyWordAlignment(alignmentChanges);
+    if(insertedAfter.isNotEmpty||deletedParagraphs.isNotEmpty){
+      applyWordStructure(insertedAfter:insertedAfter,deleted:deletedParagraphs);
+    }
     final rebuilt=Archive();
     for(final part in archive!){
       if(!part.isFile){
