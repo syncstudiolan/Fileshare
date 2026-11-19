@@ -183,7 +183,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '1.28.3'
+          $version = '1.28.0'
+          $cmake = 'windows/CMakeLists.txt'
+          $source = Get-Content $cmake -Raw
+          $needle = 'include\(flutter/generated_plugins\.cmake\)'
+          if ($source -notmatch $needle) { throw 'Windows CMake generated plugins include missing' }
+          $source = $source -replace $needle, "set(ONNXRUNTIME_VERSION `"$version`")`ninclude(flutter/generated_plugins.cmake)"
+          Set-Content -Path $cmake -Value $source
           $name = "onnxruntime-win-x64-$version"
           $root = Join-Path (Get-Location) "build/windows/x64/plugins/flutter_onnxruntime/onnxruntime/$name"
           $nuget = Join-Path $env:RUNNER_TEMP 'onnxruntime-nuget'
