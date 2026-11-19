@@ -202,7 +202,7 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     if(await prefs.getBool('windows_autostart_decided')==true)return;
     final executable=Platform.resolvedExecutable.toLowerCase();
     // Avoid registering Flutter debug/test binaries or an uninstalled EXE.
-    final normalized=executable.replaceAll('\\\\','/');
+    final normalized=executable.replaceAll(String.fromCharCode(92),'/');
     if(normalized.contains('flutter_tester') ||
        normalized.contains('/temp/') ||
        normalized.contains('/debug/'))return;
