@@ -1,19 +1,19 @@
 {
-  "schema": 1,
   "android": {
-    "version": "0.1.0",
-    "build": 1,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/placeholder-android/FileShare-Android-ARM64-Release.apk",
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "size": 1,
-    "notes": "Updates are published after a verified, signed Android release."
+    "build": 406,
+    "notes": "Merge PR #7: File Share editor, dashboard bulk selection, updater and branding",
+    "sha256": "8dfd5e290bbb0e60fc6ef31aab27df3f695079c55064420774b694524ef4c3a8",
+    "size": 114038429,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-406/FileShare-Android-ARM64-Release.apk",
+    "version": "0.1.0"
   },
+  "schema": 1,
   "windows": {
-    "version": "0.1.0",
     "build": 1,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/placeholder-windows/FileShare-Windows-Setup.exe",
+    "notes": "Updates are published after a verified Windows installer release.",
     "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "size": 1,
-    "notes": "Updates are published after a verified Windows installer release."
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/placeholder-windows/FileShare-Windows-Setup.exe",
+    "version": "0.1.0"
   }
 }
