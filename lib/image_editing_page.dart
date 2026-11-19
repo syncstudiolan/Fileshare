@@ -49,7 +49,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   final TransformationController _transformController=TransformationController();
   double _zoom=1.0;
   String _tool='Background';
-  String _format='PNG';
+  String _format='JPEG';
   String? _draftId;
   late String _name;
   final List<Uint8List> _undo=[], _redo=[];
@@ -95,6 +95,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   void initState(){
     super.initState();
     _name=widget.sourceName??widget.draft?.name??'edited-image.png';
+    if(_name.toLowerCase().endsWith('.png'))_format='PNG';
     unawaited(_load());
     unawaited(_loadRecentColors());
   }
@@ -237,6 +238,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _originalBytes=bytes;
         _ratio=dimensions[0]/dimensions[1];
         _name=name??'image.png';
+        _format=_name.toLowerCase().endsWith('.png')?'PNG':'JPEG';
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
         _undo.clear();_redo.clear();_steps.clear();
         _pendingFilter=null;_selectedFilter=null;_pendingBackgroundColor=null;
@@ -1569,9 +1571,21 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _=>Icons.tune_rounded,
   };
   void _selectTool(String tool){
-    if(_tool==tool)return;
-    // No worker job, image re-encode or full-screen animated crossfade on tab
-    // changes. Lazy-build the brush bitmap only when Erase is first selected.
+    if(_tool==tool||_busy)return;
+    // A dragged crop is an actual pending edit. Commit it before hiding its
+    // handles, so the next tool and Cart see the same crop as the preview.
+    if(_tool=='Crop' && _cropDirty){
+      unawaited(() async {
+        await _commitCrop();
+        if(mounted && !_cropDirty)_switchTool(tool);
+      }());
+      return;
+    }
+    _switchTool(tool);
+  }
+
+  void _switchTool(String tool){
+    // Switching controls is GPU-only; no full-image decode or animated page.
     setState(()=>_tool=tool);
     if(_controlScroll.hasClients)_controlScroll.jumpTo(0);
     if(tool=='Erase' && _bytes!=null){
