@@ -26,7 +26,7 @@ class _CloudGuideSection {
 // Explanations intentionally describe the app as shipped; they do not promise
 // Cloudflare free-tier capacity, Google Drive fallback, automatic email OTP,
 // account migration, real-time background push or successful external billing.
-const _sections=< _CloudGuideSection >[
+const _sections=<_CloudGuideSection>[
   _CloudGuideSection('01 · Before you begin',[
     _CloudGuideStep('Understand what will be connected',
       'File Share uses YOUR Cloudflare account: one personal Worker (HTTPS API and guest QR page), a D1 database (login, QR and file records), and a private R2 bucket (uploaded files). The central directory only helps later devices find your personal Worker. Offline LAN does not require a cloud account.'),
