@@ -33,13 +33,20 @@ android {
             excludes += setOf("lib/x86_64/**", "lib/armeabi-v7a/**", "lib/x86/**")
         }
     }
+    // A stable release key comes from GitHub Actions encrypted secrets.
+    // Fail rather than silently ship a debug-signed production app.
+    signingConfigs {
+        create("production") {
+            storeFile = file(System.getenv("FILE_SHARE_KEYSTORE_FILE")
+                ?: "missing-production-release-key.jks")
+            storePassword = System.getenv("FILE_SHARE_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("FILE_SHARE_KEY_ALIAS")
+            keyPassword = System.getenv("FILE_SHARE_KEY_PASSWORD")
+        }
+    }
     buildTypes {
         getByName("release") {
-            // TESTING ONLY. The prior CI release was unsigned and could not install.
-            // Use a separate application id to avoid signature conflicts/data loss
-            // with the user's existing File Share installation.
-            signingConfig = signingConfigs.getByName("debug")
-            applicationIdSuffix = ".testing"
+            signingConfig = signingConfigs.getByName("production")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
