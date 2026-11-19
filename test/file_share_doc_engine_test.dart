@@ -161,6 +161,53 @@ void main(){
     expect(saved.uri.pathSegments.last,'customer_letter_edited.docx');
   });
 
+  test('Word insert, delete and align are kept in a valid DOCX copy',()async{
+    final original=await office('docx',{
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:p><w:r><w:t>First</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>Second</w:t></w:r></w:p>'
+        '</w:body></w:document>'
+    });
+    final editor=await FileShareDocEngine.open(original);
+    final first=editor.blocks[0].id,second=editor.blocks[1].id;
+    final out=await editor.saveCopy({},Directory(temporary.path+'/word-edit'),
+      alignmentChanges:{first:'center'},
+      insertedAfter:{first:['New paragraph']},
+      deletedParagraphs:{second});
+    final zip=ZipDecoder().decodeBytes(await out.readAsBytes());
+    final doc=xml.XmlDocument.parse(
+      utf8.decode(zip.findFile('word/document.xml')!.content));
+    final paragraphs=doc.descendants.whereType<xml.XmlElement>()
+      .where((node)=>node.name.local=='p').toList();
+    expect(paragraphs.length,2);
+    expect(doc.innerText,contains('New paragraph'));
+    expect(doc.innerText,isNot(contains('Second')));
+    expect(paragraphs.first.toXmlString(),contains('center'));
+    expect(await original.readAsBytes(),isNot(await out.readAsBytes()));
+  });
+
+  test('Excel numeric edits remain numeric cells and formula stays intact',()async{
+    final file=await office('xlsx',{
+      'xl/worksheets/sheet1.xml':
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetData><row r="1"><c r="A1"><v>3</v></c>'
+        '<c r="B1"><f>A1*2</f><v>6</v></c></row></sheetData></worksheet>'
+    });
+    final model=await FileShareDocEngine.open(file);
+    expect(model.blocks.length,1);
+    final output=await model.saveCopy({model.blocks.first.id:'42.5'},
+      Directory(temporary.path+'/numeric'));
+    final zip=ZipDecoder().decodeBytes(await output.readAsBytes());
+    final tree=xml.XmlDocument.parse(
+      utf8.decode(zip.findFile('xl/worksheets/sheet1.xml')!.content));
+    final cells=tree.descendants.whereType<xml.XmlElement>()
+      .where((e)=>e.name.local=='c').toList();
+    expect(cells[0].getAttribute('t'),isNull);
+    expect(cells[0].innerText,'42.5');
+    expect(cells[1].toXmlString(),contains('A1*2'));
+  });
+
   test('unknown format correctly rejects editing',(){
     expect(FileShareDocEngine.canEdit('scan.pdf'),false);
     expect(FileShareDocEngine.canView('scan.pdf'),true);
