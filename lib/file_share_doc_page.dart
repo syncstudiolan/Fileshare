@@ -223,7 +223,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     final paperHeight=_landscape?w:h;
     final viewWidth=math.min(MediaQuery.sizeOf(context).width-36,780.0);
     final viewHeight=viewWidth*paperHeight/paperWidth;
-    final margin=(_pageMarginMm*viewWidth/paperWidth).clamp(12.0,viewWidth*.22);
+    final margin=(_pageMarginMm*viewWidth/paperWidth).clamp(12.0,viewWidth*.22).toDouble();
     final charsPerLine=math.max(18,((viewWidth-2*margin)/7.8).floor());
     final maxLines=math.max(6,((viewHeight-2*margin)/22).floor());
     final pages=<List<DocBlock>>[];
