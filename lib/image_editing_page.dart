@@ -319,8 +319,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _enhanceStrength=(state['enhanceStrength'] as num?)?.toDouble() ?? .8;
       _enhanceFaceMode=state['enhanceFaceMode'] as bool? ?? false;
       _faceUseCrop=state['faceUseCrop'] as bool? ?? false;
-      _quality=(state['quality'] as num?)?.toInt()??_quality;
-      _targetKb=(state['targetKb'] as num?)?.toInt()??_targetKb;
+      _quality=((state['quality'] as num?)?.toInt()??_quality).clamp(35,100);
+      _targetKb=((state['targetKb'] as num?)?.toInt()??_targetKb)
+        .clamp(5,500000);
       _targetKbController.text=_targetKb.toString();
       _brightness=number(state['brightness'],_brightness);
       _contrast=number(state['contrast'],_contrast);
@@ -1084,12 +1085,30 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         ]);
       case 'Straighten':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          const Text('Fine rotation in 0.5° increments',
-            style:TextStyle(fontSize:12)),
-          Center(child:Text('${_fineAngle.toStringAsFixed(1)}°',
-            style:const TextStyle(fontWeight:FontWeight.w700,fontSize:19))),
-          Slider(min:-45,max:45,divisions:180,value:_fineAngle,
-            onChanged:(v)=>setState(()=>_fineAngle=v)),
+          Row(children:[
+            const Icon(Icons.rotate_90_degrees_ccw_rounded,
+              size:19,color:FileTheme.violet),
+            const SizedBox(width:8),
+            Expanded(child:Text('Live rotation · 0.5° steps',
+              style:TextStyle(fontSize:12,
+                color:FileTheme.muted(context)))),
+            Text('${_fineAngle.toStringAsFixed(1)}°',
+              style:const TextStyle(fontWeight:FontWeight.w700,fontSize:17,
+                color:FileTheme.violet)),
+          ]),
+          Row(children:[
+            IconButton(tooltip:'Rotate 0.5° left',
+              onPressed:_busy?null:()=>setState(()=>
+                _fineAngle=(_fineAngle-.5).clamp(-45.0,45.0)),
+              icon:const Icon(Icons.remove_circle_outline_rounded)),
+            Expanded(child:Slider(min:-45,max:45,divisions:180,
+              value:_fineAngle,
+              onChanged:_busy?null:(v)=>setState(()=>_fineAngle=v))),
+            IconButton(tooltip:'Rotate 0.5° right',
+              onPressed:_busy?null:()=>setState(()=>
+                _fineAngle=(_fineAngle+.5).clamp(-45.0,45.0)),
+              icon:const Icon(Icons.add_circle_outline_rounded)),
+          ]),
           Row(children:[
             TextButton.icon(onPressed:()=>setState(()=>_fineAngle=0),
               icon:const Icon(Icons.restart_alt),label:const Text('Reset')),
