@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
@@ -14,6 +13,7 @@ import 'gander_spreadsheet_preview_page.dart';
 import 'gander_presentation_preview_page.dart';
 import 'file_share_windows_pdf_viewer.dart';
 import 'gander_epub_preview_page.dart';
+import 'gander_archive_browser_page.dart';
 import 'image_editing_page.dart';
 import 'main.dart' show FileTheme, FileCardOpenRouter, appLan;
 import 'transfer_downloads.dart';
@@ -480,21 +480,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         return;
       }
       if(ext=='zip'){
-        if(await file.length()>32*1024*1024){
-          throw StateError('Archive too large for in-app listing');
-        }
-        final entries=ZipDecoder().decodeBytes(await file.readAsBytes());
-        if(!mounted)return;
-        await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
-          title:Text('Archive · '+file.uri.pathSegments.last),
-          content:SizedBox(width:500,height:420,
-            child:ListView.builder(itemCount:entries.length,
-              itemBuilder:(_,i)=>ListTile(
-                dense:true,leading:Icon(entries[i].isFile
-                  ?Icons.insert_drive_file_outlined:Icons.folder_outlined),
-                title:Text(entries[i].name)))),
-          actions:[TextButton(onPressed:()=>Navigator.pop(dialog),
-            child:const Text('Close'))]));
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderArchiveBrowserPage(archive:file)));
         return;
       }
       final result=await OpenFilex.open(file.path);
