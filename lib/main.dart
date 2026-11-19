@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'file_transfer_camera_page.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -39,7 +40,9 @@ Future<void> main([List<String> args = const []]) async {
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
   final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
-  final offline = ciLanTest || previousOffline || windowsSmoke;
+  final offline = ciLanTest || previousOffline || windowsSmoke ||
+    Platform.isWindows || (Platform.isAndroid &&
+      (await prefs.getBool('android_receive_background') ?? false));
   appLan.onReceived = (file) => Platform.isAndroid
       ? const MethodChannel('file_share.native').invokeMethod<void>(
           'notifyReceived', {'name': file.name, 'sender': file.peer})
@@ -51,8 +54,10 @@ Future<void> main([List<String> args = const []]) async {
     if (!await WindowsBackground.instance.acquireSingleInstance()) {
       exit(0);
     }
-    try { await WindowsBackground.instance.initialize(); }
-    catch (e) { debugPrint('Windows tray unavailable: $e'); }
+    try {
+      await WindowsBackground.instance.initialize();
+      await WindowsBackground.instance.enableDefaultStart(prefs);
+    }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
   }
   if (offline && (Platform.isAndroid || Platform.isWindows)) {
     unawaited(appLan.start().catchError((Object e) {
@@ -147,7 +152,8 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
         'query', _windowsRunKey, '/v', 'FileShare',
       ]);
       autoStartEnabled.value = result.exitCode == 0 &&
-        result.stdout.toString().contains(Platform.resolvedExecutable);
+        result.stdout.toString().toLowerCase()
+          .contains(Platform.resolvedExecutable.toLowerCase());
     } catch (e) { debugPrint('Startup preference error: $e'); }
     try {
       await localNotifier.setup(appName: 'File Share',
@@ -170,6 +176,25 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
       throw ProcessException('reg', args, result.stderr.toString(), result.exitCode);
     }
     autoStartEnabled.value = value;
+  }
+
+  /// Configure Windows HKCU Run on first installed launch. Respect any
+  /// later explicit user choice, including opt-out. No elevation is needed.
+  Future<void> enableDefaultStart(SharedPreferencesAsync prefs) async {
+    if(!Platform.isWindows)return;
+    if(await prefs.getBool('windows_autostart_decided')==true)return;
+    final executable=Platform.resolvedExecutable.toLowerCase();
+    // Avoid registering Flutter debug/test binaries or an uninstalled EXE.
+    if(executable.contains('flutter_tester') ||
+       executable.contains('\\\\temp\\\\') ||
+       executable.contains('/temp/') ||
+       executable.contains('\\\\debug\\\\'))return;
+    try {
+      await setAutoStart(true);
+      await prefs.setBool('windows_autostart_decided',true);
+    }catch(e){
+      debugPrint('Windows autorun could not be registered: $e');
+    }
   }
 
   Future<void> notifyReceived(LanFile file) async {
@@ -2907,7 +2932,10 @@ class FeatureDesignPage extends StatelessWidget {
               subtitle: const Text('Launch File Share when you sign in to Windows'),
               value: enabled,
               onChanged: (value) async {
-                try { await WindowsBackground.instance.setAutoStart(value); }
+                try {
+                  await WindowsBackground.instance.setAutoStart(value);
+                  await SharedPreferencesAsync().setBool('windows_autostart_decided',true);
+                }
                 catch (e) {
                   if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(
                     SnackBar(content: Text('Windows startup error: $e')));
