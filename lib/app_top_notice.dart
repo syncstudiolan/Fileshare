@@ -37,7 +37,7 @@ class FileShareTopNotice {
           )),
         )),
       ),
-    ));
+    );
     overlay.insert(_entry!);
     _timer=Timer(duration,dismiss);
   }
