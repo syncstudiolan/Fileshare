@@ -10,6 +10,8 @@ import 'package:path_provider/path_provider.dart';
 import 'file_share_doc_engine.dart';
 import 'gander_docx_preview_page.dart';
 import 'gander_markup_preview_page.dart';
+import 'gander_spreadsheet_preview_page.dart';
+import 'gander_presentation_preview_page.dart';
 import 'image_editing_page.dart';
 import 'main.dart' show FileTheme, FileCardOpenRouter, appLan;
 import 'transfer_downloads.dart';
@@ -252,6 +254,16 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     final ext=FileShareDocEngine.ext(
       _saved==null?(_displayName??file.path):file.path);
     try{
+      if(['xlsx','xlsm','xltx','xls','xlsb'].contains(ext)){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderSpreadsheetPreviewPage(document:file)));
+        return;
+      }
+      if(['pptx','pptm','ppsx','potx'].contains(ext)){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderPresentationPreviewPage(document:file)));
+        return;
+      }
       if(['md','markdown','html','htm'].contains(ext)){
         await Navigator.of(context).push(MaterialPageRoute<void>(
           builder:(_)=>GanderMarkupPreviewPage(document:file)));
