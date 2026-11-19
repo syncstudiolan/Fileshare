@@ -43,6 +43,16 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     for(final c in _controllers.values)c.dispose();
     super.dispose();
   }
+  Future<void> _newDocument()async{
+    if(_busy)return;
+    try{
+      final root=await getApplicationSupportDirectory();
+      final folder=Directory(root.path+
+        Platform.pathSeparator+'file_share_doc_new');
+      final file=await FileShareDocEngine.createBlankDocx(folder);
+      await _openFile(file);
+    }catch(e){_message('New document could not be created: '+e.toString());}
+  }
   Future<void> _selectFile()async{
     if(_busy)return;
     try{
@@ -259,6 +269,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
               FilledButton.icon(onPressed:_busy?null:_selectFile,
                 icon:const Icon(Icons.folder_open_outlined),
                 label:const Text('Browse files')),
+              const SizedBox(height:10),
+              OutlinedButton.icon(onPressed:_busy?null:_newDocument,
+                icon:const Icon(Icons.note_add_outlined),
+                label:const Text('New Word Document')),
             ]else...[
               Text(file.uri.pathSegments.last,
                 style:theme.textTheme.titleMedium?.copyWith(
