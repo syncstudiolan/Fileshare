@@ -288,7 +288,6 @@ class FileShareApp extends StatefulWidget {
 
 class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver {
   late ThemeMode _mode = widget.initialMode;
-  static final navigatorKey=GlobalKey<NavigatorState>();
   Timer? _updateCheckTimer;
   bool _wasBackgrounded=false;
 
@@ -334,7 +333,7 @@ class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'File Share',
-        navigatorKey:navigatorKey,
+        navigatorKey:fileShareNavigatorKey,
         builder:(context,child)=>Stack(children:[
           child??const SizedBox.shrink(),
           const FileShareUpdateBanner(),
