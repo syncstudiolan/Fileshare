@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -43,6 +44,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   bool _landscape=false;
   double _pageMarginMm=25.4;
   bool _pageLayoutDirty=false;
+  bool _showWordLayout=false;
   String? _selectedWordParagraph;
   bool _busy=false;
   bool _dirty=false;
@@ -168,7 +170,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
           backgroundColor:active.contains(name)
             ?FileTheme.violet.withValues(alpha:.18):null),
         icon:Icon(icon,size:17),label:Text(label));
-    return Wrap(spacing:7,runSpacing:7,children:[
+    return SingleChildScrollView(scrollDirection:Axis.horizontal,
+      child:Row(children:[
       item('bold',Icons.format_bold_rounded,'Bold'),
       item('italic',Icons.format_italic_rounded,'Italic'),
       item('underline',Icons.format_underlined_rounded,'Underline'),
@@ -202,10 +205,87 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         onSelectionChanged:selected==null||_busy?null:(choices)=>
           _setWordAlignment(choices.first)),
 
-      Text(selected==null?'Select a paragraph':'Selected Word paragraph',
-        style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+      OutlinedButton.icon(onPressed:()=>setState(
+        ()=>_showWordLayout=!_showWordLayout),
+        icon:const Icon(Icons.description_outlined),
+        label:const Text('Page Layout')),
+    ]));
+  }
+  /// Editable paged paper view. Preserves text controllers and OOXML Save Copy.
+  /// Rich Word layout is approximated here, not a pixel-identical MS Word renderer.
+  Widget _wordPaperView(List<DocBlock> blocks){
+    final (w,h)=switch(_paperSize){
+      'Letter'=>(215.9,279.4),
+      'Legal'=>(215.9,355.6),
+      _=>(210.0,297.0),
+    };
+    final paperWidth=_landscape?h:w;
+    final paperHeight=_landscape?w:h;
+    final viewWidth=math.min(MediaQuery.sizeOf(context).width-36,780.0);
+    final viewHeight=viewWidth*paperHeight/paperWidth;
+    final margin=(_pageMarginMm*viewWidth/paperWidth).clamp(12.0,viewWidth*.22);
+    final charsPerLine=math.max(18,((viewWidth-2*margin)/7.8).floor());
+    final maxLines=math.max(6,((viewHeight-2*margin)/22).floor());
+    final pages=<List<DocBlock>>[];
+    var current=<DocBlock>[];
+    var used=0;
+    for(final block in blocks){
+      final value=_controllers[block.id]?.text??block.original;
+      final lines=value.split('\n').fold<int>(0,(sum,line)=>
+        sum+math.max(1,(line.length/charsPerLine).ceil()))+1;
+      if(current.isNotEmpty && used+lines>maxLines){
+        pages.add(current);current=<DocBlock>[];used=0;
+      }
+      current.add(block);used+=lines;
+    }
+    if(current.isNotEmpty)pages.add(current);
+    if(pages.isEmpty)pages.add(<DocBlock>[]);
+    return Column(children:[
+      for(var i=0;i<pages.length;i++)...[
+        Container(width:viewWidth,
+          constraints:BoxConstraints(minHeight:viewHeight),
+          decoration:BoxDecoration(color:Colors.white,boxShadow:[
+            BoxShadow(color:Colors.black.withValues(alpha:.2),
+              blurRadius:10,offset:const Offset(0,3))]),
+          child:Padding(padding:EdgeInsets.all(margin),
+            child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,
+              children:[for(final block in pages[i])...[
+                TextField(key:ValueKey('word-paper-${block.id}'),
+                  onTap:()=>setState(()=>_selectedWordParagraph=block.id),
+                  controller:_controllers[block.id],
+                  enabled:!_busy,maxLines:null,minLines:1,
+                  textAlign:switch(_wordAlignments[block.id]??'left'){
+                    'center'=>TextAlign.center,
+                    'right'=>TextAlign.right,
+                    'both'=>TextAlign.justify,
+                    _=>TextAlign.left,
+                  },
+                  style:TextStyle(fontSize:14,height:1.45,color:Colors.black87,
+                    fontWeight:(_wordStyles[block.id]??{}).contains('bold')
+                      ?FontWeight.bold:FontWeight.normal,
+                    fontStyle:(_wordStyles[block.id]??{}).contains('italic')
+                      ?FontStyle.italic:FontStyle.normal,
+                    decoration:(_wordStyles[block.id]??{}).contains('underline')
+                      ?TextDecoration.underline:null),
+                  decoration:const InputDecoration(isDense:true,
+                    border:InputBorder.none,
+                    contentPadding:EdgeInsets.symmetric(vertical:4),
+                    hintText:'Type document text')),
+                for(final added in _newWordParagraphs[block.id]??<String>[])
+                  Text(added,style:const TextStyle(color:Colors.black87,fontSize:14)),
+                for(final table in _newWordTables[block.id]??<WordTableSpec>[])
+                  const Text('Inserted table (included on Save Copy)',
+                    style:TextStyle(color:Colors.black54,fontSize:12)),
+              ]]),
+            )),
+        const SizedBox(height:6),
+        Text('Page ${i+1} of ${pages.length} · $_paperSize',
+          style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+        const SizedBox(height:18),
+      ],
     ]);
   }
+
   Widget _wordPageOptions(){
     return Card(child:Padding(padding:const EdgeInsets.all(12),
       child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -592,12 +672,14 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                 if(['docx','docm','dotx'].contains(doc.kind))...[
                   _wordToolbar(),
                   const SizedBox(height:10),
-                  _wordPageOptions(),
+                  if(_showWordLayout)_wordPageOptions(),
                   const SizedBox(height:10),
                 ],
                 if(doc.blocks.isEmpty)
                   const Text('No supported editable text was found in this file.'),
-                if(blocks.isNotEmpty)
+                if(blocks.isNotEmpty && ['docx','docm','dotx'].contains(doc.kind))
+                  _wordPaperView(blocks),
+                if(blocks.isNotEmpty && !['docx','docm','dotx'].contains(doc.kind))
                   SizedBox(height:(MediaQuery.sizeOf(context).height*.63)
                     .clamp(280.0,760.0).toDouble(),
                     child:ListView.builder(
