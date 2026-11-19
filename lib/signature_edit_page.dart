@@ -170,8 +170,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   });
 
   void _gestureStart(DragStartDetails d,Size size){
-    final p=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0),
-      (d.localPosition.dy/size.height).clamp(0.0,1.0));
+    final p=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble(),
+      (d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble());
     final points=_cropMode=='Perspective'
       ? _quad
       : [Offset(_crop.left,_crop.top),Offset(_crop.right,_crop.top),
@@ -203,8 +203,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   void _gestureUpdate(DragUpdateDetails d,Size size){
     if(_corner==-1)return;
-    final p=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0),
-      (d.localPosition.dy/size.height).clamp(0.0,1.0));
+    final p=Offset((d.localPosition.dx/size.width).clamp(0.0,1.0).toDouble(),
+      (d.localPosition.dy/size.height).clamp(0.0,1.0).toDouble());
     final previous=_lastDrag??p;
     _lastDrag=p;
     const gap=.025;
@@ -213,19 +213,19 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       if(_corner==-2){
         var dx=p.dx-previous.dx,dy=p.dy-previous.dy;
         dx=dx.clamp(-next.map((v)=>v.dx).reduce(math.min),
-          1-next.map((v)=>v.dx).reduce(math.max));
+          1-next.map((v)=>v.dx).reduce(math.max)).toDouble();
         dy=dy.clamp(-next.map((v)=>v.dy).reduce(math.min),
-          1-next.map((v)=>v.dy).reduce(math.max));
+          1-next.map((v)=>v.dy).reduce(math.max)).toDouble();
         for(var i=0;i<4;i++)next[i]+=Offset(dx,dy);
       }else if(_corner<4){
         next[_corner]=p;
       }else{
         final a=_corner-4,b=(a+1)%4;
         final delta=p-(next[a]+next[b])/2;
-        next[a]=Offset((next[a].dx+delta.dx).clamp(0.0,1.0),
-          (next[a].dy+delta.dy).clamp(0.0,1.0));
-        next[b]=Offset((next[b].dx+delta.dx).clamp(0.0,1.0),
-          (next[b].dy+delta.dy).clamp(0.0,1.0));
+        next[a]=Offset((next[a].dx+delta.dx).clamp(0.0,1.0).toDouble(),
+          (next[a].dy+delta.dy).clamp(0.0,1.0).toDouble());
+        next[b]=Offset((next[b].dx+delta.dx).clamp(0.0,1.0).toDouble(),
+          (next[b].dy+delta.dy).clamp(0.0,1.0).toDouble());
       }
       double area=0;
       for(var i=0;i<4;i++){
@@ -237,14 +237,14 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       final c=_crop;
       var l=c.left,t=c.top,r=c.right,b=c.bottom;
       if(_corner==-2){
-        final dx=(p.dx-previous.dx).clamp(-l,1-r);
-        final dy=(p.dy-previous.dy).clamp(-t,1-b);
+        final dx=(p.dx-previous.dx).clamp(-l,1-r).toDouble();
+        final dy=(p.dy-previous.dy).clamp(-t,1-b).toDouble();
         l+=dx;r+=dx;t+=dy;b+=dy;
       }else{
-        if(_corner==0||_corner==3||_corner==7)l=p.dx.clamp(0.0,r-gap);
-        if(_corner==1||_corner==2||_corner==5)r=p.dx.clamp(l+gap,1.0);
-        if(_corner==0||_corner==1||_corner==4)t=p.dy.clamp(0.0,b-gap);
-        if(_corner==2||_corner==3||_corner==6)b=p.dy.clamp(t+gap,1.0);
+        if(_corner==0||_corner==3||_corner==7)l=p.dx.clamp(0.0,r-gap).toDouble();
+        if(_corner==1||_corner==2||_corner==5)r=p.dx.clamp(l+gap,1.0).toDouble();
+        if(_corner==0||_corner==1||_corner==4)t=p.dy.clamp(0.0,b-gap).toDouble();
+        if(_corner==2||_corner==3||_corner==6)b=p.dy.clamp(t+gap,1.0).toDouble();
       }
       setState(()=>_crop=SignatureCrop(l,t,r,b));
     }
