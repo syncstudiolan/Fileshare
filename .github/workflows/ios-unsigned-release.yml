@@ -13,7 +13,7 @@ permissions:
 jobs:
   ios_unsigned:
     name: Compile iOS and package unsigned IPA
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
