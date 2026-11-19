@@ -13,6 +13,13 @@ import 'package:path_provider/path_provider.dart';
 /// Uses the standard [1,3,H,W] RGB/[0,1] input and x2 planar RGB output.
 /// 4x is two x2 stages, not an independently trained 4x model.
 class PhotoEnhancerEngine {
+  @visibleForTesting
+  static Uint8List enhanceMobileForTest(Uint8List source,
+      {int scale=2,double strength=.8})=>
+    _mobileSafeEnhance({
+      'source':source,'scale':scale,'strength':strength,
+    });
+
   static const modelUrl =
     'https://huggingface.co/skillsafe-ai/realesrgan-x2plus/resolve/8166b63/model.onnx';
   static const expectedSha256 =
