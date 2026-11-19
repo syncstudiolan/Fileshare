@@ -33,6 +33,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   double _filterIntensity=1;
   Timer? _filterTimer;
   int _filterRevision=0;
+  int _thumbnailRevision=0;
+  Map<String,Uint8List> _filterThumbnails={};
   int _target=20;
   final _targetController=TextEditingController(text:'20');
   final _picker=ImagePicker();
@@ -57,6 +59,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   @override
   void dispose(){
     _filterTimer?.cancel();
+    _thumbnailRevision++;
     _targetController.dispose();
     super.dispose();
   }
@@ -81,6 +84,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         _filterIntensity=1;
         _error=null;
       });
+      unawaited(_refreshFilterThumbnails(bytes));
     }catch(e){
       if(mounted)setState(()=>_error='Cannot open signature image: $e');
     }finally{if(mounted)setState(()=>_busy=false);}
@@ -153,6 +157,19 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     }finally{if(mounted)setState(()=>_busy=false);}
   }
 
+  Future<void> _refreshFilterThumbnails(Uint8List source)async{
+    final revision=++_thumbnailRevision;
+    if(mounted)setState(()=>_filterThumbnails={});
+    try{
+      final previews=await SignatureEditEngine.thumbnails(source,_filters);
+      if(mounted&&revision==_thumbnailRevision){
+        setState(()=>_filterThumbnails=previews);
+      }
+    }catch(_){
+      // Preview failure must not block edit, crop, or export actions.
+    }
+  }
+
   Future<void> _changeFilter(String filter)async{
     if(_original==null||_busy)return;
     setState(()=>_filter=filter);
@@ -196,6 +213,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         _cropMode='Normal';
         _error=null;
       });
+      unawaited(_refreshFilterThumbnails(cropped));
       _show('Crop applied. Save, share or add to Cart.');
     }catch(e){
       if(mounted)_show('Could not apply crop: $e');
@@ -441,19 +459,11 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         Text('Signature Filters',style:TextStyle(
           fontWeight:FontWeight.w800,fontSize:16)),
       ]),
-      const Text('Select a filter and adjust its intensity. '
-        'Crop handles remain available in the Crop tab.'),
-      const SizedBox(height:10),
-      Wrap(spacing:9,runSpacing:9,children:[
-        for(final filter in _filters)ChoiceChip(
-          label:Text(filter),selected:_filter==filter,
-          onSelected:_busy?null:(_)=>_changeFilter(filter)),
-      ]),
-      const SizedBox(height:12),
+      const SizedBox(height:8),
       Row(children:[
         const Icon(Icons.tune_rounded,size:18,color:FileTheme.violet),
         const SizedBox(width:8),
-        const Expanded(child:Text('Filter strength')),
+        const Expanded(child:Text('Filter intensity')),
         Text('${(_filterIntensity*100).round()}%',
           style:const TextStyle(fontWeight:FontWeight.w700)),
       ]),
@@ -464,6 +474,62 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           _filterTimer=Timer(const Duration(milliseconds:140),
             ()=>unawaited(_refreshFilterPreview()));
         }),
+      const SizedBox(height:4),
+      Text('Tap a preview to apply its effect. Swipe to see more.',
+        style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+      const SizedBox(height:10),
+      SizedBox(height:132,child:ListView.separated(
+        scrollDirection:Axis.horizontal,
+        itemCount:_filters.length,
+        separatorBuilder:(_,__)=>const SizedBox(width:9),
+        itemBuilder:(context,index){
+          final name=_filters[index];
+          final selected=_filter==name;
+          final bytes=_filterThumbnails[name];
+          return Semantics(
+            button:true,selected:selected,label:'Filter $name',
+            child:Material(
+              color:selected?FileTheme.violet.withValues(alpha:.17)
+                :Theme.of(context).cardColor,
+              borderRadius:BorderRadius.circular(14),
+              child:InkWell(
+                borderRadius:BorderRadius.circular(14),
+                onTap:_busy?null:()=>unawaited(_changeFilter(name)),
+                child:Container(width:100,
+                  padding:const EdgeInsets.all(5),
+                  decoration:BoxDecoration(
+                    borderRadius:BorderRadius.circular(14),
+                    border:Border.all(color:selected
+                      ?FileTheme.violet:FileTheme.violet.withValues(alpha:.17),
+                      width:selected?2:1)),
+                  child:Column(children:[
+                    Expanded(child:ClipRRect(
+                      borderRadius:BorderRadius.circular(9),
+                      child:bytes==null
+                        ?Container(color:FileTheme.violet.withValues(alpha:.09),
+                          alignment:Alignment.center,
+                          child:const Icon(Icons.image_outlined,
+                            color:FileTheme.violet,size:25))
+                        :Image.memory(bytes,fit:BoxFit.cover,width:100,
+                          gaplessPlayback:false,filterQuality:FilterQuality.low))),
+                    const SizedBox(height:5),
+                    Row(mainAxisAlignment:MainAxisAlignment.center,children:[
+                      if(selected)...[
+                        const Icon(Icons.check_circle_rounded,
+                          color:FileTheme.violet,size:12),
+                        const SizedBox(width:3),
+                      ],
+                      Flexible(child:Text(name,maxLines:1,
+                        overflow:TextOverflow.ellipsis,
+                        style:TextStyle(fontSize:11,
+                          fontWeight:selected?FontWeight.w800:FontWeight.w600))),
+                    ]),
+                  ])),
+              ),
+            ),
+          );
+        },
+      )),
     ]);
   }
 
