@@ -187,8 +187,8 @@ jobs:
           $name = "onnxruntime-win-x64-$version"
           $cmake = 'windows/CMakeLists.txt'
           $source = Get-Content $cmake -Raw
-          if ($source -notmatch 'include\\(flutter/generated_plugins\\.cmake\\)') { throw 'Flutter generated plugins CMake include missing' }
-          $source = $source -replace 'include\\(flutter/generated_plugins\\.cmake\\)', "set(ONNXRUNTIME_VERSION `"$version`")`ninclude(flutter/generated_plugins.cmake)"
+          if ($source -notmatch 'include\(flutter/generated_plugins\.cmake\)') { throw 'Flutter generated plugins CMake include missing' }
+          $source = $source -replace 'include\(flutter/generated_plugins\.cmake\)', "set(ONNXRUNTIME_VERSION `"$version`")`ninclude(flutter/generated_plugins.cmake)"
           Set-Content -Path $cmake -Value $source
           $root = Join-Path (Get-Location) 'build/windows/x64/plugins/flutter_onnxruntime/onnxruntime'
           New-Item -ItemType Directory -Force -Path $root | Out-Null
