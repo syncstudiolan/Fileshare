@@ -35,6 +35,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   final _wordAlignments=<String,String>{};
   final _newWordParagraphs=<String,List<String>>{};
   final _deletedWordParagraphs=<String>{};
+  String _paperSize='A4';
+  bool _landscape=false;
+  double _pageMarginMm=25.4;
+  bool _pageLayoutDirty=false;
   String? _selectedWordParagraph;
   bool _busy=false;
   bool _dirty=false;
@@ -155,6 +159,43 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
     ]);
   }
+  Widget _wordPageOptions(){
+    return Card(child:Padding(padding:const EdgeInsets.all(12),
+      child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        const Text('Page Layout',style:TextStyle(fontWeight:FontWeight.bold)),
+        const SizedBox(height:10),
+        Wrap(spacing:12,runSpacing:12,crossAxisAlignment:WrapCrossAlignment.center,
+          children:[
+            SizedBox(width:150,child:DropdownButtonFormField<String>(
+              initialValue:_paperSize,
+              decoration:const InputDecoration(labelText:'Paper',
+                border:OutlineInputBorder(),isDense:true),
+              items:const [
+                DropdownMenuItem(value:'A4',child:Text('A4')),
+                DropdownMenuItem(value:'Letter',child:Text('Letter')),
+                DropdownMenuItem(value:'Legal',child:Text('Legal')),
+              ],
+              onChanged:_busy?null:(v){
+                if(v!=null)setState((){
+                  _paperSize=v;_pageLayoutDirty=true;_dirty=true;
+                });
+              },
+            )),
+            ChoiceChip(label:const Text('Landscape'),
+              selected:_landscape,
+              onSelected:_busy?null:(v)=>setState((){
+                _landscape=v;_pageLayoutDirty=true;_dirty=true;
+              })),
+            Text('Margin: '+_pageMarginMm.toStringAsFixed(1)+' mm'),
+          ]),
+        Slider(value:_pageMarginMm,min:0,max:50,divisions:100,
+          label:_pageMarginMm.toStringAsFixed(1)+' mm',
+          onChanged:_busy?null:(v)=>setState((){
+            _pageMarginMm=v;_pageLayoutDirty=true;_dirty=true;
+          })),
+      ])));
+  }
+
   Future<void> _newDocument()async{
     if(_busy)return;
     try{
@@ -215,6 +256,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       _wordAlignments.clear();
       _newWordParagraphs.clear();
       _deletedWordParagraphs.clear();
+      _paperSize='A4';
+      _landscape=false;
+      _pageMarginMm=25.4;
+      _pageLayoutDirty=false;
       _selectedWordParagraph=doc?.blocks.firstOrNull?.id;
       if(doc!=null){
         for(final block in doc.blocks){
@@ -294,7 +339,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         formatChanges:_wordStyles,
         alignmentChanges:_wordAlignments,
         insertedAfter:_newWordParagraphs,
-        deletedParagraphs:_deletedWordParagraphs);
+        deletedParagraphs:_deletedWordParagraphs,
+        pagePaper:_pageLayoutDirty?_paperSize:null,
+        pageLandscape:_landscape,
+        pageMarginTwips:(_pageMarginMm*1440/25.4).round());
       // Export through existing public Android Downloads / Windows folder picker.
       final exported=await TransferDownloads.instance.export(
         saved,saved.uri.pathSegments.last);
@@ -483,6 +531,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                 const SizedBox(height:14),
                 if(['docx','docm','dotx'].contains(doc.kind))...[
                   _wordToolbar(),
+                  const SizedBox(height:10),
+                  _wordPageOptions(),
                   const SizedBox(height:10),
                 ],
                 if(doc.blocks.isEmpty)
