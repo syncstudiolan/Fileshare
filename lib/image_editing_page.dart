@@ -144,7 +144,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       final path=widget.draft?.filePath??widget.sourcePath;
       if(path==null)return; // Empty canvas: Camera and Browse stay visible.
       final bytes=await File(path).readAsBytes();
-      final dimensions=await ImageEditingEngine.dimensions(bytes);
+      final working=widget.draft==null
+        ?await ImageEditingEngine.prepareWorkingImage(bytes):bytes;
+      final dimensions=await ImageEditingEngine.dimensions(working);
       _draftId=widget.draft?.id??
         DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       _steps.addAll(widget.draft?.steps??[]);
@@ -155,12 +157,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         original=await File(savedOriginal).readAsBytes();
       }
       if(mounted)setState((){
-        _bytes=Uint8List.fromList(bytes);
-        _originalBytes=Uint8List.fromList(original);
+        _bytes=working;
+        _originalBytes=original;
         _cutoutBytes=null;
       });
-      unawaited(_cacheEraseImage(bytes));
-      unawaited(_cacheEraseImage(bytes,original:true));
+      unawaited(_cacheEraseImage(working));
+      unawaited(_cacheEraseImage(original,original:true));
       await _restoreSession();
       if(widget.draft==null)await _saveDraft();
     }catch(e){if(mounted)setState(()=>_error=e.toString());}
@@ -222,11 +224,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       }
       if(path==null)throw StateError('No file selected');
       final bytes=await File(path).readAsBytes();
-      final dimensions=await ImageEditingEngine.dimensions(bytes);
+      final working=await ImageEditingEngine.prepareWorkingImage(bytes);
+      final dimensions=await ImageEditingEngine.dimensions(working);
       if(!mounted)return;
       setState((){
-        _bytes=Uint8List.fromList(bytes);
-        _originalBytes=Uint8List.fromList(bytes);
+        _bytes=working;
+        _originalBytes=bytes;
         _ratio=dimensions[0]/dimensions[1];
         _name=name??'image.png';
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
@@ -238,8 +241,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _error=null;
         _showOriginal=false;
       });
-      unawaited(_cacheEraseImage(bytes));
+      unawaited(_cacheEraseImage(working));
       unawaited(_cacheEraseImage(bytes,original:true));
+      if(working.length!=bytes.length){
+        _message('Large photo optimized for smooth editing; original preserved.');
+      }
       await _saveDraft();
     }catch(_){
       _message('Could not open this image. Try a JPG or PNG.');
@@ -355,7 +361,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       return;
     }
     _undo.add(previous);
-    if(_undo.length>15)_undo.removeAt(0);
+    while(_undo.length>8 ||
+        _undo.fold<int>(0,(sum,bytes)=>sum+bytes.length)>48*1024*1024){
+      _undo.removeAt(0);
+    }
     _redo.clear();
     _steps.add(step);
     if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
