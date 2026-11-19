@@ -1,10 +1,8 @@
 name: Build unsigned iOS IPA for external signing
 
+# Build on explicit approval only. Keep iOS unsigned package in draft until
+# native macOS runner access and Apple signing are confirmed.
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
