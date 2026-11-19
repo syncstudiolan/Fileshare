@@ -108,7 +108,8 @@ class FileShareDocEngine {
             cellType=='inlineStr'
             ?named(node,'t').map((e)=>e.innerText).join():raw;
         }else{
-          value=named(node,'t').map((e)=>e.innerText).join();
+          value={'odt','ods','odp'}.contains(type)
+            ?node.innerText:named(node,'t').map((e)=>e.innerText).join();
         }
         if(value.isNotEmpty){
           blocks.add(DocBlock(path+'#'+i.toString(),label,value,path,i));
@@ -137,6 +138,13 @@ class FileShareDocEngine {
         node.children.add(xml.XmlElement(xml.XmlName('is'),[],[
           xml.XmlElement(xml.XmlName('t'),[],[xml.XmlText(value)])
         ]));
+      }else if({'odt','ods','odp'}.contains(kind)){
+        final leafText=node.descendants.whereType<xml.XmlText>().toList();
+        if(leafText.isEmpty){node.children.add(xml.XmlText(value));}
+        else{
+          leafText.first.value=value;
+          for(final text in leafText.skip(1))text.value='';
+        }
       }else{
         final runs=named(node,'t').toList();
         if(runs.isEmpty)continue;
