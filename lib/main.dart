@@ -24,6 +24,7 @@ import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
 import 'cloud_connect_guide_page.dart';
+import 'file_share_updates.dart';
 import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -259,40 +260,14 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     await windowManager.destroy();
   }
 
-  // Tiny, programmatically created ICO. No image resource increases APK size.
+  /// Exact final FS logo: platform icon derived during the build.
   Future<File> _writeTrayIcon() async {
-    const side = 16, pixelBytes = side * side * 4, maskBytes = side * 4;
-    const imageBytes = 40 + pixelBytes + maskBytes;
-    final data = ByteData(22 + imageBytes);
-    data.setUint16(2, 1, Endian.little);
-    data.setUint16(4, 1, Endian.little);
-    data.setUint8(6, side);
-    data.setUint8(7, side);
-    data.setUint16(10, 1, Endian.little);
-    data.setUint16(12, 32, Endian.little);
-    data.setUint32(14, imageBytes, Endian.little);
-    data.setUint32(18, 22, Endian.little);
-    data.setUint32(22, 40, Endian.little);
-    data.setInt32(26, side, Endian.little);
-    data.setInt32(30, side * 2, Endian.little);
-    data.setUint16(34, 1, Endian.little);
-    data.setUint16(36, 32, Endian.little);
-    data.setUint32(42, pixelBytes, Endian.little);
-    final bytes = data.buffer.asUint8List();
-    for (var y = 0; y < side; y++) {
-      for (var x = 0; x < side; x++) {
-        final p = 62 + (y * side + x) * 4;
-        final painted = x > 1 && x < 14 && y > 1 && y < 14;
-        bytes[p] = painted ? 197 : 0;
-        bytes[p + 1] = painted ? 93 : 0;
-        bytes[p + 2] = painted ? 224 : 0;
-        bytes[p + 3] = painted ? 255 : 0;
-      }
-    }
-    final folder = await getApplicationSupportDirectory();
-    final icon = File(folder.path + Platform.pathSeparator + 'file_share_tray.ico');
-    await icon.writeAsBytes(bytes, flush: true);
-    return icon;
+    final bytes=await rootBundle.load('assets/branding/file_share_tray.ico');
+    final folder=await getApplicationSupportDirectory();
+    final file=File('${folder.path}${Platform.pathSeparator}file-share-tray.ico');
+    await file.writeAsBytes(bytes.buffer.asUint8List(
+      bytes.offsetInBytes,bytes.lengthInBytes),flush:true);
+    return file;
   }
 }
 
@@ -313,6 +288,17 @@ class FileShareApp extends StatefulWidget {
 
 class _FileShareAppState extends State<FileShareApp> {
   late ThemeMode _mode = widget.initialMode;
+  static final navigatorKey=GlobalKey<NavigatorState>();
+
+  @override void initState(){
+    super.initState();
+    FileShareUpdates.instance.initializeVersion(
+      const String.fromEnvironment('FILE_SHARE_VERSION',defaultValue:'0.1.0'),
+      const int.fromEnvironment('FILE_SHARE_BUILD_NUMBER',defaultValue:1));
+    WidgetsBinding.instance.addPostFrameCallback((_) =>
+      unawaited(FileShareUpdates.instance.check(startup:true)));
+  }
+
 
   void _setMode(ThemeMode value) {
     setState(() => _mode = value);
@@ -322,6 +308,11 @@ class _FileShareAppState extends State<FileShareApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'File Share',
+        navigatorKey:navigatorKey,
+        builder:(context,child)=>Stack(children:[
+          child??const SizedBox.shrink(),
+          const FileShareUpdateBanner(),
+        ]),
         debugShowCheckedModeBanner: false,
         theme: FileTheme.build(Brightness.light),
         darkTheme: FileTheme.build(Brightness.dark),
@@ -538,21 +529,15 @@ class _RootBackGuardState extends State<RootBackGuard> {
 }
 
 class AppLogo extends StatelessWidget {
-  const AppLogo({super.key, this.size = 48});
+  const AppLogo({super.key,this.size=48});
   final double size;
-  @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [FileTheme.pink, FileTheme.violet],
-          ),
-          borderRadius: BorderRadius.circular(size * .3),
-        ),
-        child: Icon(Icons.swap_horiz_rounded,
-            size: size * .56, color: Colors.white),
-      );
+  @override Widget build(BuildContext context)=>ClipRRect(
+    borderRadius:BorderRadius.circular(size*.22),
+    child:Image.asset('assets/branding/file_share_icon.webp',
+      width:size,height:size,fit:BoxFit.cover,
+      filterQuality:FilterQuality.medium,
+      semanticLabel:'File Share logo'),
+  );
 }
 
 class WelcomePage extends StatelessWidget {
@@ -2951,6 +2936,14 @@ class FeatureDesignPage extends StatelessWidget {
             label:const Text('Cloud Connect Guide · Beginner to Advanced'),
             onPressed:()=>Navigator.of(c).push(fadePage(
               CloudConnectGuidePage(mode:mode,onMode:onMode))),
+          )),
+        const SizedBox(height:10),
+        SizedBox(width:double.infinity,
+          child:FilledButton.icon(
+            icon:const Icon(Icons.system_update_alt_rounded),
+            label:const Text('App Updates / Check for updates'),
+            onPressed:()=>Navigator.of(c).push(fadePage(
+              const FileShareUpdatePage())),
           )),
       ]),
     ),
