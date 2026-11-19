@@ -1,5 +1,9 @@
 package com.sammyi57.pdftools
 
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
@@ -8,6 +12,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Calendar
 
 // A scan is a draft document: original photos plus every edit as settings, so crops, filters and strokes can be redone
@@ -59,6 +64,7 @@ data class ScanDoc(
   val pdf: PdfRef? = null,
   val saved: SavedScan? = null, // state at the last Save PDF, for "Discard changes"
   val compressionTargetKb: Int? = null, // optional requested PDF export size, stays editable
+  val importedSource: String? = null, // original PDF stays intact; editing uses rasterized copies
 )
 
 val KIND_LABEL = linkedMapOf("whiteboard" to "Whiteboard", "book" to "Book", "doc" to "Document", "id" to "ID card", "card" to "Business card")
@@ -152,10 +158,63 @@ fun scanProjectForPdf(pdfPath: String): ScanDoc? {
   val target = runCatching { File(pathOf(pdfPath)).canonicalPath }.getOrNull()
     ?: return null
   return listDocs().firstOrNull { doc ->
-    val savedPath = doc.pdf?.path ?: return@firstOrNull false
-    runCatching { File(pathOf(savedPath)).canonicalPath == target }.getOrDefault(false)
+    sequenceOf(doc.pdf?.path, doc.importedSource).filterNotNull().any { p ->
+      runCatching { File(pathOf(p)).canonicalPath == target }.getOrDefault(false)
+    }
   }
 }
+
+/**
+ * Imported PDF -> same editable Review UI used after taking camera photos.
+ * Render one page at a time to private JPEGs, NEVER modify the source PDF.
+ * Raster import is lossy for vector text/forms; the source PDF remains safe.
+ */
+suspend fun importPdfIntoEditableScan(pdfPath: String, displayName: String): ScanDoc =
+  withContext(Dispatchers.IO) {
+    val source = File(pathOf(pdfPath)).canonicalFile
+    require(source.isFile && source.length() > 0L) { "PDF file is missing" }
+    scanProjectForPdf(source.path)?.let { return@withContext it }
+    val doc = newDoc()
+    val safeName=displayName.substringBeforeLast('.').ifBlank { "Imported PDF" }
+    try {
+      val imported = ArrayList<ScanPage>()
+      ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+        PdfRenderer(fd).use { pdf ->
+          require(pdf.pageCount in 1..300) {
+            "This PDF has too many pages for a safe editable scan import (maximum 300)."
+          }
+          for (index in 0 until pdf.pageCount) {
+            pdf.openPage(index).use { page ->
+              val width = 1400
+              val height = (width.toDouble() * page.height / page.width)
+                .toInt().coerceIn(1, 3200)
+              val bitmap = Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
+              try {
+                bitmap.eraseColor(Color.WHITE)
+                page.render(bitmap,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                val output=File(dirOf(doc.id),"src-${uid()}.jpg")
+                FileOutputStream(output).use { stream ->
+                  check(bitmap.compress(Bitmap.CompressFormat.JPEG,90,stream)) {
+                    "Could not render PDF page ${index+1}"
+                  }
+                }
+                imported.add(ScanPage(uid(),"doc","fit",
+                  listOf(Shot(src=output.path,width=width,height=height,
+                    filter="original"))))
+              } finally { bitmap.recycle() }
+            }
+          }
+        }
+      }
+      val result=doc.copy(name=safeName, pages=imported,
+        importedSource=source.path)
+      saveDoc(result)
+      result
+    } catch (error: Exception) {
+      deleteDoc(doc.id)
+      throw error
+    }
+  }
 
 
 fun deleteDoc(id: String) {
