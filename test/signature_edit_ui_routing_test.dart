@@ -35,6 +35,7 @@ void main(){
     await tester.tap(find.text('Compress').last);
     await tester.pump();
     expect(find.text('Exact Export Size'),findsOneWidget);
+    expect(find.text('5 KB'),findsOneWidget);
     await tester.tap(find.text('50 KB'));
     await tester.pump();
     expect(find.text('50'),findsWidgets);
