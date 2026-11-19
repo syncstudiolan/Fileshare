@@ -123,6 +123,18 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   if(request['cropOnly']==true){
     return Uint8List.fromList(img.encodePng(cropped,level:1));
   }
+  // Apply preview filters to an at-most 1100px bitmap. Previously each
+  // slider change filtered the entire 12/48MP source before downsampling,
+  // causing long delays and avoidable temporary allocations.
+  if(request['preview']==true){
+    final longer=math.max(cropped.width,cropped.height);
+    if(longer>1100){
+      cropped=img.copyResize(cropped,
+        width:math.max(1,(cropped.width*1100/longer).round()),
+        height:math.max(1,(cropped.height*1100/longer).round()),
+        interpolation:img.Interpolation.average);
+    }
+  }
   final filter=request['filter'] as String;
   final intensity=((request['intensity'] as num?)?.toDouble()??1)
     .clamp(0.0,1.0);
