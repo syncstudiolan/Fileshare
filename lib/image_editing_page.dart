@@ -919,29 +919,83 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
               ? 'Restore Face' : 'Enhance Photo'))),
         ]);
       case 'Compress':
-        return Column(children:[
+        return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           Row(children:[
-            const Text('Format'),const SizedBox(width:20),
-            DropdownButton<String>(value:_format,
-              items:const ['PNG','JPEG'].map((x)=>DropdownMenuItem(
-                value:x,child:Text(x))).toList(),
-              onChanged:(x){if(x!=null)setState(()=>_format=x);}),
+            const Icon(Icons.high_quality_rounded,color:FileTheme.violet,size:20),
+            const SizedBox(width:8),
+            Expanded(child:Text('Balance quality & file size',
+              style:Theme.of(context).textTheme.titleSmall
+                ?.copyWith(fontWeight:FontWeight.w700))),
           ]),
-          _slider('Quality',_quality.toDouble(),5,100,
+          const SizedBox(height:9),
+          SegmentedButton<String>(showSelectedIcon:false,
+            segments:const [
+              ButtonSegment(value:'JPEG',icon:Icon(Icons.photo_outlined,size:17),
+                label:Text('JPEG · Small')),
+              ButtonSegment(value:'PNG',icon:Icon(Icons.layers_outlined,size:17),
+                label:Text('PNG · Lossless')),
+            ],
+            selected:{_format},
+            onSelectionChanged:_busy?null:(value)=>
+              setState(()=>_format=value.first)),
+          const SizedBox(height:12),
+          _slider('Quality',_quality.toDouble(),35,100,
             (v)=>setState(()=>_quality=v.round()),(){}),
-          TextFormField(
-            initialValue:_targetKb.toString(),
+          Row(children:[
+            const Icon(Icons.data_usage_rounded,size:18,color:FileTheme.violet),
+            const SizedBox(width:8),
+            Expanded(child:Text('Target size',style:TextStyle(
+              fontWeight:FontWeight.w700,
+              color:FileTheme.foreground(context)))),
+            Text('${_targetKb} KB',style:const TextStyle(
+              fontWeight:FontWeight.w700,color:FileTheme.violet)),
+          ]),
+          Slider(value:_targetKb.clamp(5,2000).toDouble(),
+            min:5,max:2000,divisions:399,
+            label:'${_targetKb} KB',
+            onChanged:_busy?null:(value){
+              final kb=(value/5).round()*5;
+              setState(()=>_targetKb=kb.clamp(5,500000));
+              _targetKbController.text=_targetKb.toString();
+            }),
+          Wrap(spacing:6,runSpacing:6,children:[
+            for(final kb in const [25,50,100,200,500,1024])
+              ChoiceChip(
+                label:Text(kb==1024?'1 MB':'$kb KB'),
+                selected:_targetKb==kb,
+                avatar:_targetKb==kb
+                    ?const Icon(Icons.check_rounded,size:15):null,
+                onSelected:_busy?null:(_){
+                  setState(()=>_targetKb=kb);
+                  _targetKbController.text=kb.toString();
+                }),
+          ]),
+          const SizedBox(height:10),
+          TextField(controller:_targetKbController,
+            enabled:!_busy,
             keyboardType:TextInputType.number,
-            decoration:const InputDecoration(
-              labelText:'Target file size (KB)',
-              helperText:'Enter any value from 1 to 500000 KB; quality may need to decrease.'),
-            onChanged:(v){
-              final n=int.tryParse(v);
-              if(n!=null && n>=1 && n<=500000)_targetKb=n;
+            decoration:InputDecoration(
+              prefixIcon:const Icon(Icons.edit_note_rounded),
+              labelText:'Custom target',
+              suffixText:'KB',
+              helperText:'5–500,000 KB · original kept separately',
+              border:OutlineInputBorder(
+                borderRadius:BorderRadius.circular(14))),
+            onChanged:(value){
+              final parsed=int.tryParse(value);
+              if(parsed!=null&&parsed>=5&&parsed<=500000){
+                setState(()=>_targetKb=parsed);
+              }
             }),
           const SizedBox(height:12),
-          FilledButton.icon(onPressed:_busy?null:_compress,
-            icon:const Icon(Icons.compress_rounded),label:const Text('Compress')),
+          SizedBox(width:double.infinity,child:FilledButton.icon(
+            onPressed:_busy?null:_compress,
+            icon:const Icon(Icons.compress_rounded),
+            label:const Text('Optimize & compress'))),
+          const SizedBox(height:6),
+          Text('JPEG preserves more detail at tight targets. Transparent '
+            'backgrounds require PNG. Very small files may lose resolution.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
         ]);
       case 'Crop':
         return Column(children:[
@@ -1588,9 +1642,20 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     physics:const ClampingScrollPhysics(),
     padding:const EdgeInsets.fromLTRB(16,12,16,14),
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text(_toolTitle(_tool),style:Theme.of(context).textTheme.titleMedium
-        ?.copyWith(fontWeight:FontWeight.w800)),
-      const SizedBox(height:8),
+      Row(children:[
+        Container(padding:const EdgeInsets.all(7),
+          decoration:BoxDecoration(
+            color:FileTheme.violet.withValues(alpha:.12),
+            borderRadius:BorderRadius.circular(10)),
+          child:Icon(_toolIcon(_tool),color:FileTheme.violet,size:19)),
+        const SizedBox(width:9),
+        Expanded(child:Text(_toolTitle(_tool),
+          style:Theme.of(context).textTheme.titleMedium
+            ?.copyWith(fontWeight:FontWeight.w800))),
+        if(_busy)const SizedBox(width:16,height:16,
+          child:CircularProgressIndicator(strokeWidth:2)),
+      ]),
+      const SizedBox(height:10),
       // Avoid dual-page AnimatedSwitcher layouts during every tool change.
       _toolControls(),
     ]));
