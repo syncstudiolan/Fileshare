@@ -62,6 +62,7 @@ class FileShareUpdates extends ChangeNotifier {
   String? error;
   File? downloaded;
   bool showPopup=false, _checking=false, _downloading=false;
+  int? _suppressedBuild;
   int _currentBuild=1;
   String _currentVersion='0.1.0';
   String get currentLabel=>'$_currentVersion (build $_currentBuild)';
@@ -102,7 +103,7 @@ class FileShareUpdates extends ChangeNotifier {
         release=parsed;
         stage=downloaded!=null && await downloaded!.exists()
           ?UpdateStage.ready:UpdateStage.available;
-        if(startup)showPopup=true;
+        if(startup && _suppressedBuild!=parsed.build)showPopup=true;
       } else {
         release=null;downloaded=null;showPopup=false;
         stage=UpdateStage.current;
@@ -116,7 +117,7 @@ class FileShareUpdates extends ChangeNotifier {
     }
   }
 
-  void later(){showPopup=false;notifyListeners();}
+  void later(){_suppressedBuild=release?.build;showPopup=false;notifyListeners();}
 
   Future<void> download() async {
     final next=release;
@@ -172,6 +173,15 @@ class FileShareUpdates extends ChangeNotifier {
   Future<void> install() async {
     final file=downloaded;
     if(stage!=UpdateStage.ready||file==null||!await file.exists())return;
+    // Revalidate immediately before install; another process may have touched the file.
+    final selected=release;
+    if(selected==null || await file.length()!=selected.size ||
+        (await sha256.bind(file.openRead()).first).toString().toLowerCase()!=
+            selected.sha256){
+      stage=UpdateStage.failed;
+      error='Downloaded installer failed final SHA-256 verification. Download again.';
+      downloaded=null;notifyListeners();return;
+    }
     stage=UpdateStage.installing;error=null;notifyListeners();
     try {
       if(Platform.isAndroid) {
