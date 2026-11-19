@@ -23,8 +23,10 @@ void main(){
     expect(find.text('Camera'),findsOneWidget);
     expect(find.text('Browse'),findsOneWidget);
     expect(find.byTooltip('Add to File Share Cart'),findsOneWidget);
-    expect(tester.widget<IconButton>(
-      find.byTooltip('Add to File Share Cart')).onPressed,isNull);
+    final cartButton=find.ancestor(
+      of:find.byTooltip('Add to File Share Cart'),
+      matching:find.byType(IconButton));
+    expect(tester.widget<IconButton>(cartButton.first).onPressed,isNull);
   });
 
   testWidgets('Signature Edit target size presets are editable',
@@ -44,7 +46,11 @@ void main(){
       const MaterialApp(home:FileShareToolboxPage()));
     expect(find.text('Image Editing'),findsOneWidget);
     expect(find.text('Signature Edit'),findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Advanced PDF Editing Tools'),220,
+      scrollable:find.byType(Scrollable).last);
     expect(find.text('Advanced PDF Editing Tools'),findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Signature Edit'),-220,
+      scrollable:find.byType(Scrollable).last);
     await tester.tap(find.text('Signature Edit'));
     await tester.pumpAndSettle();
     expect(find.text('Crop'),findsOneWidget);
