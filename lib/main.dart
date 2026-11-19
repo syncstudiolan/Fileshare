@@ -23,6 +23,7 @@ import 'android_lan_background_setting.dart';
 import 'image_editing_storage.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
+import 'cloud_connect_guide_page.dart';
 import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -2942,6 +2943,14 @@ class FeatureDesignPage extends StatelessWidget {
             label: const Text('Open Cloud Setup'),
             onPressed: () => Navigator.of(c).push(fadePage(
               CloudConnectPage(mode: mode, onMode: onMode))),
+          )),
+        const SizedBox(height:10),
+        SizedBox(width:double.infinity,
+          child:OutlinedButton.icon(
+            icon:const Icon(Icons.menu_book_outlined),
+            label:const Text('Cloud Connect Guide · Beginner to Advanced'),
+            onPressed:()=>Navigator.of(c).push(fadePage(
+              CloudConnectGuidePage(mode:mode,onMode:onMode))),
           )),
       ]),
     ),
