@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'file_share_doc_engine.dart';
 import 'gander_docx_preview_page.dart';
+import 'gander_markup_preview_page.dart';
 import 'image_editing_page.dart';
 import 'main.dart' show FileTheme, FileCardOpenRouter, appLan;
 import 'transfer_downloads.dart';
@@ -190,6 +191,11 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     if(file==null||_busy)return;
     final ext=FileShareDocEngine.ext(file.path);
     try{
+      if(['md','markdown','html','htm'].contains(ext)){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderMarkupPreviewPage(document:file)));
+        return;
+      }
       if(ext=='docx'||ext=='docm'||ext=='dotx'){
         await Navigator.of(context).push(MaterialPageRoute<void>(
           builder:(_)=>GanderDocxPreviewPage(document:file)));
