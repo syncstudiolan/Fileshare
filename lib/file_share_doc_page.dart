@@ -34,6 +34,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   final _wordStyles=<String,Set<String>>{};
   final _wordAlignments=<String,String>{};
   final _newWordParagraphs=<String,List<String>>{};
+  final _newWordTables=<String,List<WordTableSpec>>{};
   final _deletedWordParagraphs=<String>{};
   String _paperSize='A4';
   bool _landscape=false;
@@ -103,6 +104,45 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     }
     controller.dispose();
   }
+  Future<void> _insertWordTable() async {
+    final selected=_selectedWordParagraph;
+    if(selected==null||_busy)return;
+    final rows=TextEditingController(text:'3');
+    final cols=TextEditingController(text:'3');
+    final accepted=await showDialog<bool>(context:context,builder:(dialog)=>
+      AlertDialog(
+        title:const Text('Insert Word table'),
+        content:Column(mainAxisSize:MainAxisSize.min,children:[
+          TextField(controller:rows,
+            keyboardType:TextInputType.number,
+            decoration:const InputDecoration(labelText:'Rows (1–20)')),
+          TextField(controller:cols,
+            keyboardType:TextInputType.number,
+            decoration:const InputDecoration(labelText:'Columns (1–12)')),
+        ]),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),
+            child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(dialog,true),
+            child:const Text('Insert Table')),
+        ]));
+    if(accepted==true&&mounted){
+      final countRows=int.tryParse(rows.text)??0;
+      final countCols=int.tryParse(cols.text)??0;
+      if(countRows<1||countRows>20||countCols<1||countCols>12){
+        _message('Choose 1–20 rows and 1–12 columns');
+      }else{
+        setState((){
+          _newWordTables.putIfAbsent(selected,()=>[]).add(
+            WordTableSpec(countRows,countCols,
+              List.generate(countRows*countCols,
+                (index)=>'Cell '+(index+1).toString())));
+          _dirty=true;
+        });
+      }
+    }
+    rows.dispose();cols.dispose();
+  }
   void _removeWordParagraph(){
     final selected=_selectedWordParagraph;
     if(selected==null||_busy)return;
@@ -133,6 +173,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         onPressed:selected==null||_busy?null:_insertWordParagraph,
         icon:const Icon(Icons.add,size:17),
         label:const Text('Add paragraph')),
+      OutlinedButton.icon(
+        onPressed:selected==null||_busy?null:_insertWordTable,
+        icon:const Icon(Icons.table_chart_outlined,size:17),
+        label:const Text('Insert Table')),
       OutlinedButton.icon(
         onPressed:selected==null||_busy?null:_removeWordParagraph,
         icon:Icon(_deletedWordParagraphs.contains(selected)
@@ -255,6 +299,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       _wordStyles.clear();
       _wordAlignments.clear();
       _newWordParagraphs.clear();
+      _newWordTables.clear();
       _deletedWordParagraphs.clear();
       _paperSize='A4';
       _landscape=false;
@@ -339,6 +384,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         formatChanges:_wordStyles,
         alignmentChanges:_wordAlignments,
         insertedAfter:_newWordParagraphs,
+        tablesAfter:_newWordTables,
         deletedParagraphs:_deletedWordParagraphs,
         pagePaper:_pageLayoutDirty?_paperSize:null,
         pageLandscape:_landscape,
@@ -555,6 +601,12 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                                 if((_newWordParagraphs[block.id]??[]).isNotEmpty)
                                   Text('New paragraphs after: '+
                                     _newWordParagraphs[block.id]!.join(' | '),
+                                    style:TextStyle(
+                                      color:FileTheme.muted(context),
+                                      fontSize:11)),
+                                if((_newWordTables[block.id]??[]).isNotEmpty)
+                                  Text('Tables to insert: '+
+                                    _newWordTables[block.id]!.length.toString(),
                                     style:TextStyle(
                                       color:FileTheme.muted(context),
                                       fontSize:11)),
