@@ -272,8 +272,14 @@ void main() {
   testWidgets('Windows wide view has a persistent collapsible sidebar',
       (tester) async {
     if (!Platform.isWindows) return;
-    await tester.binding.setSurfaceSize(const Size(1440, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    // Windows CI runs Flutter widget tests with an arbitrary device pixel
+    // ratio. Force a true desktop logical viewport, not a narrow mobile one.
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
     await tester.pumpWidget(const FileShareApp(
       initialMode: ThemeMode.light, offlineDefault: true,
       enableBackends: false,
