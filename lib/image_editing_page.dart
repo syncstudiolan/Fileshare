@@ -541,12 +541,12 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
       }
       await _commit(current,result,_enhanceFaceMode
-        ? 'GFPGAN Face Restoration'
+        ? (Platform.isAndroid||Platform.isIOS ? 'Safe mobile face retouch' : 'GFPGAN Face Restoration')
         : (Platform.isAndroid||Platform.isIOS
             ?'Safe mobile photo enhancement'
             :'Photo Enhancer Real-ESRGAN ${_enhanceScale}x'));
       _message(_enhanceFaceMode
-        ? 'Face restoration applied to the selected area'
+        ? (Platform.isAndroid||Platform.isIOS ? 'Face retouch applied to the selected area' : 'Face restoration applied to the selected area')
         : (Platform.isAndroid||Platform.isIOS
             ?'Photo enhanced with safe mobile image processing'
             :'Photo enhanced with Real-ESRGAN ${_enhanceScale}x'));
