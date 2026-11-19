@@ -1,4 +1,4 @@
-name: Build unsigned iOS IPA for external signing
+name: iOS ONLY - Build unsigned iPhone IPA (macOS)
 
 # User approved iOS builds. Validate first on the existing fix branch; after
 # PR merge, build and publish the unsigned IPA from main.
@@ -14,10 +14,17 @@ permissions:
 
 jobs:
   ios_unsigned:
-    name: Compile iOS and package unsigned IPA
+    name: iOS ONLY - macOS Xcode compile and IPA packaging
     runs-on: macos-14
     timeout-minutes: 75
     steps:
+      - name: Assert macOS and Xcode are available (never Windows)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
@@ -30,6 +37,7 @@ jobs:
           python3 -m pip install --quiet Pillow
           python3 tool/generate_brand_assets.py
           flutter pub get
+          if ! ruby -e 'require "xcodeproj"' >/dev/null 2>&1; then sudo gem install xcodeproj --no-document; fi
           python3 tool/ios/install_native_pdf.py
       - name: Verify iOS branded icon and source compatibility
         run: |
@@ -114,7 +122,7 @@ jobs:
           retention-days: 30
 
   publish_ipa:
-    name: Publish unsigned IPA for external signing
+    name: iOS ONLY - Publish unsigned IPA for external signing
     needs: [ios_unsigned]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
