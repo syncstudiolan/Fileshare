@@ -20,7 +20,6 @@ import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
 import 'image_editing_windows_ai.dart';
 import 'photo_enhancer_engine.dart';
-import 'face_restoration_engine.dart';
 
 /// File Share's native-feeling editing workspace. The main canvas, transition
 /// animations and controls are Flutter GPU rendered; expensive file encodes and
@@ -73,7 +72,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   double _fineAngle=0;
   bool _straightenAutoCrop=true;
   String? _processingAction;
-  Rect? _instantCrop;
   int _quality=85,_targetKb=500;
   Color _background=Colors.white;
   List<Color> _recentColors=[];
@@ -83,8 +81,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   int _enhanceScale=2;
   double _enhanceStrength=.8;
   double _enhanceProgress=0;
-  bool _enhanceFaceMode=false;
-  bool _faceUseCrop=false;
 
   static const _tools=['Background','Erase','Photo Enhancer','Crop','Filters','Straighten','Adjust','Compress'];
   static const _colors=[Colors.transparent,Colors.white,Colors.black,
@@ -278,8 +274,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       'backgroundEngine':_backgroundEngine,
       'enhanceScale':_enhanceScale,
       'enhanceStrength':_enhanceStrength,
-      'enhanceFaceMode':_enhanceFaceMode,
-      'faceUseCrop':_faceUseCrop,
       'zoom':_zoom,
     });
   }
@@ -317,8 +311,6 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _backgroundEngine=state['backgroundEngine'] as String? ?? _backgroundEngine;
       _enhanceScale=(state['enhanceScale'] as num?)?.toInt() ?? 2;
       _enhanceStrength=(state['enhanceStrength'] as num?)?.toDouble() ?? .8;
-      _enhanceFaceMode=state['enhanceFaceMode'] as bool? ?? false;
-      _faceUseCrop=state['faceUseCrop'] as bool? ?? false;
       _quality=((state['quality'] as num?)?.toInt()??_quality).clamp(35,100);
       _targetKb=((state['targetKb'] as num?)?.toInt()??_targetKb)
         .clamp(5,500000);
@@ -526,32 +518,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _processingAction='photo_enhance';
     setState((){_busy=true;_enhanceProgress=0;});
     try{
-      final Uint8List result;
-      if(_enhanceFaceMode){
-        // Face mode uses a deliberately chosen face region. The existing
-        // Crop selection can be reused without cropping the full image.
-        final roi=_faceUseCrop
-          ? <double>[_crop.left,_crop.top,_crop.right,_crop.bottom]
-          : <double>[.15,.15,.85,.85];
-        result=await FaceRestorationEngine.restore(current,
-          normalizedRoi:roi,strength:_enhanceStrength);
-      }else{
-        result=await PhotoEnhancerEngine.enhance(current,
-          scale:_enhanceScale,blend:_enhanceStrength,
-          onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
+      final result=await PhotoEnhancerEngine.enhance(current,
+        scale:_enhanceScale,blend:_enhanceStrength,
+        onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
+      final dimensions=await ImageEditingEngine.dimensions(result);
+      if(result.isEmpty||dimensions[0]<=0||dimensions[1]<=0){
+        throw StateError('Enhancement produced no usable image');
       }
-      await _commit(current,result,_enhanceFaceMode
-        ? (Platform.isAndroid||Platform.isIOS ? 'Safe mobile face retouch' : 'GFPGAN Face Restoration')
-        : (Platform.isAndroid||Platform.isIOS
-            ?'Safe mobile photo enhancement'
-            :'Photo Enhancer Real-ESRGAN ${_enhanceScale}x'));
-      _message(_enhanceFaceMode
-        ? (Platform.isAndroid||Platform.isIOS ? 'Face retouch applied to the selected area' : 'Face restoration applied to the selected area')
-        : (Platform.isAndroid||Platform.isIOS
-            ?'Photo enhanced with safe mobile image processing'
-            :'Photo enhanced with Real-ESRGAN ${_enhanceScale}x'));
+      await _commit(current,result,'Photo enhance ${dimensions[0]}×${dimensions[1]}');
+      if(mounted)_message('Enhanced photo: ${dimensions[0]} × ${dimensions[1]} pixels');
     }catch(e){
-      _message('Photo Enhancer could not finish: $e');
+      if(mounted)_message('Photo enhancement failed: $e');
     }finally{
       _processingAction=null;
       if(mounted)setState(()=>_busy=false);
@@ -877,72 +854,51 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         ]);
       case 'Photo Enhancer':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          const Text('AI Photo Enhancer',
-            style:TextStyle(fontWeight:FontWeight.w800,fontSize:15)),
-          const SizedBox(height:8),
-          SegmentedButton<bool>(
+          const Row(children:[
+            Icon(Icons.auto_awesome_rounded,color:FileTheme.violet,size:20),
+            SizedBox(width:8),
+            Text('Photo Enhancement',style:TextStyle(
+              fontWeight:FontWeight.w800,fontSize:15)),
+          ]),
+          const SizedBox(height:9),
+          Text('Enhance the entire photo automatically. No face-area '
+            'selection or crop required.',
+            style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
+          const SizedBox(height:10),
+          SegmentedButton<int>(
             segments:const [
-              ButtonSegment(value:false,label:Text('Photo HD')),
-              ButtonSegment(value:true,label:Text('Face Restore')),
-            ],selected:{_enhanceFaceMode},
+              ButtonSegment(value:2,label:Text('HD')),
+              ButtonSegment(value:4,label:Text('Ultra HD')),
+            ],selected:{_enhanceScale},
             onSelectionChanged:_busy?null:(v)=>
-              setState(()=>_enhanceFaceMode=v.first)),
-          const SizedBox(height:12),
-          if(!_enhanceFaceMode)...[
-            Text('Real-ESRGAN ONNX: 2× resolution, or 4× with two '
-              '2× passes. First use downloads a verified model (~67 MB). '
-              'Following edits run entirely offline.',
-              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
-            const SizedBox(height:12),
-            SegmentedButton<int>(
-              segments:const [
-                ButtonSegment(value:2,label:Text('2× HD')),
-                ButtonSegment(value:4,label:Text('4× Ultra HD')),
-              ],selected:{_enhanceScale},
-              onSelectionChanged:_busy?null:(v)=>
-                setState(()=>_enhanceScale=v.first)),
-          ]else...[
-            Text('GFPGAN v1.4 restores one front-facing, approximately '
-              'aligned face. First use downloads a verified model (~170 MB). '
-              'Face details are AI estimates and may alter identity.',
-              style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
-            const SizedBox(height:10),
-            SwitchListTile.adaptive(
-              dense:true,contentPadding:EdgeInsets.zero,
-              title:const Text('Use Crop selection as face region'),
-              subtitle:const Text('Select the face in Crop first, '
-                'then return here without applying Crop.'),
-              value:_faceUseCrop,
-              onChanged:_busy?null:(v)=>setState(()=>_faceUseCrop=v)),
-            if(!_faceUseCrop)
-              Text('Otherwise uses the central 70% of the picture. '
-                'Best for a centered single-face portrait.',
-                style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
-            OutlinedButton.icon(
-              onPressed:_busy?null:()=>_selectTool('Crop'),
-              icon:const Icon(Icons.crop_free_rounded),
-              label:const Text('Select face area with Crop')),
-          ],
-          const SizedBox(height:12),
-          _slider('AI strength',_enhanceStrength,0,1,
-            (v)=>setState(()=>_enhanceStrength=v),(){}),
-          Text('Less strength preserves more of the original photo. '
-            'AI reconstruction does not guarantee authentic lost detail.',
+              setState(()=>_enhanceScale=v.first)),
+          const SizedBox(height:10),
+          Row(children:[
+            const Icon(Icons.tune_rounded,size:17,color:FileTheme.violet),
+            const SizedBox(width:8),
+            const Expanded(child:Text('Enhancement strength')),
+            Text('${(_enhanceStrength*100).round()}%'),
+          ]),
+          Slider(value:_enhanceStrength,min:.2,max:1,divisions:16,
+            onChanged:_busy?null:(v)=>
+              setState(()=>_enhanceStrength=v)),
+          Text(Platform.isAndroid||Platform.isIOS
+            ?'Memory-safe clarity, contrast and edge-detail processing. '
+             'HD/Ultra HD target resolution is limited by device memory; '
+             'this is not generative AI reconstruction.'
+            :'Desktop uses Real-ESRGAN for high-resolution restoration.',
             style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
           if(_processingAction=='photo_enhance')...[
-            const SizedBox(height:12),
-            LinearProgressIndicator(
-              value:_enhanceFaceMode?null:_enhanceProgress,
+            const SizedBox(height:10),
+            LinearProgressIndicator(value:_enhanceProgress,
               minHeight:5,borderRadius:BorderRadius.circular(4)),
-            if(!_enhanceFaceMode)
-              Text('${(_enhanceProgress*100).round()}%'),
+            Text('${(_enhanceProgress*100).round()}%'),
           ],
-          const SizedBox(height:14),
+          const SizedBox(height:12),
           SizedBox(width:double.infinity,child:FilledButton.icon(
             onPressed:_busy?null:_runPhotoEnhancer,
             icon:const Icon(Icons.auto_awesome_rounded),
-            label:Text(_enhanceFaceMode
-              ? 'Restore Face' : 'Enhance Photo'))),
+            label:const Text('Enhance Entire Photo'))),
         ]);
       case 'Compress':
         return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -1540,22 +1496,25 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           ColoredBox(color:_pendingBackgroundColor!),
         _liveAdjustment(_fastFilterPreview(
           Transform.rotate(angle:_fineAngle*math.pi/180,
-            child:(_instantCrop!=null&&_erasePreview!=null)
-              ?CustomPaint(painter:_InstantCropPainter(
-                image:_erasePreview!,crop:_instantCrop!))
-              :(_tool=='Erase'&&_erasePreview!=null)
+            child:(_tool=='Erase'&&_erasePreview!=null)
               ?CustomPaint(painter:_RealtimeEraserPainter(
                 image:_erasePreview!,restoration:_eraseRestoration,
                 pending:_pendingErase,active:_stroke,mode:_eraseMode,
                 radius:_eraseRadius,softness:_softness,
                 repaintTrigger:_strokeRepaint))
-              :Image.memory(
+              :ClipRect(child:Image.memory(
                   _pendingBackgroundColor!=null&&_cutoutBytes!=null?
-                    _cutoutBytes!:_bytes!,fit:BoxFit.fill,
+                    _cutoutBytes!:_bytes!,
+                  key:ValueKey<int>(identityHashCode(
+                    _pendingBackgroundColor!=null&&_cutoutBytes!=null?
+                      _cutoutBytes!:_bytes!)),
+                  fit:BoxFit.fill,
+                  width:width,height:height,
                   cacheWidth:(width*MediaQuery.devicePixelRatioOf(context))
                     .round().clamp(1,1920),
-                  gaplessPlayback:true,filterQuality:FilterQuality.medium)))),
-        if(_tool=='Crop'&&_instantCrop==null)
+                  gaplessPlayback:false,
+                  filterQuality:FilterQuality.medium))))),
+        if(_tool=='Crop')
           CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
 
@@ -1577,7 +1536,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           scaleEnabled:true,child:canvas,
         );
       }
-      return Center(child:SizedBox(width:width,height:height,child:canvas));
+      return Center(child:ClipRect(
+        child:SizedBox(width:width,height:height,child:canvas)));
     });
   }
 
