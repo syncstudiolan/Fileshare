@@ -81,6 +81,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   int _enhanceScale=2;
   double _enhanceStrength=.8;
   double _enhanceProgress=0;
+  Uint8List? _enhanceBefore;
+  Uint8List? _enhanceAfter;
+  double _compareFraction=.5;
 
   static const _tools=['Background','Erase','Photo Enhancer','Crop','Filters','Straighten','Adjust','Compress'];
   static const _colors=[Colors.transparent,Colors.white,Colors.black,
@@ -371,6 +374,10 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     }
     _redo.clear();
     _steps.add(step);
+    if(!step.startsWith('Photo enhance')){
+      _enhanceBefore=null;
+      _enhanceAfter=null;
+    }
     if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
       _cutoutBytes=null; // A crop or other transform changed image geometry.
     }
@@ -415,6 +422,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(!mounted)return;
     setState((){
       _bytes=next;
+      _enhanceBefore=null;
+      _enhanceAfter=null;
       _ratio=size[0]/size[1];
       _crop=const Rect.fromLTWH(.06,.06,.88,.88);
       _cropDirty=false;
@@ -526,6 +535,13 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         throw StateError('Enhancement produced no usable image');
       }
       await _commit(current,result,'Photo enhance ${dimensions[0]}×${dimensions[1]}');
+      if(mounted)setState((){
+        // Compare the actual pixels before and after this exact operation.
+        // Keep these snapshots independent of draft originals and filters.
+        _enhanceBefore=current;
+        _enhanceAfter=result;
+        _compareFraction=.5;
+      });
       if(mounted)_message('Enhanced photo: ${dimensions[0]} × ${dimensions[1]} pixels');
     }catch(e){
       if(mounted)_message('Photo enhancement failed: $e');
@@ -882,6 +898,17 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           Slider(value:_enhanceStrength,min:.2,max:1,divisions:16,
             onChanged:_busy?null:(v)=>
               setState(()=>_enhanceStrength=v)),
+          if(_enhanceBefore!=null&&_enhanceAfter!=null)...[
+            const SizedBox(height:8),
+            Row(children:[
+              const Icon(Icons.compare_rounded,
+                color:FileTheme.violet,size:18),
+              const SizedBox(width:6),
+              Expanded(child:Text('Drag the divider on the photo to compare',
+                style:TextStyle(fontSize:12,
+                  color:FileTheme.muted(context)))),
+            ]),
+          ],
           Text(Platform.isAndroid||Platform.isIOS
             ?'Memory-safe clarity, contrast and edge-detail processing. '
              'HD/Ultra HD target resolution is limited by device memory; '
@@ -1518,6 +1545,49 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           CustomPaint(painter:_CropPainter(_cropCorners,
           showSideHandles:_cropMode=='Normal Crop')),
 
+        if(_tool=='Photo Enhancer' && !_busy &&
+            _enhanceBefore!=null && _enhanceAfter!=null &&
+            identical(_bytes,_enhanceAfter))...[
+          ClipRect(
+            clipper:_BeforeAfterClipper(_compareFraction),
+            child:Image.memory(_enhanceBefore!,
+              width:width,height:height,fit:BoxFit.fill,
+              gaplessPlayback:false,filterQuality:FilterQuality.medium),
+          ),
+          Positioned(
+            top:0,bottom:0,left:(width*_compareFraction-1).clamp(0.0,width),
+            child:Container(width:2,color:Colors.white,
+              child:const SizedBox.expand()),
+          ),
+          Positioned(
+            left:(width*_compareFraction-19).clamp(0.0,width-38),
+            top:(height/2-19).clamp(0.0,height-38),
+            child:Container(width:38,height:38,
+              decoration:BoxDecoration(
+                shape:BoxShape.circle,color:FileTheme.violet,
+                border:Border.all(color:Colors.white,width:2),
+                boxShadow:const [BoxShadow(color:Color(0x44000000),
+                  blurRadius:8)]),
+              child:const Icon(Icons.compare_arrows_rounded,
+                color:Colors.white,size:22)),
+          ),
+          const Positioned(left:8,top:8,
+            child:_ComparisonLabel('Before')),
+          const Positioned(right:8,top:8,
+            child:_ComparisonLabel('After')),
+          Positioned.fill(child:GestureDetector(
+            behavior:HitTestBehavior.translucent,
+            onHorizontalDragStart:(d)=>setState(()=>
+              _compareFraction=(d.localPosition.dx/width)
+                .clamp(0.0,1.0)),
+            onHorizontalDragUpdate:(d)=>setState(()=>
+              _compareFraction=(d.localPosition.dx/width)
+                .clamp(0.0,1.0)),
+            onTapDown:(d)=>setState(()=>
+              _compareFraction=(d.localPosition.dx/width)
+                .clamp(0.0,1.0)),
+          )),
+        ],
         if(_showOriginal && _originalBytes!=null)
           Image.memory(_originalBytes!,fit:BoxFit.fill),
       ]);
@@ -1529,7 +1599,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
           onPanCancel:_finishGesture,
           child:canvas,
         );
-      }else{
+      }else if(!(_tool=='Photo Enhancer' &&
+            _enhanceBefore!=null && _enhanceAfter!=null && !_busy)){
         canvas=InteractiveViewer(
           transformationController:_transformController,
           minScale:1,maxScale:6,panEnabled:true,
@@ -2406,4 +2477,24 @@ class ImageEditingLauncherPage extends StatelessWidget {
       )),
     ),
   );
+}
+
+class _BeforeAfterClipper extends CustomClipper<Rect> {
+  const _BeforeAfterClipper(this.fraction);
+  final double fraction;
+  @override Rect getClip(Size size)=>
+    Rect.fromLTWH(0,0,size.width*fraction.clamp(0.0,1.0),size.height);
+  @override bool shouldReclip(covariant _BeforeAfterClipper old)=>
+    old.fraction!=fraction;
+}
+
+class _ComparisonLabel extends StatelessWidget{
+  const _ComparisonLabel(this.title);
+  final String title;
+  @override Widget build(BuildContext context)=>DecoratedBox(
+    decoration:BoxDecoration(color:const Color(0xC8221A38),
+      borderRadius:BorderRadius.circular(10)),
+    child:Padding(padding:const EdgeInsets.symmetric(horizontal:10,vertical:6),
+      child:Text(title,style:const TextStyle(color:Colors.white,
+        fontSize:12,fontWeight:FontWeight.w700))));
 }
