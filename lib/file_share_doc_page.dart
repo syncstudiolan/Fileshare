@@ -13,6 +13,7 @@ import 'gander_markup_preview_page.dart';
 import 'gander_spreadsheet_preview_page.dart';
 import 'gander_presentation_preview_page.dart';
 import 'file_share_windows_pdf_viewer.dart';
+import 'gander_epub_preview_page.dart';
 import 'image_editing_page.dart';
 import 'main.dart' show FileTheme, FileCardOpenRouter, appLan;
 import 'transfer_downloads.dart';
@@ -472,7 +473,13 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
             sourceName:file.uri.pathSegments.last)));
         return;
       }
-      if(ext=='zip'||ext=='epub'){
+      if(ext=='epub'){
+        await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder:(_)=>GanderEpubPreviewPage(document:file,
+            name:_saved==null?_displayName:null)));
+        return;
+      }
+      if(ext=='zip'){
         if(await file.length()>32*1024*1024){
           throw StateError('Archive too large for in-app listing');
         }
