@@ -371,6 +371,11 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           selected:{_cropMode},
           onSelectionChanged:_busy?null:(choice)=>_setMode(choice.first)),
         const SizedBox(height:12),
+        SizedBox(width:double.infinity,child:FilledButton.icon(
+          onPressed:_busy||_original==null?null:_applyCrop,
+          icon:const Icon(Icons.check_circle_outline_rounded),
+          label:const Text('Apply Crop'))),
+        const SizedBox(height:8),
         OutlinedButton.icon(
           onPressed:()=>setState((){
             _crop=SignatureCrop.full;
@@ -379,11 +384,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           }),
           icon:const Icon(Icons.restart_alt),
           label:const Text('Reset Crop')),
-        const SizedBox(height:10),
-        SizedBox(width:double.infinity,child:FilledButton.icon(
-          onPressed:_busy||_original==null?null:_applyCrop,
-          icon:const Icon(Icons.check_circle_outline_rounded),
-          label:const Text('Apply Crop'))),
+
       ]);
     }
     if(_tool=='Compress'){
