@@ -105,4 +105,18 @@ void main(){
     expect(neutral, isNot(equals(full)));
   });
 
+  test('Rendered signature filter previews are real images',()async{
+    const labels=['Original','Black & White','Blue Ink','Red Ink',
+      'Sepia','High Contrast'];
+    final thumbs=await SignatureEditEngine.thumbnails(source(),labels);
+    expect(thumbs.keys.toSet(),labels.toSet());
+    for(final label in labels){
+      final image=img.decodeJpg(thumbs[label]!);
+      expect(image,isNotNull,reason:label);
+      expect(image!.width,lessThanOrEqualTo(160));
+      expect(image.height,greaterThan(1));
+    }
+    expect(thumbs['Original'],isNot(equals(thumbs['Black & White'])));
+  });
+
 }

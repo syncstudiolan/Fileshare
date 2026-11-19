@@ -33,7 +33,7 @@ const _entries=[
     Icons.folder_shared_outlined,available:true),
   _ToolEntry('File Share Doc','Open documents, edit Word/Excel/PowerPoint text, save copies',
     Icons.description_outlined,available:true),
-  _ToolEntry('Advanced PDF Editing Tools','Android-only PDF processing, scanner, OCR and history',
+  _ToolEntry('Advanced PDF Editing Tools','PDF tools: Android native suite, iPhone PDFKit editing and scanner',
     Icons.picture_as_pdf_outlined,available:true),
 ];
 
@@ -57,10 +57,26 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
       return;
     }
     if(entry.name=='Advanced PDF Editing Tools'){
+      if(Platform.isIOS){
+        if(hasSource&&!EditingFileRouter.acceptsPdfTool(name)){
+          _unsupported(name,'iPhone PDF Tools');
+          return;
+        }
+        try {
+          await const MethodChannel('file_share.ios_pdf').invokeMethod<void>(
+            'open',{'path':hasSource &&
+              EditingFileRouter.classify(name)==EditingFileKind.pdf
+                ?widget.sourcePath:null});
+        }on PlatformException catch(error){
+          if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:Text('iPhone PDF tools error: ${error.message ?? error.code}')));
+        }
+        return;
+      }
       if(!Platform.isAndroid){
         showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
-          title:const Text('Only Available on Android'),
-          content:const Text('These tools are only available on Android/mobile.'),
+          title:const Text('Not available on Windows'),
+          content:const Text('PDF editing is available on Android and iPhone.'),
           actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
             child:const Text('OK'))]));
         return;

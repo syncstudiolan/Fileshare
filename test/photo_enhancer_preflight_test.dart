@@ -38,4 +38,42 @@ void main() {
         throwsFormatException);
     });
   });
+  group('Mobile enhancement quality and memory caps',(){
+    Uint8List sample(){
+      final photo=image.Image(width:160,height:120);
+      for(var y=0;y<120;y++){
+        for(var x=0;x<160;x++){
+          final edge=x<80?35:205;
+          final variation=(x*7+y*3)%13;
+          photo.setPixelRgb(x,y,edge,80+variation,50+variation);
+        }
+      }
+      return Uint8List.fromList(image.encodePng(photo));
+    }
+
+    test('HD creates larger, visibly processed image',(){
+      final source=sample();
+      final enhanced=PhotoEnhancerEngine.enhanceMobileForTest(
+        source,scale:2,strength:.9);
+      final after=image.decodeJpg(enhanced)!;
+      final before=image.decodePng(source)!;
+      expect(after.width,320);
+      expect(after.height,240);
+      expect(after.getPixel(70,60).r, isNot(equals(before.getPixel(35,30).r)));
+    });
+
+    test('Ultra HD creates bounded larger output',(){
+      final result=PhotoEnhancerEngine.enhanceMobileForTest(
+        sample(),scale:4,strength:.8);
+      final output=image.decodeJpg(result)!;
+      expect(output.width,640);
+      expect(output.height,480);
+    });
+
+    test('Invalid source fails rather than pretending enhancement',(){
+      expect(()=>PhotoEnhancerEngine.enhanceMobileForTest(
+        Uint8List.fromList([1,2,3])),throwsFormatException);
+    });
+  });
+
 }

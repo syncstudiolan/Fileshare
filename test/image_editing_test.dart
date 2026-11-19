@@ -110,6 +110,20 @@ void main(){
     expect(cart.takeAll(),isEmpty);
   });
 
+  test('Before/After clip tracks drag position exactly',(){
+    const size=Size(400,300);
+    final middle=const PhotoBeforeAfterClipper(.5).getClip(size);
+    expect(middle,const Rect.fromLTWH(0,0,200,300));
+    expect(const PhotoBeforeAfterClipper(0).getClip(size),
+      const Rect.fromLTWH(0,0,0,300));
+    expect(const PhotoBeforeAfterClipper(1).getClip(size),
+      const Rect.fromLTWH(0,0,400,300));
+    expect(const PhotoBeforeAfterClipper(.75).shouldReclip(
+      const PhotoBeforeAfterClipper(.25)),isTrue);
+    expect(const PhotoBeforeAfterClipper(.75).shouldReclip(
+      const PhotoBeforeAfterClipper(.75)),isFalse);
+  });
+
   testWidgets('Image Editing launcher presents two working entry routes',
       (tester)async{
     await tester.pumpWidget(const MaterialApp(home:ImageEditingLauncherPage()));

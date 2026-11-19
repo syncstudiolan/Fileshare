@@ -13,6 +13,13 @@ import 'package:path_provider/path_provider.dart';
 /// Uses the standard [1,3,H,W] RGB/[0,1] input and x2 planar RGB output.
 /// 4x is two x2 stages, not an independently trained 4x model.
 class PhotoEnhancerEngine {
+  @visibleForTesting
+  static Uint8List enhanceMobileForTest(Uint8List source,
+      {int scale=2,double strength=.8})=>
+    _mobileSafeEnhance({
+      'source':source,'scale':scale,'strength':strength,
+    });
+
   static const modelUrl =
     'https://huggingface.co/skillsafe-ai/realesrgan-x2plus/resolve/8166b63/model.onnx';
   static const expectedSha256 =
@@ -175,35 +182,71 @@ class PhotoEnhancerEngine {
   }
 }
 
-/// Memory-bounded, platform-independent enhancement for mobile.
-/// A bicubic resize followed by gentle local sharpening/contrast retains
-/// original content. Unlike Real-ESRGAN, this does not hallucinate missing
-/// details and does not require a 65MB ONNX model or native tensors.
+/// Bounded mobile enhancement. CPU work is isolated from Flutter's raster/UI
+/// threads and never constructs an ONNX session (native OOM is not catchable).
+/// This is edge-aware image restoration/upscaling, not generative Real-ESRGAN.
 Uint8List _mobileSafeEnhance(Map<String,Object?> request){
   final source=request['source'] as Uint8List;
   final scale=request['scale'] as int;
   final strength=(request['strength'] as double).clamp(0.0,1.0);
   final decoded=img.decodeImage(source);
   if(decoded==null)throw const FormatException('Unsupported photo format');
-  // Cap input and output simultaneously. Even an 8K input is downscaled
-  // *before* a second large output allocation. Make the operation robust
-  // on devices with much less RAM than the CI Android emulator.
-  const maxOutputPixels=2500000;
-  final pixels=decoded.width*decoded.height;
-  final factor=math.min(1.0,math.sqrt(maxOutputPixels/(pixels*scale*scale)));
-  final working=factor<1
-    ?img.copyResize(decoded,
-      width:math.max(1,(decoded.width*factor).round()),
-      height:math.max(1,(decoded.height*factor).round()),
-      interpolation:img.Interpolation.average)
-    :decoded;
-  final enhanced=img.copyResize(working,
-    width:working.width*scale,height:working.height*scale,
-    interpolation:img.Interpolation.cubic);
-  // Favor a believable photograph instead of oversharpened artifacts.
-  final contrast=1+.08*strength;
-  final saturation=1+.045*strength;
-  final corrected=img.adjustColor(enhanced,
-    contrast:contrast,saturation:saturation);
-  return Uint8List.fromList(img.encodeJpg(corrected,quality:90));
+  if(decoded.width<1||decoded.height<1)throw StateError('Empty image');
+
+  // The old fallback always shrank camera photos toward 2.5MP output.
+  // This frequently destroyed detail and made HD/Ultra HD look unchanged.
+  // Retain original dimensions whenever possible, and only downscale huge
+  // inputs when required by the bounded 6MP output. The actual output
+  // dimensions are communicated by the encoded image, never a false x4 claim.
+  const maxPixels=6000000;
+  final inputPixels=decoded.width*decoded.height;
+  final desiredFactor=math.min(scale.toDouble(),
+    math.sqrt(maxPixels/inputPixels));
+  final factor=inputPixels>=maxPixels
+    ?math.sqrt(maxPixels/inputPixels)
+    :math.max(1.0,desiredFactor);
+  final targetW=math.max(1,(decoded.width*factor).round());
+  final targetH=math.max(1,(decoded.height*factor).round());
+
+  final resized=targetW==decoded.width&&targetH==decoded.height
+    ?decoded
+    :img.copyResize(decoded,width:targetW,height:targetH,
+        interpolation:img.Interpolation.cubic);
+
+  // Mild tonal correction and stronger, local edge-aware detail recovery.
+  // A single 4-neighbor pass avoids allocating a second blur bitmap.
+  final corrected=img.adjustColor(resized,
+    contrast:1+.12*strength,saturation:1+.065*strength,
+    brightness:1+.012*strength);
+  final output=img.Image(width:targetW,height:targetH,numChannels:3);
+
+  final sharpness=1.1*strength;
+  for(var y=0;y<targetH;y++){
+    final top=math.max(0,y-1),bottom=math.min(targetH-1,y+1);
+    for(var x=0;x<targetW;x++){
+      final left=math.max(0,x-1),right=math.min(targetW-1,x+1);
+      final c=corrected.getPixel(x,y);
+      final n=corrected.getPixel(x,top);
+      final e=corrected.getPixel(right,y);
+      final w=corrected.getPixel(left,y);
+      final d=corrected.getPixel(x,bottom);
+      // Avoid sharpening sensor noise on smooth skin/backgrounds.
+      final localLuma=(n.r+n.g+n.b+e.r+e.g+e.b+
+        w.r+w.g+w.b+d.r+d.g+d.b)/12;
+      final centerLuma=(c.r+c.g+c.b)/3;
+      final detail= (centerLuma-localLuma).abs();
+      final gain=detail<5?0.0:sharpness *
+        ((detail-5)/17).clamp(0.0,1.0);
+      int channel(num center,num a,num b,num left,num below){
+        final neighbors=(a+b+left+below)/4;
+        return (center+(center-neighbors)*gain).round()
+          .clamp(0,255).toInt();
+      }
+      output.setPixelRgb(x,y,
+        channel(c.r,n.r,e.r,w.r,d.r),
+        channel(c.g,n.g,e.g,w.g,d.g),
+        channel(c.b,n.b,e.b,w.b,d.b));
+    }
+  }
+  return Uint8List.fromList(img.encodeJpg(output,quality:93));
 }
