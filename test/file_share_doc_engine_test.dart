@@ -61,9 +61,9 @@ void main(){
     final zip=ZipDecoder().decodeBytes(await out.readAsBytes());
     final document=xml.XmlDocument.parse(utf8.decode(
       zip.findFile('word/document.xml')!.content));
-    expect(document.findAllElements('b').length,1);
-    expect(document.findAllElements('i').length,1);
-    expect(document.findAllElements('u').length,1);
+    expect(document.descendants.whereType<xml.XmlElement>().where((e)=>e.name.local=='b').length,1);
+    expect(document.descendants.whereType<xml.XmlElement>().where((e)=>e.name.local=='i').length,1);
+    expect(document.descendants.whereType<xml.XmlElement>().where((e)=>e.name.local=='u').length,1);
   });
 
   test('XLSX shared string cell becomes independent inline text',()async{
@@ -82,7 +82,7 @@ void main(){
     final archive=ZipDecoder().decodeBytes(await out.readAsBytes());
     final doc=xml.XmlDocument.parse(utf8.decode(
       archive.findFile('xl/worksheets/sheet1.xml')!.content));
-    final cells=doc.findAllElements('c').toList();
+    final cells=doc.descendants.whereType<xml.XmlElement>().where((e)=>e.name.local=='c').toList();
     expect(cells.first.getAttribute('t'),'inlineStr');
     expect(cells.first.innerText,'Changed');
     expect(cells[1].getAttribute('t'),'s');
