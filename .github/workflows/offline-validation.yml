@@ -76,6 +76,20 @@ jobs:
           channel: stable
       - name: Generate missing Android runner
         run: flutter create --project-name file_share --platforms=android .
+      - name: Preflight stable Android release signing
+        shell: bash
+        env:
+          SIGNED_KEYSTORE: ${{ secrets.FILE_SHARE_ANDROID_KEYSTORE_BASE64 }}
+          SIGNED_STORE_PASSWORD: ${{ secrets.FILE_SHARE_ANDROID_KEYSTORE_PASSWORD }}
+          SIGNED_KEY_ALIAS: ${{ secrets.FILE_SHARE_ANDROID_KEY_ALIAS }}
+          SIGNED_KEY_PASSWORD: ${{ secrets.FILE_SHARE_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SIGNED_KEYSTORE" || -z "$SIGNED_STORE_PASSWORD" ||
+                -z "$SIGNED_KEY_ALIAS" || -z "$SIGNED_KEY_PASSWORD" ]]; then
+            echo "::error::Production APK signing not configured. Set four FILE_SHARE_ANDROID_* Actions secrets; no debug-key fallback is permitted."
+            exit 1
+          fi
       - name: Configure Android release ML Kit keep rules
         run: python3 tool/ensure_mlkit_proguard.py
       - name: Install packages
@@ -178,6 +192,9 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
+      - name: Prepare pinned Microsoft ONNX Runtime SDK (avoids upstream GitHub ZIP outage)
+        shell: pwsh
+        run: ./tool/prepare_windows_onnxruntime.ps1
       - name: Build optimized Windows release bundle
         run: flutter build windows --release
       - name: Record Windows release bundle size
