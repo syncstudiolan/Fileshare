@@ -25,6 +25,7 @@ import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
 import 'cloud_connect_guide_page.dart';
 import 'file_share_updates.dart';
+import 'app_top_notice.dart';
 import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -514,14 +515,7 @@ class _RootBackGuardState extends State<RootBackGuard> {
     _lastBack = now;
     _backCount++;
     if (_backCount < 3) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Press Back ' +
-              (3 - _backCount).toString() +
-              ' more time(s) to exit'),
-        ),
-      );
+      FileShareTopNotice.show(context,'Press Back ${3-_backCount} more time(s) to exit');
       return;
     }
     _backCount = 0;
