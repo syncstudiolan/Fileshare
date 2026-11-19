@@ -1114,98 +1114,137 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   }
 
   Future<void> _customColorDialog() async {
-    Color picked=_custom;
-    final hex=TextEditingController(
-      text:picked.toARGB32().toRadixString(16).substring(2).toUpperCase());
-    final rgb=[picked.r,picked.g,picked.b].map((x)=>
-      TextEditingController(text:(x*255).round().toString())).toList();
+    var picked=_custom;
+    var mode='HSV';
+    final hex=TextEditingController();
+    final rgb=List.generate(3,(_)=>TextEditingController());
+    final hsvFields=List.generate(3,(_)=>TextEditingController());
+    void syncFields(Color color){
+      hex.text=color.toARGB32().toRadixString(16).padLeft(8,'0')
+        .substring(2).toUpperCase();
+      final channels=[color.r,color.g,color.b];
+      for(var i=0;i<3;i++)rgb[i].text=(channels[i]*255).round().toString();
+      final v=HSVColor.fromColor(color);
+      final values=[v.hue,v.saturation*100,v.value*100];
+      for(var i=0;i<3;i++)hsvFields[i].text=values[i].toStringAsFixed(i==0?1:0);
+    }
+    syncFields(picked);
     try {
-      final result=await showDialog<Color>(context:context,
-        builder:(dialog)=>StatefulBuilder(builder:(dialog,refresh){
-          void choose(Color color){
+      final selected=await showDialog<Color>(context:context,
+        builder:(dialog)=>StatefulBuilder(builder:(context,refresh){
+          void choose(Color color,{bool updateText=true}){
             refresh(()=>picked=color);
-            hex.text=color.toARGB32().toRadixString(16)
-              .padLeft(8,'0').substring(2).toUpperCase();
-            final values=[color.r,color.g,color.b];
-            for(var i=0;i<3;i++){
-              rgb[i].text=(values[i]*255).round().toString();
-            }
+            if(updateText)syncFields(color);
           }
           final hsv=HSVColor.fromColor(picked);
           return AlertDialog(
-            title:const Text('RGB Background Color Picker'),
-            content:SizedBox(width:330,child:SingleChildScrollView(
-              child:Column(mainAxisSize:MainAxisSize.min,
-                crossAxisAlignment:CrossAxisAlignment.start,children:[
-                Container(height:44,decoration:BoxDecoration(
-                  color:picked,borderRadius:BorderRadius.circular(12),
-                  border:Border.all(color:Colors.grey.shade400))),
-                const SizedBox(height:15),
-                const Text('Choose saturation and brightness'),
-                const SizedBox(height:8),
-                LayoutBuilder(builder:(context,limits)=>GestureDetector(
-                  onPanDown:(d)=>choose(hsv.withSaturation(
-                    (d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
-                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
-                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked)
-                    .withSaturation((d.localPosition.dx/limits.maxWidth).clamp(0.0,1.0))
-                    .withValue((1-d.localPosition.dy/150).clamp(0.0,1.0)).toColor()),
-                  child:CustomPaint(
-                    painter:_SaturationValuePicker(hsv),
-                    child:const SizedBox(height:150,width:double.infinity)),
-                )),
-                const SizedBox(height:13),
-                const Text('Hue'),
-                const SizedBox(height:6),
-                LayoutBuilder(builder:(context,limits)=>GestureDetector(
-                  onPanDown:(d)=>choose(HSVColor.fromColor(picked).withHue(
-                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
-                  onPanUpdate:(d)=>choose(HSVColor.fromColor(picked).withHue(
-                    (d.localPosition.dx/limits.maxWidth*360).clamp(0.0,360.0)).toColor()),
-                  child:CustomPaint(painter:_HueColorPicker(hsv.hue),
-                    child:const SizedBox(height:26,width:double.infinity)),
-                )),
-                const SizedBox(height:14),
-                Row(children:[
-                  for(var i=0;i<3;i++)Expanded(child:Padding(
-                    padding:EdgeInsets.only(right:i==2?0:8),
-                    child:TextField(
-                      controller:rgb[i],
-                      keyboardType:TextInputType.number,
-                      decoration:InputDecoration(
-                        isDense:true,labelText:['R','G','B'][i],
-                        border:const OutlineInputBorder()),
-                      onChanged:(value){
-                        final v=int.tryParse(value);
-                        if(v==null||v<0||v>255)return;
-                        final values=[for(final t in rgb)
-                          (int.tryParse(t.text)??0).clamp(0,255)];
-                        refresh(()=>picked=Color.fromARGB(255,
-                          values[0],values[1],values[2]));
-                        hex.text=picked.toARGB32().toRadixString(16)
-                          .padLeft(8,'0').substring(2).toUpperCase();
-                      },
-                    ),
-                  )),
-                ]),
+            title:const Text('Full Spectrum Color Picker'),
+            insetPadding:const EdgeInsets.symmetric(horizontal:14,vertical:20),
+            content:SizedBox(width:340,child:SingleChildScrollView(
+              child:Column(mainAxisSize:MainAxisSize.min,children:[
+                Container(height:44,decoration:BoxDecoration(color:picked,
+                  borderRadius:BorderRadius.circular(9),
+                  border:Border.all(color:Colors.white54))),
                 const SizedBox(height:10),
-                TextField(controller:hex,
+                AspectRatio(aspectRatio:1.1,
+                  child:LayoutBuilder(builder:(context,box){
+                    final side=math.min(box.maxWidth,box.maxHeight);
+                    void at(Offset p){
+                      final center=Offset(side/2,side/2);
+                      final dx=p.dx-center.dx,dy=p.dy-center.dy;
+                      final radius=side*.46;
+                      final distance=math.sqrt(dx*dx+dy*dy);
+                      final hue=(math.atan2(dy,dx)*180/math.pi+360)%360;
+                      final saturation=(distance/radius).clamp(0.0,1.0);
+                      choose(HSVColor.fromAHSV(hsv.alpha,hue,saturation,
+                        hsv.value).toColor());
+                    }
+                    return Center(child:SizedBox(width:side,height:side,
+                      child:GestureDetector(
+                        behavior:HitTestBehavior.opaque,
+                        onPanDown:(d)=>at(d.localPosition),
+                        onPanUpdate:(d)=>at(d.localPosition),
+                        child:CustomPaint(painter:_FullSpectrumWheel(hsv))),
+                    ));
+                  })),
+                const SizedBox(height:9),
+                Row(children:[
+                  const Text('Brightness'),
+                  Expanded(child:Slider(value:hsv.value,min:0,max:1,
+                    onChanged:(value)=>choose(hsv.withValue(value).toColor()))),
+                  Text('${(hsv.value*100).round()}%'),
+                ]),
+                SegmentedButton<String>(
+                  showSelectedIcon:false,
+                  segments:const [
+                    ButtonSegment(value:'RGB',label:Text('RGB')),
+                    ButtonSegment(value:'HSV',label:Text('HSV')),
+                    ButtonSegment(value:'HEX',label:Text('HEX')),
+                  ],
+                  selected:{mode},
+                  onSelectionChanged:(v)=>refresh(()=>mode=v.first)),
+                const SizedBox(height:12),
+                if(mode=='RGB')
+                  Row(children:[for(var i=0;i<3;i++)
+                    Expanded(child:Padding(
+                      padding:EdgeInsets.only(right:i==2?0:7),
+                      child:TextField(controller:rgb[i],
+                        keyboardType:TextInputType.number,
+                        decoration:InputDecoration(
+                          isDense:true,labelText:['R','G','B'][i],
+                          border:const OutlineInputBorder()),
+                        onChanged:(_){
+                          final values=rgb.map((t)=>int.tryParse(t.text)).toList();
+                          if(values.any((n)=>n==null||n<0||n>255))return;
+                          choose(Color.fromARGB(255,
+                            values[0]!,values[1]!,values[2]!),
+                            updateText:false);
+                          hex.text=picked.toARGB32().toRadixString(16)
+                            .padLeft(8,'0').substring(2).toUpperCase();
+                        }),
+                    )),
+                  ])
+                else if(mode=='HSV')
+                  Row(children:[for(var i=0;i<3;i++)
+                    Expanded(child:Padding(
+                      padding:EdgeInsets.only(right:i==2?0:7),
+                      child:TextField(controller:hsvFields[i],
+                        keyboardType:const TextInputType.numberWithOptions(decimal:true),
+                        decoration:InputDecoration(
+                          isDense:true,labelText:['H°','S%','V%'][i],
+                          border:const OutlineInputBorder()),
+                        onChanged:(_){
+                          final v=hsvFields.map((t)=>double.tryParse(t.text)).toList();
+                          if(v.any((n)=>n==null)||v[0]!<0||v[0]!>360||
+                              v[1]!<0||v[1]!>100||v[2]!<0||v[2]!>100)return;
+                          choose(HSVColor.fromAHSV(1,v[0]!,v[1]!/100,
+                            v[2]!/100).toColor(),updateText:false);
+                          hex.text=picked.toARGB32().toRadixString(16)
+                            .padLeft(8,'0').substring(2).toUpperCase();
+                          final rgbValues=[picked.r,picked.g,picked.b];
+                          for(var j=0;j<3;j++)rgb[j].text=
+                            (rgbValues[j]*255).round().toString();
+                        }),
+                    )),
+                  ])
+                else TextField(controller:hex,
                   textCapitalization:TextCapitalization.characters,
                   decoration:const InputDecoration(
-                    labelText:'HEX color',prefixText:'#',
+                    labelText:'HEX — six digits',prefixText:'#',
                     border:OutlineInputBorder(),isDense:true),
-                  onChanged:(value){
-                    final normalized=value.replaceFirst('#','');
+                  onChanged:(text){
+                    final normalized=text.replaceFirst('#','');
                     if(!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(normalized))return;
-                    final code=int.parse(normalized,radix:16);
-                    final color=Color(0xFF000000|code);
-                    refresh(()=>picked=color);
-                    for(final entry in <int>[0,1,2]){
-                      rgb[entry].text=[
-                        (color.r*255).round(),(color.g*255).round(),
-                        (color.b*255).round()][entry].toString();
-                    }
+                    choose(Color(0xff000000|int.parse(normalized,radix:16)),
+                      updateText:false);
+                    final channels=[picked.r,picked.g,picked.b];
+                    for(var j=0;j<3;j++)rgb[j].text=
+                      (channels[j]*255).round().toString();
                   }),
+                const SizedBox(height:8),
+                const Text('Move anywhere on the wheel to choose hue and '
+                  'saturation. Adjust brightness or enter an exact color.',
+                  style:TextStyle(fontSize:11)),
               ]),
             )),
             actions:[
@@ -1216,13 +1255,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             ],
           );
         }));
-      if(result!=null){
-        _custom=result;
-        await _replaceBackground(color:result);
+      if(selected!=null){
+        _custom=selected;
+        await _replaceBackground(color:selected);
       }
     }finally{
       hex.dispose();
-      for(final controller in rgb)controller.dispose();
+      for(final t in rgb)t.dispose();
+      for(final t in hsvFields)t.dispose();
     }
   }
 
@@ -1772,6 +1812,32 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   );
 }
 
+/// Full hue range around the circle; radius represents saturation.
+class _FullSpectrumWheel extends CustomPainter {
+  const _FullSpectrumWheel(this.hsv);
+  final HSVColor hsv;
+  @override void paint(Canvas canvas,Size size){
+    final center=Offset(size.width/2,size.height/2);
+    final radius=math.min(size.width,size.height)*.46;
+    final bounds=Rect.fromCircle(center:center,radius:radius);
+    canvas.drawCircle(center,radius,Paint()..shader=SweepGradient(
+      colors:[for(var i=0;i<=12;i++)
+        HSVColor.fromAHSV(1,i*30.0,1,1).toColor()],
+      stops:[for(var i=0;i<=12;i++)i/12],
+    ).createShader(bounds));
+    canvas.drawCircle(center,radius,Paint()..shader=RadialGradient(
+      colors:[Colors.white,Colors.white.withValues(alpha:0)],
+      stops:const [0,1],
+    ).createShader(bounds));
+    final a=hsv.hue*math.pi/180;
+    final pos=center+Offset(math.cos(a),math.sin(a))*radius*hsv.saturation;
+    canvas.drawCircle(pos,8,Paint()..color=Colors.white
+      ..style=PaintingStyle.stroke..strokeWidth=3);
+    canvas.drawCircle(pos,9,Paint()..color=Colors.black87
+      ..style=PaintingStyle.stroke..strokeWidth=1);
+  }
+  @override bool shouldRepaint(covariant _FullSpectrumWheel old)=>old.hsv!=hsv;
+}
 class _SaturationValuePicker extends CustomPainter {
   const _SaturationValuePicker(this.color);
   final HSVColor color;
