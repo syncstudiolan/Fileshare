@@ -118,6 +118,9 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   void later(){_suppressedBuild=release?.build;showPopup=false;notifyListeners();}
+  void startNewForegroundSession(){
+    _suppressedBuild=null;
+  }
 
   Future<void> download() async {
     final next=release;
