@@ -650,6 +650,19 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     final cart=action=='cart';
     if(_bytes==null)return;
     try{
+      // The cart remains tappable during AI processing. Wait for the edit
+      // to commit rather than accidentally exporting the pre-edit original.
+      if(_busy){
+        final deadline=DateTime.now().add(const Duration(seconds:90));
+        while(_busy && mounted && DateTime.now().isBefore(deadline)){
+          await Future<void>.delayed(const Duration(milliseconds:80));
+        }
+        if(!mounted)return;
+        if(_busy){
+          _message('Editing is still running. Please retry after it completes.');
+          return;
+        }
+      }
       // Do not lose a live brush stroke if Send is pressed mid-edit.
       if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
       await _eraseQueue;
