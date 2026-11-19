@@ -1960,8 +1960,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }else if(state==AppLifecycleState.paused ||
              state==AppLifecycleState.inactive ||
              state==AppLifecycleState.detached){
-      _dashboardForeground=false;
-      PersonalCloud.instance.stopLiveInbox();
+      // Windows tray is still a running foreground-capable desktop process:
+      // keep the event-driven QR inbox socket while hidden. Android releases
+      // it on background to respect phone battery/platform restrictions.
+      if(Platform.isWindows && state!=AppLifecycleState.detached){
+        _dashboardForeground=true;
+      }else{
+        _dashboardForeground=false;
+        PersonalCloud.instance.stopLiveInbox();
+      }
     }
   }
 
