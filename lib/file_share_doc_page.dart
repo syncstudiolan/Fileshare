@@ -28,6 +28,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   File? _saved;
   FileShareDocEngine? _document;
   final _controllers=<String,TextEditingController>{};
+  final _wordStyles=<String,Set<String>>{};
+  String? _selectedWordParagraph;
   bool _busy=false;
   bool _dirty=false;
   String? _status;
@@ -43,6 +45,36 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   void dispose(){
     for(final c in _controllers.values)c.dispose();
     super.dispose();
+  }
+  void _toggleWordStyle(String format){
+    final id=_selectedWordParagraph;
+    if(id==null||_busy)return;
+    setState((){
+      final old=_wordStyles[id]??<String>{};
+      final updated=Set<String>.of(old);
+      if(updated.contains(format)){updated.remove(format);}
+      else{updated.add(format);}
+      _wordStyles[id]=updated;
+      _dirty=true;
+    });
+  }
+  Widget _wordToolbar(){
+    final selected=_selectedWordParagraph;
+    final active=_wordStyles[selected]??<String>{};
+    Widget item(String name,IconData icon,String label)=>
+      OutlinedButton.icon(
+        onPressed:selected==null||_busy?null:()=>_toggleWordStyle(name),
+        style:OutlinedButton.styleFrom(
+          backgroundColor:active.contains(name)
+            ?FileTheme.violet.withValues(alpha:.18):null),
+        icon:Icon(icon,size:17),label:Text(label));
+    return Wrap(spacing:7,runSpacing:7,children:[
+      item('bold',Icons.format_bold_rounded,'Bold'),
+      item('italic',Icons.format_italic_rounded,'Italic'),
+      item('underline',Icons.format_underlined_rounded,'Underline'),
+      Text(selected==null?'Select a paragraph':'Selected Word paragraph',
+        style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+    ]);
   }
   Future<void> _newDocument()async{
     if(_busy)return;
@@ -100,6 +132,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       if(edit)doc=await FileShareDocEngine.open(file);
       for(final c in _controllers.values)c.dispose();
       _controllers.clear();
+      _wordStyles.clear();
+      _selectedWordParagraph=doc?.blocks.firstOrNull?.id;
       if(doc!=null){
         for(final block in doc.blocks){
           final controller=TextEditingController(text:block.original);
@@ -173,7 +207,8 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       final destination=Directory(folder.path+
         Platform.pathSeparator+'file_share_doc_saved');
       final values={for(final e in _controllers.entries)e.key:e.value.text};
-      final saved=await doc.saveCopy(values,destination);
+      final saved=await doc.saveCopy(values,destination,
+        formatChanges:_wordStyles);
       // Export through existing public Android Downloads / Windows folder picker.
       final exported=await TransferDownloads.instance.export(
         saved,saved.uri.pathSegments.last);
@@ -342,6 +377,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                     labelText:'Search document paragraphs / cells / slides',
                     border:OutlineInputBorder())),
                 const SizedBox(height:14),
+                if(['docx','docm','dotx'].contains(doc.kind))...[
+                  _wordToolbar(),
+                  const SizedBox(height:10),
+                ],
                 if(doc.blocks.isEmpty)
                   const Text('No supported editable text was found in this file.'),
                 if(blocks.isNotEmpty)
@@ -361,6 +400,16 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                                 Text(block.title,style:theme.textTheme.labelMedium),
                                 const SizedBox(height:7),
                                 TextField(
+                                  onTap:()=>setState(
+                                    ()=>_selectedWordParagraph=block.id),
+                                  style:TextStyle(
+                                    fontWeight:(_wordStyles[block.id]??{})
+                                      .contains('bold')?FontWeight.bold:null,
+                                    fontStyle:(_wordStyles[block.id]??{})
+                                      .contains('italic')?FontStyle.italic:null,
+                                    decoration:(_wordStyles[block.id]??{})
+                                      .contains('underline')
+                                        ?TextDecoration.underline:null),
                                   controller:_controllers[block.id],
                                   enabled:!_busy,
                                   maxLines:null,minLines:1,
