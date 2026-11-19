@@ -111,8 +111,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   Future<void> _export(String action)async{
     if(_original==null||_busy)return;
     final target=int.tryParse(_targetController.text.trim());
-    if(target==null||target<1||target>10240){
-      _show('Enter a target between 1 KB and 10,240 KB');
+    if(target==null||target<5||target>10240){
+      _show('Enter a target between 5 KB and 10,240 KB');
       return;
     }
     setState(()=>_busy=true);
