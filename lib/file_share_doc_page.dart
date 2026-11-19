@@ -32,6 +32,9 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   FileShareDocEngine? _document;
   final _controllers=<String,TextEditingController>{};
   final _wordStyles=<String,Set<String>>{};
+  final _wordAlignments=<String,String>{};
+  final _newWordParagraphs=<String,List<String>>{};
+  final _deletedWordParagraphs=<String>{};
   String? _selectedWordParagraph;
   bool _busy=false;
   bool _dirty=false;
@@ -62,6 +65,52 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       _dirty=true;
     });
   }
+  void _setWordAlignment(String align){
+    final id=_selectedWordParagraph;
+    if(id==null||_busy)return;
+    setState((){
+      _wordAlignments[id]=align;
+      _dirty=true;
+    });
+  }
+  Future<void> _insertWordParagraph()async{
+    final selected=_selectedWordParagraph;
+    if(selected==null||_busy)return;
+    final controller=TextEditingController();
+    final accepted=await showDialog<bool>(context:context,builder:(dialog)=>
+      AlertDialog(
+        title:const Text('Insert Word paragraph'),
+        content:TextField(controller:controller,maxLines:5,minLines:2,
+          autofocus:true,
+          decoration:const InputDecoration(
+            border:OutlineInputBorder(),
+            hintText:'Type the new paragraph')),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),
+            child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(dialog,true),
+            child:const Text('Insert')),
+        ]));
+    if(mounted && accepted==true && controller.text.trim().isNotEmpty){
+      setState((){
+        _newWordParagraphs.putIfAbsent(selected,()=>[]).add(controller.text);
+        _dirty=true;
+      });
+    }
+    controller.dispose();
+  }
+  void _removeWordParagraph(){
+    final selected=_selectedWordParagraph;
+    if(selected==null||_busy)return;
+    setState((){
+      if(_deletedWordParagraphs.contains(selected)){
+        _deletedWordParagraphs.remove(selected);
+      }else{
+        _deletedWordParagraphs.add(selected);
+      }
+      _dirty=true;
+    });
+  }
   Widget _wordToolbar(){
     final selected=_selectedWordParagraph;
     final active=_wordStyles[selected]??<String>{};
@@ -76,6 +125,32 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       item('bold',Icons.format_bold_rounded,'Bold'),
       item('italic',Icons.format_italic_rounded,'Italic'),
       item('underline',Icons.format_underlined_rounded,'Underline'),
+      OutlinedButton.icon(
+        onPressed:selected==null||_busy?null:_insertWordParagraph,
+        icon:const Icon(Icons.add,size:17),
+        label:const Text('Add paragraph')),
+      OutlinedButton.icon(
+        onPressed:selected==null||_busy?null:_removeWordParagraph,
+        icon:Icon(_deletedWordParagraphs.contains(selected)
+          ?Icons.restore:Icons.delete_outline,size:17),
+        label:Text(_deletedWordParagraphs.contains(selected)
+          ?'Restore paragraph':'Delete paragraph')),
+      SegmentedButton<String>(
+        showSelectedIcon:false,
+        segments:const [
+          ButtonSegment(value:'left',icon:Icon(Icons.format_align_left),
+            tooltip:'Left aligned'),
+          ButtonSegment(value:'center',icon:Icon(Icons.format_align_center),
+            tooltip:'Center aligned'),
+          ButtonSegment(value:'right',icon:Icon(Icons.format_align_right),
+            tooltip:'Right aligned'),
+          ButtonSegment(value:'both',icon:Icon(Icons.format_align_justify),
+            tooltip:'Justified'),
+        ],
+        selected:{_wordAlignments[selected]??'left'},
+        onSelectionChanged:selected==null||_busy?null:(choices)=>
+          _setWordAlignment(choices.first)),
+
       Text(selected==null?'Select a paragraph':'Selected Word paragraph',
         style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
     ]);
@@ -137,6 +212,9 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
       for(final c in _controllers.values)c.dispose();
       _controllers.clear();
       _wordStyles.clear();
+      _wordAlignments.clear();
+      _newWordParagraphs.clear();
+      _deletedWordParagraphs.clear();
       _selectedWordParagraph=doc?.blocks.firstOrNull?.id;
       if(doc!=null){
         for(final block in doc.blocks){
@@ -213,7 +291,10 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
         Platform.pathSeparator+'file_share_doc_saved');
       final values={for(final e in _controllers.entries)e.key:e.value.text};
       final saved=await doc.saveCopy(values,destination,
-        formatChanges:_wordStyles);
+        formatChanges:_wordStyles,
+        alignmentChanges:_wordAlignments,
+        insertedAfter:_newWordParagraphs,
+        deletedParagraphs:_deletedWordParagraphs);
       // Export through existing public Android Downloads / Windows folder picker.
       final exported=await TransferDownloads.instance.export(
         saved,saved.uri.pathSegments.last);
@@ -314,9 +395,9 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     final theme=Theme.of(context);
     final doc=_document;
     final file=_source;
-    final blocks=doc?.blocks.where((b)=>
+    final blocks=doc?.blocks.where((b)=>!_deletedWordParagraphs.contains(b.id) && (
       b.title.toLowerCase().contains(_search.toLowerCase()) ||
-      (_controllers[b.id]?.text??'').toLowerCase().contains(_search.toLowerCase())
+      (_controllers[b.id]?.text??'').toLowerCase().contains(_search.toLowerCase()))
     ).toList()??[];
     return Scaffold(
       appBar:AppBar(title:const Text('File Share Doc'),
@@ -417,6 +498,13 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
                               crossAxisAlignment:CrossAxisAlignment.start,
                               children:[
                                 Text(block.title,style:theme.textTheme.labelMedium),
+                                if((_newWordParagraphs[block.id]??[]).isNotEmpty)
+                                  Text('New paragraphs after: '+
+                                    _newWordParagraphs[block.id]!.join(' | '),
+                                    style:TextStyle(
+                                      color:FileTheme.muted(context),
+                                      fontSize:11)),
+
                                 const SizedBox(height:7),
                                 TextField(
                                   onTap:()=>setState(
