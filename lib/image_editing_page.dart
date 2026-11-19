@@ -804,7 +804,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
             FilledButton.tonalIcon(
               onPressed:_busy?null:_customColorDialog,
               icon:const Icon(Icons.palette_outlined),
-              label:const Text('RGB Color Picker')),
+              label:const Text('Full Spectrum Color Picker')),
           ]),
         ]);
       case 'Photo Enhancer':
@@ -1155,7 +1155,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
                       final radius=side*.46;
                       final distance=math.sqrt(dx*dx+dy*dy);
                       final hue=(math.atan2(dy,dx)*180/math.pi+360)%360;
-                      final saturation=(distance/radius).clamp(0.0,1.0);
+                      final saturation=(distance/radius).clamp(0.0,1.0).toDouble();
                       choose(HSVColor.fromAHSV(hsv.alpha,hue,saturation,
                         hsv.value).toColor());
                     }
