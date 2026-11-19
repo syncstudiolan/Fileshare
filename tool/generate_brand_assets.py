@@ -20,7 +20,7 @@ def main() -> None:
     if icon.size != (96, 96):
         icon = ImageOps.fit(icon, (96, 96), method=Image.Resampling.LANCZOS)
 
-    # Center all marks so Android adaptive circular masks cannot crop FS.
+    # Leave an extra safe zone for OEM adaptive icon masks and legacy circles.
     def framed(size, ratio, bg=(0, 0, 0, 0)):
         canvas = Image.new("RGBA", (size, size), bg)
         side = max(1, round(size * ratio))
@@ -37,14 +37,14 @@ def main() -> None:
     ]:
         folder = ROOT / f"android/app/src/main/res/mipmap-{density}"
         folder.mkdir(parents=True, exist_ok=True)
-        image = framed(px, 0.70, (244, 238, 255, 255))
+        image = framed(px, 0.62, (244, 238, 255, 255))
         image.save(folder / "ic_launcher.png", optimize=True)
         image.save(folder / "ic_launcher_round.png", optimize=True)
 
     # Adaptive icon background stays within the app brand; no non-brand glyph.
     fg_folder = ROOT / "android/app/src/main/res/drawable"
     fg_folder.mkdir(parents=True, exist_ok=True)
-    framed(432, 0.54).save(
+    framed(432, 0.48).save(
         fg_folder / "ic_file_share_launcher_foreground.png", optimize=True
     )
     adaptive = ROOT / "android/app/src/main/res/mipmap-anydpi-v26"
