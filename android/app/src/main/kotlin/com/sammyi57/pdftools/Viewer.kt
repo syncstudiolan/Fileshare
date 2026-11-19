@@ -103,6 +103,7 @@ fun PdfViewerScreen(path: String, name: String) {
   var sendMode by remember { mutableStateOf<String?>(if (Incoming.shareOnce) "share" else null) }
   LaunchedEffect(Unit) { Incoming.shareOnce = false }
   var renameOpen by remember { mutableStateOf(false) }
+  var importingForEdit by remember { mutableStateOf(false) }
 
   LaunchedEffect(password) {
     try {
@@ -175,12 +176,21 @@ fun PdfViewerScreen(path: String, name: String) {
           IconBtn(I.arrowLeft, label = "Back") { nav.back() }
           Marquee(stem(name), Type.bold.copy(fontSize = Type.bold.fontSize * 1.1f), c.ink, Modifier.weight(1f).padding(horizontal = 4.dp))
           IconBtn(I.magnify, label = "Search", enabled = doc != null) { searching = true }
-          IconBtn(I.fileDocumentEditOutline, label = "Edit PDF") {
-            val scan = scanProjectForPdf(path)
-            if (scan != null) nav.scan(scan.id)
-            else {
-              PdfImportBridge.pending = Picked(name, path, File(path).length())
-              nav.tool("organize")
+          IconBtn(I.fileDocumentEditOutline, label = "Edit PDF",
+            enabled = doc != null && !importingForEdit) {
+            // Open the SAME scanner Review screen as camera-created PDFs.
+            // Never route a card-imported PDF into the Organize tool.
+            importingForEdit = true
+            scope.launch {
+              try {
+                val scan = importPdfIntoEditableScan(path, name)
+                nav.scan(scan.id)
+              } catch (error: Exception) {
+                problem = "Cannot import PDF into editable scan: " +
+                  (error.message ?: "Please check the source document")
+              } finally {
+                importingForEdit = false
+              }
             }
           }
           IconBtn(I.pencilOutline, label = "Rename") { renameOpen = true }
@@ -191,6 +201,10 @@ fun PdfViewerScreen(path: String, name: String) {
     }
 
     Box(Modifier.weight(1f).fillMaxWidth().background(c.sunken)) {
+      if (importingForEdit) {
+        Box(Modifier.fillMaxSize().background(c.sunken.copy(alpha = 0.88f)),
+          contentAlignment = Alignment.Center) { Spinner(c.accent) }
+      }
       when {
         problem.isNotEmpty() -> T(problem, Type.body, c.sub, Modifier.align(Alignment.Center).padding(32.dp))
         doc == null -> Spinner(c.accent, modifier = Modifier.align(Alignment.Center))
