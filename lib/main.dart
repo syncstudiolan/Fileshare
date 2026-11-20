@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'file_share_text.dart';
+import 'text_transfer_card.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -1941,6 +1943,7 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final _scaffold = GlobalKey<ScaffoldState>();
   final List<PendingBatch> _staged = [];
+  final TextEditingController _messageController=TextEditingController();
   String _filter = 'All';
   bool _choosing = false;
   bool _showSamples = true;
@@ -2087,7 +2090,33 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Widget _multiSelectCard(TimelineGroup g){
     final selected=_selectedCards.containsKey(_keyOf(g));
     final active=_selectedCards.isNotEmpty;
-    final card=g.upload!=null ? _cloudUploadCard(g.upload!)
+    final lanText=g.lan!=null && g.lan!.length==1 &&
+      FileShareText.isText(g.lan!.first.name);
+    final cloudText=g.cloud!=null && g.cloud!.length==1 &&
+      FileShareText.isText(g.cloud!.first.name);
+    final card=lanText
+      ?TextTransferCard(
+        key:ValueKey('text-lan-${g.lan!.first.id}'),
+        readMessage:()async=>File(g.lan!.first.path),
+        onDelete:()=>_delete(g.lan!.first),
+        incoming:g.lan!.first.incoming,
+        source:(g.lan!.first.incoming?'From ':'To ')+g.lan!.first.peer+' · Offline LAN',
+        created:g.lan!.first.created,
+        status:Icon(g.lan!.first.state==TransferState.delivered
+          ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,color:FileTheme.pink))
+      :cloudText
+      ?TextTransferCard(
+        key:ValueKey('text-cloud-${g.cloud!.first.id}'),
+        readMessage:()=>PersonalCloud.instance.download(g.cloud!.first),
+        onDelete:()=>_deleteCloud(g.cloud!.first),
+        incoming:g.cloud!.first.senderId!=appLan.deviceId,
+        source:g.cloud!.first.senderId==appLan.deviceId
+          ?'Sent · Online / Cloud'
+          :'From ${g.cloud!.first.senderName} · Online / Cloud',
+        created:g.cloud!.first.created,
+        status:Icon(g.cloud!.first.receivedAt==null
+          ?Icons.done_rounded:Icons.done_all_rounded,size:15,color:FileTheme.pink))
+      :g.upload!=null ? _cloudUploadCard(g.upload!)
       :g.lan!=null
       ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
         onDelete:_delete,onShare:_share,onTools:_openFileTools)
@@ -2261,6 +2290,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _midnight?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
+    _messageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
@@ -2512,6 +2542,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   /// LAN has absolute priority for the whole Send batch: 1+ reachable
   /// peers means NO Cloudflare upload, regardless of how many are remote.
   /// Only a completed discovery window with zero peers permits cloud.
+  Future<void> _sendTypedText() async {
+    final message=_messageController.text;
+    if(message.trim().isEmpty){await _send();return;}
+    try{
+      final id=LanEngine.newId();
+      final file=await FileShareText.create(message,id);
+      final size=await file.length();
+      if(!mounted)return;
+      setState((){
+        _staged.add(PendingBatch(id,[file],[file.uri.pathSegments.last],[size]));
+        _messageController.clear();_showSamples=false;
+      });
+      if(!appLan.started){_snack('Text ready in Cart. Tap Send when LAN starts.');return;}
+      await _send();
+    }catch(e){_snack('Text send failed: $e');}
+  }
   Future<void> _send() async {
     if(_sending || _staged.isEmpty || !appLan.started)return;
     setState(()=>_sending=true);
@@ -2973,15 +3019,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onPressed:()=>_navigate('Toolbox'),
                     icon:const Icon(Icons.handyman_outlined,
                       color:FileTheme.violet)),
-                  Expanded(child: Text(_staged.isEmpty
-                      ? 'Choose files to send...'
-                      : _staged.length.toString() + ' selection(s)',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12,
-                      color: FileTheme.muted(context)))),
+                  Expanded(child:TextField(
+                    controller:_messageController,
+                    minLines:1,maxLines:5,
+                    textCapitalization:TextCapitalization.sentences,
+                    keyboardType:TextInputType.multiline,
+                    textInputAction:TextInputAction.newline,
+                    decoration:InputDecoration(
+                      hintText:'Type or paste a message…',
+                      hintStyle:TextStyle(fontSize:12,color:FileTheme.muted(context)),
+                      border:InputBorder.none,isDense:true),
+                    onChanged:(_)=>setState((){}))),
                   IconButton.filled(
-                    tooltip: 'Send selected files',
-                    onPressed: _staged.isEmpty || _sending ? null : () => unawaited(_send()),
+                    tooltip:_messageController.text.trim().isNotEmpty
+                      ?'Send text message':'Send selected files',
+                    onPressed:(_messageController.text.trim().isEmpty && _staged.isEmpty)
+                      || _sending ? null : () => unawaited(_sendTypedText()),
                     icon: const Icon(Icons.send_rounded)),
                 ]),
               ),
