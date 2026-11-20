@@ -2137,9 +2137,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
     final cloud=PersonalCloud.instance;
     if(cloud.signedIn){
+      // A newly opened event socket reconciles the inbox on connect.
+      // Avoid a duplicate D1 read on every startup or resume.
+      final alreadyListening=cloud.liveInboxEnabled;
       cloud.startLiveInbox();
-      // Fetch once when opening/resuming to recover missed offline events.
-      if(!cloud.loading)unawaited(cloud.refreshFiles());
+      if(alreadyListening && !cloud.loading){
+        unawaited(cloud.refreshFiles());
+      }
     }
   }
 
