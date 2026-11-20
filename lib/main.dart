@@ -1666,46 +1666,54 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   Widget _file(BuildContext context, LanFile file) {
-    final active = file.state == TransferState.sending ||
-      file.state == TransferState.receiving ||
-      file.state == TransferState.preparing;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: LayoutBuilder(builder: (context, constraints) {
-        final side = constraints.maxWidth < 290 ? 66.0 : 78.0;
-        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => _preview(context, file),
-            child: SizedBox(width: side, height: side, child: _visual(file))),
-          const SizedBox(width: 10),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              InkWell(onTap: () => _preview(context,file),
-                child: Text(file.name, maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                    color: FileTheme.foreground(context)))),
-              const SizedBox(height: 3),
-              Text(_formatBytes(file.size),
-                style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-              if(active || file.state == TransferState.failed) ...[
-                const SizedBox(height: 3),
-                Text(file.state.name, style: const TextStyle(
-                  fontSize: 10, color: FileTheme.pink)),
-                if (active) LinearProgressIndicator(
-                  value: file.progress, minHeight: 2),
-              ],
-              const SizedBox(height: 7),
-              // On narrow devices the actions wrap instead of causing overflow.
-              Align(alignment: Alignment.centerRight,
-                child: _buttons(context, file)),
-            ],
-          )),
+    final active=file.state==TransferState.sending ||
+      file.state==TransferState.receiving ||
+      file.state==TransferState.preparing;
+    return Padding(padding:const EdgeInsets.only(top:8),
+      child:LayoutBuilder(builder:(context,constraints){
+        final compact=constraints.maxWidth<460;
+        final side=compact?74.0:88.0;
+        final preview=InkWell(
+          borderRadius:BorderRadius.circular(12),
+          onTap:()=>_preview(context,file),
+          child:SizedBox(width:side,height:side,child:_visual(file)));
+        final details=Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          InkWell(onTap:()=>_preview(context,file),
+            child:Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontSize:13,fontWeight:FontWeight.w700,
+                color:FileTheme.foreground(context)))),
+          const SizedBox(height:3),
+          Text(_formatBytes(file.size),
+            style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+          if(active||file.state==TransferState.failed)...[
+            const SizedBox(height:3),
+            Text(file.state.name,style:const TextStyle(fontSize:10,
+              color:FileTheme.pink)),
+            if(active)LinearProgressIndicator(value:file.progress,minHeight:2),
+          ]
         ]);
-      }),
-    );
+        if(compact) {
+          return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              preview,const SizedBox(width:10),
+              Expanded(child:details),
+            ]),
+            const SizedBox(height:4),
+            Row(children:[
+              TransferCardTime(created:file.created,status:_status(file)),
+              const Spacer(),
+              Flexible(child:_buttons(context,file)),
+            ]),
+          ]);
+        }
+        return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          preview,const SizedBox(width:10),
+          Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            details,const SizedBox(height:7),
+            Align(alignment:Alignment.centerRight,child:_buttons(context,file)),
+          ]))
+        ]);
+      }));
   }
 
   @override
@@ -1731,8 +1739,7 @@ class LiveTransferCard extends StatelessWidget {
               fontWeight: FontWeight.w700, fontSize: 12))),
           if(multiple) Text('${items.length} files',
             style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
-          const SizedBox(width:4),
-          TransferCardTime(created:first.created,status:_status(first)),
+
         ]),
         for (final file in items.take(4)) _file(context, file),
         if (items.length > 4)
