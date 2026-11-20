@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file_share/editor_transfer_session.dart';
 import 'package:file_share/image_editing_storage.dart';
+import 'package:file_share/lan_engine.dart';
+import 'package:file_share/transfer_route.dart';
 import 'dart:io';
 
 void main(){
@@ -81,6 +83,58 @@ void main(){
     expect(await first.file.readAsBytes(),[37,80,68,70,1,2,3]);
     expect(await second.file.readAsBytes(),[37,80,68,70,4,5,6]);
     expect(await original.readAsBytes(),[37,80,68,70,4,5,6]);
+  });
+
+  test('Edited variants are both queued through LAN despite same display name',
+      () async {
+    final folder=await Directory.systemTemp.createTemp('editor_lan_resend_');
+    addTearDown(()=>folder.delete(recursive:true));
+    final cart=ImageEditingCart.instance;
+    cart.takeAll();
+    final first=await cart.addEditedBytes([11,22,33],'edited-photo.png',
+      destinationDirectory:folder);
+    final next=await cart.addEditedBytes([44,55,66],'edited-photo.png',
+      destinationDirectory:folder);
+    final queued=cart.takeAll();
+    expect(queued,hasLength(2));
+    expect(chooseTransferRoute(nearbyCount:1,cloudSignedIn:true),
+      TransferRoute.lan);
+    final lan=LanEngine(testSupportDirectory:folder,
+      testDeviceId:'version-resend-lan',tcpPort:53391,discoveryPort:53392);
+    try {
+      await lan.start();
+      await lan.enqueue([first.file,next.file],
+        names:[first.name,next.name]);
+      final batch=lan.queuedBatches.last;
+      expect(batch.items,hasLength(2));
+      expect(batch.items[0].id,isNot(batch.items[1].id));
+      expect(batch.items[0].name,'edited-photo.png');
+      expect(batch.items[1].name,'edited-photo.png');
+      await first.file.delete();
+      await next.file.delete();
+      expect(await File(batch.items[0].path).readAsBytes(),[11,22,33]);
+      expect(await File(batch.items[1].path).readAsBytes(),[44,55,66]);
+    }finally{
+      await lan.stop();
+    }
+  });
+
+  test('Cloud route does not suppress repeated edited Cart versions',()async{
+    final folder=await Directory.systemTemp.createTemp('editor_cloud_resend_');
+    addTearDown(()=>folder.delete(recursive:true));
+    final cart=ImageEditingCart.instance;
+    cart.takeAll();
+    await cart.addEditedBytes([1,1,1],'photo.jpg',
+      destinationDirectory:folder);
+    await cart.addEditedBytes([2,2,2],'photo.jpg',
+      destinationDirectory:folder);
+    final versions=cart.takeAll();
+    expect(chooseTransferRoute(nearbyCount:0,cloudSignedIn:true),
+      TransferRoute.cloud);
+    expect(versions,hasLength(2));
+    expect(versions[0].file.path,isNot(versions[1].file.path));
+    expect(await versions[0].file.readAsBytes(),[1,1,1]);
+    expect(await versions[1].file.readAsBytes(),[2,2,2]);
   });
 
 }
