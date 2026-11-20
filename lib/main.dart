@@ -2131,6 +2131,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
   bool _dashboardForeground=true;
+  bool _previousSignedIn=false;
 
   void _resumeCloudInbox() {
     if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
@@ -2162,8 +2163,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
     }else if(state==AppLifecycleState.paused ||
-             state==AppLifecycleState.inactive ||
              state==AppLifecycleState.detached){
+      // 'inactive' may be a brief system permission sheet: keep the socket.
       // Windows tray is still a running foreground-capable desktop process:
       // keep the event-driven QR inbox socket while hidden. Android releases
       // it on background to respect phone battery/platform restrictions.
@@ -2180,6 +2181,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _previousSignedIn=PersonalCloud.instance.signedIn;
     _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
@@ -2211,7 +2213,23 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     });
   }
 
-  void _changed() { if (mounted) setState(() {}); }
+  void _changed() {
+    if(!mounted)return;
+    final signedIn=PersonalCloud.instance.signedIn;
+    // Reconnect immediately on login without creating a refresh loop:
+    // refreshFiles() also notifies listeners.
+    if(signedIn!=_previousSignedIn){
+      _previousSignedIn=signedIn;
+      if(signedIn){
+        if(_dashboardForeground && widget.enableBackends){
+          PersonalCloud.instance.startLiveInbox();
+        }
+      }else{
+        PersonalCloud.instance.stopLiveInbox();
+      }
+    }
+    setState(() {});
+  }
 
   Future<void> _importEditedCart() async {
     if(!mounted)return;
