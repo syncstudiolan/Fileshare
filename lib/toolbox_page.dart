@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
@@ -68,8 +69,7 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
               EditingFileRouter.classify(name)==EditingFileKind.pdf
                 ?widget.sourcePath:null});
         }on PlatformException catch(error){
-          if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:Text('iPhone PDF tools error: ${error.message ?? error.code}')));
+          if(mounted)FileShareTopNotice.show(context,'iPhone PDF tools error: ${error.message ?? error.code}');
         }
         return;
       }
@@ -93,8 +93,7 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
             'theme': Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light'});
       } on PlatformException catch (error) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('PDF tools could not open: ${error.message ?? error.code}')));
+        FileShareTopNotice.show(context,'PDF tools could not open: ${error.message ?? error.code}');
       }
       return;
     }
