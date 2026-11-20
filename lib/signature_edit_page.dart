@@ -374,7 +374,10 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         final j=(i+1)%4;
         area+=next[i].dx*next[j].dy-next[j].dx*next[i].dy;
       }
-      if(area.abs()>.01)setState(()=>_quad=next);
+      if(area.abs()>.01)setState((){
+        _discardApplied();
+        _quad=next;
+      });
     }else{
       final c=_crop;
       var l=c.left,t=c.top,r=c.right,b=c.bottom;
@@ -388,12 +391,15 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         if(_corner==0||_corner==1||_corner==4)t=p.dy.clamp(0.0,b-gap).toDouble();
         if(_corner==2||_corner==3||_corner==6)b=p.dy.clamp(t+gap,1.0).toDouble();
       }
-      setState(()=>_crop=SignatureCrop(l,t,r,b));
+      setState((){
+        _discardApplied();
+        _crop=SignatureCrop(l,t,r,b);
+      });
     }
   }
 
   Widget _editorCanvas(){
-    final image=_preview??_original;
+    final image=_appliedPreview??_preview??_original;
     if(image==null) {
       return Center(child:Column(mainAxisSize:MainAxisSize.min,children:[
         Icon(Icons.draw_outlined,size:75,color:FileTheme.violet),
@@ -413,19 +419,20 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     return Center(child:LayoutBuilder(builder:(context,bounds){
       final maxW=math.max(1.0,bounds.maxWidth-24);
       final maxH=math.max(1.0,bounds.maxHeight-24);
-      final width=math.min(maxW,maxH*_aspect);
-      final height=width/_aspect;
+      final ratio=_appliedAspect??_aspect;
+      final width=math.min(maxW,maxH*ratio);
+      final height=width/ratio;
       final size=Size(width,height);
       return SizedBox(width:width,height:height,
         child:GestureDetector(
           behavior:HitTestBehavior.opaque,
-          onPanStart:_busy?null:(d)=>_gestureStart(d,size),
-          onPanUpdate:_busy?null:(d)=>_gestureUpdate(d,size),
+          onPanStart:_busy||_appliedJpeg!=null?null:(d)=>_gestureStart(d,size),
+          onPanUpdate:_busy||_appliedJpeg!=null?null:(d)=>_gestureUpdate(d,size),
           onPanEnd:(_){_lastDrag=null;_corner=-1;},
           child:Stack(fit:StackFit.expand,children:[
             Image.memory(image,fit:BoxFit.fill,gaplessPlayback:true,
               filterQuality:FilterQuality.medium),
-            CustomPaint(painter:_SignatureCropPainter(
+            if(_appliedJpeg==null)CustomPaint(painter:_SignatureCropPainter(
               _selection,showQuad:_cropMode=='Perspective')),
           ]),
         ),
@@ -462,6 +469,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
         const SizedBox(height:8),
         OutlinedButton.icon(
           onPressed:()=>setState((){
+            _discardApplied();
             _crop=SignatureCrop.full;
             _quad=[const Offset(.08,.08),const Offset(.92,.08),
               const Offset(.92,.92),const Offset(.08,.92)];
@@ -487,7 +495,10 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
             onChanged:_busy?null:(value){
               final size=(value/5).round()*5;
               _targetController.text=size.toString();
-              setState(()=>_target=size);
+              setState((){
+                _discardApplied();
+                _target=size;
+              });
             })),
           Text('$_target KB',style:const TextStyle(
             color:FileTheme.violet,fontWeight:FontWeight.w700)),
@@ -498,7 +509,10 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
             prefixIcon:Icon(Icons.edit_note_rounded),
             labelText:'Custom target',hintText:'20',
             suffixText:'KB',border:OutlineInputBorder()),
-          onChanged:(value)=>setState(()=>_target=int.tryParse(value)??20)),
+          onChanged:(value)=>setState((){
+            _discardApplied();
+            _target=int.tryParse(value)??20;
+          })),
         const SizedBox(height:10),
         Wrap(spacing:8,runSpacing:8,children:[
           for(final kb in [5,10,20,30,50,100,200])
@@ -506,9 +520,28 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
               selected:_target==kb,
               onSelected:(_){
                 _targetController.text=kb.toString();
-                setState(()=>_target=kb);
+                setState((){
+                  _discardApplied();
+                  _target=kb;
+                });
               }),
         ]),
+        const SizedBox(height:12),
+        SizedBox(width:double.infinity,child:FilledButton.icon(
+          onPressed:_busy||_original==null||!_validTarget?null:_applyTargetSize,
+          icon:const Icon(Icons.check_circle_outline_rounded),
+          label:const Text('Apply Target Size'))),
+        if(_appliedJpeg!=null && _appliedTargetKb!=null)...[
+          const SizedBox(height:8),
+          Row(children:[
+            const Icon(Icons.check_circle_rounded,
+              color:FileTheme.violet,size:18),
+            const SizedBox(width:8),
+            Expanded(child:Text('Applied: ${_appliedTargetKb} KB '
+              '(${_appliedJpeg!.lengthInBytes} bytes) · Ready to export',
+              style:const TextStyle(fontWeight:FontWeight.w700))),
+          ]),
+        ],
         const SizedBox(height:8),
         Text('Exactly N × 1024 bytes. If a readable signature cannot fit, '
           'the export shows an error instead of creating the wrong size.',
@@ -532,7 +565,10 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       ]),
       Slider(value:_filterIntensity,min:0,max:1,divisions:20,
         onChanged:_busy?null:(value){
-          setState(()=>_filterIntensity=value);
+          setState((){
+            _discardApplied();
+            _filterIntensity=value;
+          });
           _filterTimer?.cancel();
           _filterTimer=Timer(const Duration(milliseconds:140),
             ()=>unawaited(_refreshFilterPreview()));
@@ -651,7 +687,10 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
             child:Row(children:[
               for(final tab in _tabs)Expanded(child:InkWell(
                 borderRadius:BorderRadius.circular(18),
-                onTap:()=>setState(()=>_tool=tab),
+                onTap:_busy?null:()=>setState((){
+                  if(_tool!=tab)_discardApplied();
+                  _tool=tab;
+                }),
                 child:Container(
                   padding:const EdgeInsets.symmetric(vertical:13),
                   decoration:BoxDecoration(
