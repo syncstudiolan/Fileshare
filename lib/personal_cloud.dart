@@ -358,8 +358,8 @@ class PersonalCloud extends ChangeNotifier {
       }
       _inboxSocket=socket;
       _inboxReconnectFailures=0;
-      // Reconcile missed upload events after any network interruption.
-      _queueInboxRefresh();
+      // Subscribe before the initial reconciliation, so there is no gap
+      // where a newly completed QR upload could be missed.
       _inboxSubscription=socket.listen((message){
         if(message=='files-changed')_queueInboxRefresh();
       },onError:(Object _){
@@ -367,6 +367,7 @@ class PersonalCloud extends ChangeNotifier {
       },onDone:(){
         _lostLiveInbox(socket);
       },cancelOnError:true);
+      _queueInboxRefresh();
     }catch(error){
       // Legacy Workers respond 404 to the new endpoint. Do NOT probe them
       // every minute: owner must explicitly upgrade Worker once via Auto
