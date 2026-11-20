@@ -44,8 +44,8 @@ existing Worker without its previously saved owner secret.
 | PUT | `/v1/guest/file/{session}/{file}/part/{number}` | 6 MiB multipart chunk |
 | POST | `/v1/guest/file/{session}/{file}/complete` | Complete multipart |
 | POST | `/v1/guest/finish/{session}` | Confirm one batch; does NOT upload twice |
-| GET/POST/DELETE | `/v1/owner/qr` | Retrieve/create/revoke permanent QR |
-| POST | `/v1/owner/qr/regenerate` | Revoke old QR and generate a new one |
+| GET/POST | `/v1/owner/qr` | Retrieve/create permanent Guest QR; there is no disable endpoint |
+| POST | `/v1/owner/qr/regenerate` | Rotate QR token and immediately create a new active Guest QR |
 | GET | `/v1/owner/files?offset=0` | Protected guest inbox, paginated |
 | GET/DELETE | `/v1/owner/file/{id}` | Stream/download or delete the owner's file |
 | GET (WebSocket) | `/v1/owner/events` | Authenticated live inbox invalidation; hibernating Durable Object |
@@ -58,9 +58,9 @@ Owner endpoints require a valid signed personal Worker session or the setup-only
 - Guest identity is a secure cookie + separate hashed IP. Browsers do **not** expose genuine hardware IDs; clearing cookies or switching browsers can bypass personal limits.
 - Each QR/guest identity gets four sessions and 200 MiB of reserved files per IST calendar day. A session may contain many smaller files (up to 500 selections in the current implementation).
 - Large files use 6 MiB R2 multipart chunks. No single 200 MB HTTP request is attempted.
-- Files uploaded before the following 00:00 IST expire at that midnight. Expired R2 objects, D1 upload rows, D1 multipart-part records and unreferenced expired guest-session rows are deleted together; no persistent deletion queue is created. The per-guest quota resets at midnight IST.
+- **Guest QR and logged-in device-to-device Cloud transfers** (up to 200 MiB per file) expire at the next **00:00 IST**, regardless of their upload time. LAN-only files retain their separate rolling 24-hour expiry. The Auto Cloud Transfer toggle defaults ON: a discovered LAN device always wins; with zero LAN peers the app chooses Cloud only if logged in and toggle ON. With toggle OFF or no login, outgoing files go to LAN Pending for automatic delivery when a nearby LAN device appears. The toggle never affects Guest QR uploads, QR availability, or incoming QR notifications.\n- Files uploaded before the following 00:00 IST expire at that midnight. Expired R2 objects, D1 upload rows, D1 multipart-part records and unreferenced expired guest-session rows are deleted together; no persistent deletion queue is created. The per-guest quota resets at midnight IST.
 - Cron jobs at 18:30, 20:30 and 22:30 UTC (00:00, 02:00, 04:00 IST) perform one cleanup and up to two delayed retries, instead of constant polling. R2 keys are deleted in batches; D1 records in <=100-ID statements to respect D1's 100-parameter limit. Successful progress causes **at most one WebSocket `files-changed` event per scheduled invocation**, not one event per file. Empty retries send no event or R2 delete request.
-- The cleanup checks D1 first and **does not issue an R2 delete request when there are no expired files**. If R2 deletion fails, affected D1 upload records are retained for the retry cron; no separate queue records are stored. The app also removes expired QR cards locally at midnight without needing a network call. The permanent QR code and personal owner account remain intact.
+- The cleanup also aborts incomplete device-to-device R2 multipart uploads, removes device-transfer D1 records and multipart parts, and keeps no persistent cloud delete queue. Actual deletion runs at midnight IST via scheduled cleanup, with retry crons if a storage operation fails.\n- The cleanup checks D1 first and **does not issue an R2 delete request when there are no expired files**. If R2 deletion fails, affected D1 upload records are retained for the retry cron; no separate queue records are stored. The app also removes expired QR cards locally at midnight without needing a network call. The permanent QR code and personal owner account remain intact.
 - Each cleanup processes up to 20 batches of 500 files. Additional backlog waits for the next scheduled run.
 - Client files already saved into the user's Downloads folder are NOT deleted by this cloud cleanup.
 
