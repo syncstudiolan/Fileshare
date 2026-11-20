@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -42,7 +43,7 @@ class UpdateRelease {
         size is! int || size<1 ||
         url is! String || !url.startsWith(_allowedDownloadPrefix) ||
         !Uri.tryParse(url)!.hasScheme ||
-        !url.endsWith(platform=='android' ? '.apk' : '.exe') ||
+        !url.endsWith(platform=='android' ? '.apk' : platform=='ios' ? '.ipa' : '.exe') ||
         hash is! String || !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
       return null;
     }
@@ -68,7 +69,7 @@ class FileShareUpdates extends ChangeNotifier {
   int _currentBuild=1;
   String _currentVersion='0.1.0';
   String get currentLabel=>'$_currentVersion (build $_currentBuild)';
-  bool get supported=>Platform.isAndroid||Platform.isWindows;
+  bool get supported=>Platform.isAndroid||Platform.isWindows||Platform.isIOS;
 
   void initializeVersion(String version,int build){
     _currentVersion=version;
@@ -82,7 +83,7 @@ class FileShareUpdates extends ChangeNotifier {
     stage=UpdateStage.checking;error=null;notifyListeners();
     final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
     try {
-      final uri=Uri.parse(fileShareUpdateManifest);
+      final uri=Uri.parse(fileShareUpdateManifest).replace(queryParameters:{'t':DateTime.now().millisecondsSinceEpoch.toString()});
       final request=await client.getUrl(uri);
       request.headers.set('cache-control','no-cache');
       final response=await request.close().timeout(const Duration(seconds:20));
@@ -98,7 +99,7 @@ class FileShareUpdates extends ChangeNotifier {
       if(data is! Map<String,dynamic>||data['schema']!=1){
         throw const FormatException('Unsupported update manifest');
       }
-      final platform=Platform.isAndroid?'android':'windows';
+      final platform=Platform.isAndroid?'android':Platform.isIOS?'ios':'windows';
       final parsed=UpdateRelease.fromJson(data[platform],platform);
       if(parsed==null)throw const FormatException('Invalid release metadata');
       if(parsed.build>_currentBuild) {
@@ -126,7 +127,9 @@ class FileShareUpdates extends ChangeNotifier {
 
   Future<void> download() async {
     final next=release;
-    if(next==null||_downloading)return;
+    // AppleJR-installed unsigned IPAs cannot be installed by an iOS app.
+    // Signing and installation must happen outside the iOS sandbox.
+    if(Platform.isIOS||next==null||_downloading)return;
     _downloading=true;
     showPopup=false;
     stage=UpdateStage.downloading;progress=0;error=null;
@@ -176,6 +179,7 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   Future<void> install() async {
+    if(Platform.isIOS)return;
     final file=downloaded;
     if(stage!=UpdateStage.ready||file==null||!await file.exists())return;
     // Revalidate immediately before install; another process may have touched the file.
@@ -216,18 +220,27 @@ class FileShareUpdates extends ChangeNotifier {
 \$oldPid = $currentPid
 \$setup = ${quote(installer.path)}
 \$app = ${quote(exe)}
-while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 350 }
+\$limit = (Get-Date).AddSeconds(45)
+while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
+  if ((Get-Date) -gt \$limit) { throw 'Previous File Share process did not exit.' }
+  Start-Sleep -Milliseconds 350
+}
 try {
-  \$process = Start-Process -FilePath \$setup -Verb RunAs -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -PassThru -Wait
+  # Show the real Inno Setup wizard, Install button, progress and Windows UAC.
+  \$process = Start-Process -FilePath \$setup -Verb RunAs -ArgumentList '/NORESTART','/CLOSEAPPLICATIONS','/LOG' -PassThru -Wait
   if (\$process.ExitCode -ne 0) { throw "Installer exited \$(\$process.ExitCode)" }
   Start-Process -FilePath \$app
 } catch {
-  Add-Content -Path (Join-Path \$env:TEMP 'fileshare-update-error.log') -Value \$_.ToString()
+  \$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
+  Add-Content -Path \$log -Value \$_.ToString()
+  Add-Type -AssemblyName PresentationFramework
+  [System.Windows.MessageBox]::Show('File Share installation failed: '+\$_.Exception.Message+[Environment]::NewLine+'Log: '+\$log,'File Share Update','OK','Error') | Out-Null
 }
 """;
     await script.writeAsString(code,flush:true);
     final process=await Process.start('powershell.exe',[
-      '-NoProfile','-ExecutionPolicy','Bypass','-File',script.path,
+      '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
+      '-File',script.path,
     ],mode:ProcessStartMode.detached);
     if(process.pid<=0)throw StateError('Updater helper did not start');
     // Remove file lock, stop LAN and tray, and let the elevated installer
@@ -243,6 +256,12 @@ class FileShareUpdatePage extends StatefulWidget {
 }
 class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
   final updates=FileShareUpdates.instance;
+  Future<void> _copyIosSigningLink(BuildContext context,UpdateRelease? release) async {
+    if(release==null)return;
+    await Clipboard.setData(ClipboardData(text:release.url));
+    if(context.mounted)FileShareTopNotice.show(context,
+      'IPA link copied. Re-sign with your existing AppleJR certificate and bundle ID before installing.');
+  }
   @override void initState(){super.initState();updates.addListener(_changed);}
   void _changed(){if(mounted)setState((){});}
   @override void dispose(){updates.removeListener(_changed);super.dispose();}
@@ -291,7 +310,12 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
                 color:Theme.of(context).colorScheme.error)),
             const SizedBox(height:14),
             if(stage==UpdateStage.available)
-              FilledButton.icon(onPressed:updates.download,
+              Platform.isIOS
+              ?FilledButton.icon(
+                onPressed:()=>_copyIosSigningLink(context,release),
+                icon:const Icon(Icons.copy_rounded),
+                label:const Text('Copy IPA link for AppleJR signing'))
+              :FilledButton.icon(onPressed:updates.download,
                 icon:const Icon(Icons.download_rounded),
                 label:const Text('Download now')),
             if(stage==UpdateStage.ready)
@@ -307,10 +331,11 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
                 icon:const Icon(Icons.refresh_rounded),
                 label:const Text('Check for updates')),
             const SizedBox(height:10),
-            const Text('Android needs an OS install confirmation. Windows may '
-              'request administrator approval. Only verified GitHub Releases '
-              'are installed.',textAlign:TextAlign.center,
-              style:TextStyle(fontSize:12)),
+            Text(Platform.isIOS
+              ?'iOS: this GitHub IPA is UNSIGNED. AppleJR must sign the new build using the same certificate, provisioning profile and bundle ID before installing it over the current app. File Share cannot silently install an IPA on iOS.'
+              :'Android needs an OS install confirmation. Windows may request administrator approval. Only verified GitHub Releases are installed.',
+              textAlign:TextAlign.center,
+              style:const TextStyle(fontSize:12)),
           ]),
         )),
       ),
@@ -365,10 +390,10 @@ class FileShareUpdateBanner extends StatelessWidget {
                       updater.later();
                       fileShareNavigatorKey.currentState?.push(MaterialPageRoute<void>(
                         builder:(_)=>const FileShareUpdatePage()));
-                      unawaited(updater.download());
+                      if(!Platform.isIOS)unawaited(updater.download());
                     },
-                    icon:const Icon(Icons.download_rounded,size:18),
-                    label:const Text('Download now')),
+                    icon:Icon(Platform.isIOS?Icons.info_outline_rounded:Icons.download_rounded,size:18),
+                    label:Text(Platform.isIOS?'View AppleJR signing steps':'Download now')),
                   TextButton(onPressed:updater.later,
                     child:const Text('Install update later')),
                 ]),
