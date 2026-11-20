@@ -13,6 +13,7 @@ import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
+import 'transfer_route.dart';
 import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
@@ -2442,10 +2443,12 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       appLan.refresh();
       await Future<void>.delayed(const Duration(seconds:3));
       if(!mounted)return;
-      final useLan=appLan.peers.isNotEmpty;
       final cloud=PersonalCloud.instance;
+      final route=chooseTransferRoute(
+        nearbyCount:appLan.peers.length,cloudSignedIn:cloud.signedIn);
+      final useLan=route==TransferRoute.lan;
       final batches=List<PendingBatch>.from(_staged);
-      if(!useLan && !cloud.signedIn){
+      if(route==TransferRoute.pending){
         // Preserve previous no-login behavior: queue locally, never upload.
         for(final batch in batches){
           try{
