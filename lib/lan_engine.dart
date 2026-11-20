@@ -279,6 +279,10 @@ class LanEngine extends ChangeNotifier {
           port is! int || port < 1 || port > 65535) return;
       final first = !peers.containsKey(id);
       _bonjourPeerIds.add(id);
+      if (error?.startsWith('Nearby discovery:') == true ||
+          error?.startsWith('Bonjour discovery unavailable:') == true) {
+        error = null;
+      }
       peers[id] = LanPeer(id, safeFileName(name is String ? name : 'Device'),
           address, port, DateTime.now());
       _notify();
@@ -301,6 +305,13 @@ class LanEngine extends ChangeNotifier {
   Future<void> retryReceiver() => _bindReceiver();
 
   void refresh() {
+    // Manual refresh must work on iPhone even though raw UDP broadcast is off.
+    if (_bonjourStarted && Platform.isIOS) {
+      unawaited(_bonjour.invokeMethod<void>('refresh').catchError((Object e) {
+        error = 'Nearby refresh failed: $e';
+        _notify();
+      }));
+    }
     if (_discovery == null) return;
     final bytes = utf8.encode(jsonEncode({
       'app': 'fileshare-lan-v1', 'id': deviceId,
