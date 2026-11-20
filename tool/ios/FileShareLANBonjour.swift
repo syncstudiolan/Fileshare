@@ -78,8 +78,11 @@ final class FileShareLANBonjour: NSObject, NetServiceBrowserDelegate, NetService
     }
 
     private func refresh() {
-        // Bonjour continuously tracks services; restart discovery to refresh
-        // connections after Wi-Fi changes without creating a second advertiser.
+        // Clear discovered peers before browsing again after Wi-Fi changes.
+        // Otherwise stale entries can remain visible after network switches.
+        for id in Set(resolvedIds.values) {
+            channel.invokeMethod("lost", arguments: ["id": id])
+        }
         browser.stop()
         found.removeAll()
         resolvedIds.removeAll()
