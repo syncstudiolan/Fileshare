@@ -56,7 +56,9 @@ class PersonalCloud extends ChangeNotifier {
   WebSocket? _inboxSocket;
   StreamSubscription<dynamic>? _inboxSubscription;
   Timer? _inboxReconnect;
+  Timer? _inboxEventDebounce;
   bool _inboxLiveEnabled=false;
+  bool get liveInboxEnabled => _inboxLiveEnabled;
   bool _inboxConnecting=false;
   bool _inboxRefreshPending=false;
   int _inboxReconnectFailures=0;
@@ -332,6 +334,8 @@ class PersonalCloud extends ChangeNotifier {
     _inboxLiveEnabled=false;
     _inboxReconnect?.cancel();
     _inboxReconnect=null;
+    _inboxEventDebounce?.cancel();
+    _inboxEventDebounce=null;
     final old=_inboxSocket;
     _inboxSocket=null;
     unawaited(_inboxSubscription?.cancel()??Future<void>.value());
@@ -355,9 +359,9 @@ class PersonalCloud extends ChangeNotifier {
       _inboxSocket=socket;
       _inboxReconnectFailures=0;
       // Reconcile missed upload events after any network interruption.
-      unawaited(_refreshAfterEvent());
+      _queueInboxRefresh();
       _inboxSubscription=socket.listen((message){
-        if(message=='files-changed')unawaited(_refreshAfterEvent());
+        if(message=='files-changed')_queueInboxRefresh();
       },onError:(Object _){
         _lostLiveInbox(socket);
       },onDone:(){
@@ -372,6 +376,8 @@ class PersonalCloud extends ChangeNotifier {
          message.contains('HTTP status code: 426') ||
          message.contains('HTTP status code: 503')){
         _inboxLiveEnabled=false;
+        // Older Workers have no push endpoint; reconcile just once, not via polling.
+        unawaited(refreshFiles());
       }else{
         _scheduleInboxReconnect();
       }
@@ -397,6 +403,16 @@ class PersonalCloud extends ChangeNotifier {
     _inboxReconnect=Timer(Duration(seconds:seconds[index]),(){
       _inboxReconnect=null;
       unawaited(_connectLiveInbox());
+    });
+  }
+
+  /// Coalesce burst QR and device-transfer notifications into one D1 fetch.
+  /// The timer is event-triggered, not a periodic polling timer.
+  void _queueInboxRefresh(){
+    if(!_inboxLiveEnabled || _inboxEventDebounce!=null)return;
+    _inboxEventDebounce=Timer(const Duration(milliseconds:180),(){
+      _inboxEventDebounce=null;
+      unawaited(_refreshAfterEvent());
     });
   }
 
@@ -473,7 +489,7 @@ class PersonalCloud extends ChangeNotifier {
       // in-flight, coalesce it into ONE follow-up D1 request.
       if(_inboxRefreshPending && _inboxLiveEnabled){
         _inboxRefreshPending=false;
-        scheduleMicrotask(() => unawaited(_refreshAfterEvent()));
+        scheduleMicrotask(_queueInboxRefresh);
       }
     }
   }
