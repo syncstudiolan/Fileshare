@@ -72,8 +72,11 @@ Future<void> main([List<String> args = const []]) async {
       await WindowsBackground.instance.enableDefaultStart(prefs);
     }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
   }
-  if ((offline || androidBackgroundEnabled) &&
-      (Platform.isAndroid || Platform.isWindows)) {
+  // iPhone LAN receiver/discovery must start even before sign-in; local
+  // file transfer is independent of the cloud account and login flow.
+  if (Platform.isIOS ||
+      ((offline || androidBackgroundEnabled) &&
+       (Platform.isAndroid || Platform.isWindows))) {
     unawaited(appLan.start().catchError((Object e) {
       debugPrint('Background LAN start failed: $e');
     }));
@@ -2102,6 +2105,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if(state==AppLifecycleState.resumed){
       _dashboardForeground=true;
       if (Platform.isAndroid) unawaited(_takeSharedFiles());
+      if (Platform.isIOS) appLan.refresh();
       _resumeCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
@@ -3613,8 +3617,7 @@ class _MyQrPageState extends State<MyQrPage> {
 }
 
 
-/// Real nearby devices: the list is driven by the live UDP discovery engine,
-/// not the earlier placeholder names.
+/// Nearby devices use Android UDP/NSD and iOS native Bonjour discovery.
 class NearbyDevicesPage extends StatelessWidget {
   const NearbyDevicesPage({super.key,required this.mode,required this.onMode});
   final ThemeMode mode;
@@ -3651,9 +3654,16 @@ class NearbyDevicesPage extends StatelessWidget {
                     color:FileTheme.foreground(context)))),
               ])),
               const SizedBox(height:10),
+              if(appLan.error != null)
+                Padding(padding:const EdgeInsets.fromLTRB(12,4,12,12),
+                  child:Text(appLan.error!,
+                    textAlign:TextAlign.center,
+                    style:const TextStyle(color:Colors.deepOrange,fontSize:12))),
               if(peers.isEmpty)
                 Padding(padding:const EdgeInsets.all(22),
-                  child:Text('Keep File Share open on another phone or Windows PC connected to the same Wi-Fi. Discovery does not need internet.',
+                  child:Text(Platform.isIOS
+                    ? 'On iPhone: Settings → Privacy & Security → Local Network → allow File Share. Keep both phones on the same Wi-Fi (not a guest network), turn off VPN, and tap Refresh.'
+                    : 'Keep File Share open on both phones on the same Wi-Fi. Turn off guest Wi-Fi isolation/VPN and tap Refresh. Discovery does not need internet.',
                     textAlign:TextAlign.center,
                     style:TextStyle(color:FileTheme.muted(context)))),
               for(final peer in peers)

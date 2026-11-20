@@ -118,6 +118,13 @@ jobs:
       - name: Verify native Kotlin PDF tool tests
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+      - name: Package installable Android testing APK without production signing secrets
+        run: flutter build apk --debug --target-platform android-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-android-lan-tested-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
       - name: Configure stable production APK signing
         shell: bash
         env:
@@ -181,7 +188,7 @@ jobs:
   windows:
     # Still produce the Windows installer if Android signing secrets are missing.
     # The needs edge serializes Windows after Android; no parallel release builds.
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push'))
 
     runs-on: windows-latest
     timeout-minutes: 50

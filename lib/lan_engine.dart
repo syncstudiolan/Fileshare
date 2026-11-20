@@ -5,6 +5,8 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:nsd/nsd.dart' as nsd;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -116,6 +118,12 @@ class LanEngine extends ChangeNotifier {
   final Map<String, DateTime> _attempts = {};
   ServerSocket? _server;
   RawDatagramSocket? _discovery;
+  static const MethodChannel _bonjour = MethodChannel('file_share.lan_discovery');
+  final Set<String> _bonjourPeerIds = <String>{};
+  bool _bonjourStarted = false;
+  nsd.Registration? _windowsRegistration;
+  nsd.Discovery? _windowsDiscovery;
+  final Set<String> _windowsPeerIds = <String>{};
   Timer? _heartbeat, _cleanup, _listenerRetry;
   bool _bindingReceiver = false;
   int _listenerGeneration = 0;
@@ -169,7 +177,10 @@ class LanEngine extends ChangeNotifier {
     _listenerRetry = Timer.periodic(const Duration(seconds: 8), (_) {
       if (_server == null) unawaited(_bindReceiver());
     });
-    try {
+    // iOS rejects raw UDP broadcast without Apple's restricted multicast
+    // entitlement. Bonjour is the system-supported discovery mechanism.
+    // Android keeps the UDP v1 discovery for existing older clients.
+    if (!Platform.isIOS) try {
       _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
         discoveryPort, reuseAddress: true);
       _discovery!.broadcastEnabled = true;
@@ -187,6 +198,17 @@ class LanEngine extends ChangeNotifier {
         _dispatchQueued();
       });
     } catch (e) { error = 'LAN broadcast unavailable: ' + e.toString(); }
+    if (testSupportDirectory == null && (Platform.isIOS || Platform.isAndroid)) {
+      await _startBonjour();
+    }
+    if (testSupportDirectory == null && Platform.isWindows) {
+      await _startWindowsBonjour();
+    }
+    // Keep peer cleanup and queued delivery alive even on iOS without UDP.
+    _heartbeat ??= Timer.periodic(const Duration(seconds: 5), (_) {
+      _expirePeers();
+      _dispatchQueued();
+    });
     _cleanup = Timer.periodic(const Duration(minutes: 1),
       (_) { unawaited(cleanExpired()); });
     started = true;
@@ -234,9 +256,120 @@ class LanEngine extends ChangeNotifier {
     }
   }
 
+  // Windows 10 1903+ native DNS-SD browsing/registration. UDP v1 stays
+  // enabled to interoperate with existing Android/Windows installations.
+  Future<void> _startWindowsBonjour() async {
+    if (!Platform.isWindows || deviceId == null || _server == null ||
+        _windowsDiscovery != null) return;
+    try {
+      final instance = 'FileShare-${deviceId!.substring(0, 8)}';
+      _windowsRegistration = await nsd.register(nsd.Service(
+        name: instance, type: '_fileshare._tcp', port: _server!.port,
+        txt: <String, Uint8List>{
+          'id': Uint8List.fromList(utf8.encode(deviceId!)),
+          'n': Uint8List.fromList(utf8.encode(Platform.localHostname)),
+        },
+      ));
+      final discovery = await nsd.startDiscovery(
+        '_fileshare._tcp', ipLookupType: nsd.IpLookupType.any);
+      _windowsDiscovery = discovery;
+      discovery.addListener(() {
+        if (_disposed) return;
+        final fresh = <String>{};
+        for (final service in discovery.services) {
+          final idBytes = service.txt?['id'];
+          final id = idBytes == null ? null : utf8.decode(idBytes,
+              allowMalformed: true);
+          if (id == null || id.isEmpty || id == deviceId ||
+              id.length > 100 || service.port == null) continue;
+          final hosts = service.addresses ?? const <InternetAddress>[];
+          final ipv4 = hosts.where((a) => a.type == InternetAddressType.IPv4);
+          if (ipv4.isEmpty) continue;
+          final nameBytes = service.txt?['n'];
+          final name = nameBytes == null
+              ? (service.name ?? 'Device')
+              : utf8.decode(nameBytes, allowMalformed: true);
+          fresh.add(id);
+          _windowsPeerIds.add(id);
+          peers[id] = LanPeer(id, safeFileName(name), ipv4.first.address,
+              service.port!, DateTime.now());
+        }
+        for (final id in _windowsPeerIds.difference(fresh)) {
+          peers.remove(id);
+          _windowsPeerIds.remove(id);
+        }
+        _notify();
+        _dispatchQueued();
+      });
+    } catch (e) {
+      error = 'Windows Bonjour discovery unavailable: $e';
+      _notify();
+    }
+  }
+
+  /// iOS Bonjour and Android NsdManager advertise the same TCP receiver.
+  /// Both platforms announce stable IDs via TXT records and resolve to IPv4.
+  Future<void> _startBonjour() async {
+    if (_bonjourStarted || _server == null || deviceId == null) return;
+    _bonjour.setMethodCallHandler((call) async {
+      if (_disposed || !started && _starting == null) return;
+      final data = call.arguments;
+      if (data is! Map) return;
+      if (call.method == 'lost') {
+        final id = data['id'];
+        if (id is String && _bonjourPeerIds.remove(id)) {
+          peers.remove(id);
+          _notify();
+        }
+        return;
+      }
+      if (call.method == 'error') {
+        error = 'Nearby discovery: ${data['message'] ?? 'unavailable'}';
+        _notify();
+        return;
+      }
+      if (call.method != 'peer') return;
+      final id = data['id'], address = data['address'];
+      final name = data['name'], port = data['port'];
+      if (id is! String || id.isEmpty || id == deviceId ||
+          id.length > 100 || address is! String ||
+          InternetAddress.tryParse(address)?.type != InternetAddressType.IPv4 ||
+          port is! int || port < 1 || port > 65535) return;
+      final first = !peers.containsKey(id);
+      _bonjourPeerIds.add(id);
+      if (error?.startsWith('Nearby discovery:') == true ||
+          error?.startsWith('Bonjour discovery unavailable:') == true) {
+        error = null;
+      }
+      peers[id] = LanPeer(id, safeFileName(name is String ? name : 'Device'),
+          address, port, DateTime.now());
+      _notify();
+      if (first) _dispatchQueued();
+    });
+    try {
+      await _bonjour.invokeMethod<void>('start', {
+        'id': deviceId!, 'name': Platform.localHostname, 'port': _server!.port,
+      });
+      _bonjourStarted = true;
+    } on PlatformException catch (e) {
+      error = 'Bonjour discovery unavailable: ${e.message ?? e.code}';
+      _notify();
+    } on MissingPluginException {
+      error = 'Nearby discovery module missing. Install the updated build.';
+      _notify();
+    }
+  }
+
   Future<void> retryReceiver() => _bindReceiver();
 
   void refresh() {
+    // Manual refresh must work on iPhone even though raw UDP broadcast is off.
+    if (_bonjourStarted && Platform.isIOS) {
+      unawaited(_bonjour.invokeMethod<void>('refresh').catchError((Object e) {
+        error = 'Nearby refresh failed: $e';
+        _notify();
+      }));
+    }
     if (_discovery == null) return;
     final bytes = utf8.encode(jsonEncode({
       'app': 'fileshare-lan-v1', 'id': deviceId,
@@ -266,7 +399,9 @@ class LanEngine extends ChangeNotifier {
 
   void _expirePeers() {
     final cutoff = DateTime.now().subtract(const Duration(seconds: 22));
-    peers.removeWhere((key, peer) => peer.lastSeen.isBefore(cutoff));
+    peers.removeWhere((key, peer) =>
+      !_bonjourPeerIds.contains(key) && !_windowsPeerIds.contains(key) &&
+      peer.lastSeen.isBefore(cutoff));
     _notify();
   }
 
@@ -686,6 +821,23 @@ class LanEngine extends ChangeNotifier {
     _heartbeat?.cancel();
     _cleanup?.cancel();
     _discovery?.close();
+    if (_bonjourStarted) {
+      _bonjourStarted = false;
+      try { await _bonjour.invokeMethod<void>('stop'); } catch (_) {}
+    }
+    _bonjourPeerIds.clear();
+    final discovery = _windowsDiscovery;
+    _windowsDiscovery = null;
+    if (discovery != null) {
+      try { await nsd.stopDiscovery(discovery); } catch (_) {}
+    }
+    final registration = _windowsRegistration;
+    _windowsRegistration = null;
+    if (registration != null) {
+      try { await nsd.unregister(registration); } catch (_) {}
+    }
+    _windowsPeerIds.clear();
+    peers.clear();
     await _server?.close();
     _server = null;
     _discovery = null;

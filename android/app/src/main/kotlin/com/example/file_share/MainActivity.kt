@@ -45,6 +45,7 @@ class FileShareApplication : Application() {
     }
     private val shared = mutableListOf<Map<String, String>>()
     private var channel: MethodChannel? = null
+    private var bonjour: LanBonjourBridge? = null
 
     @Synchronized
     fun engine(): FlutterEngine {
@@ -234,6 +235,8 @@ class FileShareApplication : Application() {
                 else -> result.notImplemented()
             }
         }
+        // One Bonjour advertiser/browser per cached engine, shared with Dart.
+        bonjour = LanBonjourBridge(this, engine.dartExecutor.binaryMessenger)
         FlutterEngineCache.getInstance().put(ENGINE_ID, engine)
         engine.dartExecutor.executeDartEntrypoint(
             DartExecutor.DartEntrypoint.createDefault()
