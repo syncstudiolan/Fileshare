@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
 );
 CREATE INDEX IF NOT EXISTS auth_attempts_expiry ON auth_attempts(changed_at);
 
--- Account-only cross-network transfers: isolated from guest QR quota/expiry.
+-- Account-only cross-network transfers: separate from Guest QR quota,\n-- but both use next-midnight-IST expiry (LAN has rolling 24h retention).
 -- Applied automatically by the SAME first-time API provisioning operation.
 CREATE TABLE IF NOT EXISTS device_transfers (
   id TEXT PRIMARY KEY,
