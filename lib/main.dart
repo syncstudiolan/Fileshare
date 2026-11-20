@@ -1822,6 +1822,8 @@ class CloudInboxCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final grouped = items.length > 1;
+    final device = items.first.deviceTransfer;
+    final sent = device && items.first.senderId == appLan.deviceId;
     Widget action(String name, IconData icon, VoidCallback onPressed) =>
       IconButton(
         tooltip: name, onPressed: onPressed, iconSize: 19,
@@ -1830,7 +1832,7 @@ class CloudInboxCard extends StatelessWidget {
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: FileTheme.pink));
     return TransferBubble(
-      incoming: true,
+      incoming: !sent,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 15,
@@ -2545,21 +2547,23 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
     final timeline = groupedLan.values.map((group) =>
       TimelineGroup(lan: group)).toList();
-    if (_filter != 'Sent') {
-      final groupedCloud = <String, List<CloudFile>>{};
-      for (final item in PersonalCloud.instance.files) {
-        groupedCloud.putIfAbsent(item.session, () => []).add(item);
-      }
-      timeline.addAll(groupedCloud.values.map((group) =>
-        TimelineGroup(cloud: group)));
+    final groupedCloud = <String, List<CloudFile>>{};
+    for (final item in PersonalCloud.instance.files) {
+      final sent = item.deviceTransfer && item.senderId == appLan.deviceId;
+      if((_filter == 'Sent' && !sent) ||
+         (_filter == 'Received' && sent))continue;
+      groupedCloud.putIfAbsent(item.session, () => []).add(item);
     }
+    timeline.addAll(groupedCloud.values.map((group) =>
+      TimelineGroup(cloud: group)));
     timeline.sort((a, b) => b.created.compareTo(a.created));
     return timeline;
   }
 
   LanFile _cloudAsLocalFile(CloudFile entry, File local) => LanFile(
     id:'cloud_'+entry.id,batch:entry.session,name:entry.name,
-    path:local.path,peer:'Guest browser',incoming:true,
+    path:local.path,peer:entry.deviceTransfer ? entry.senderName : 'Guest browser',
+    incoming:entry.senderId!=appLan.deviceId,
     size:entry.size,created:entry.created,state:TransferState.delivered);
 
   Future<void> _previewCloud(CloudFile entry) async {
