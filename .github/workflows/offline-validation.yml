@@ -428,7 +428,7 @@ jobs:
 
   publish_windows_release:
     name: Publish Windows installer and update manifest
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows.result == 'success'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.windows.result == 'success'
     needs: [windows]
     runs-on: ubuntu-latest
     permissions:
