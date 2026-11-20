@@ -44,7 +44,7 @@ def main()->None:
         raise SystemExit("Generated FlutterWindow C++ source is missing")
     window_code=flutter_window.read_text(encoding="utf-8")
     if '#include "resource.h"' not in window_code:
-        window_code='#include "resource.h"\\n'+window_code
+        window_code='#include "resource.h"\n'+window_code
     on_create='bool FlutterWindow::OnCreate() {'
     window_icon_code='''  // File Share branded taskbar and Alt-Tab icons.
   HWND hwnd = GetHandle();
@@ -59,7 +59,7 @@ def main()->None:
     if on_create not in window_code:
         raise SystemExit("Unknown Flutter Windows runner: OnCreate signature changed")
     if 'File Share branded taskbar and Alt-Tab icons.' not in window_code:
-        window_code=window_code.replace(on_create,on_create+'\\n'+window_icon_code,1)
+        window_code=window_code.replace(on_create,on_create+'\n'+window_icon_code,1)
     flutter_window.write_text(window_code,encoding="utf-8")
     assert 'WM_SETICON, ICON_SMALL' in window_code
     assert 'WM_SETICON, ICON_BIG' in window_code
