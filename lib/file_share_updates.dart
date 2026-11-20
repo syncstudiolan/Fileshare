@@ -238,7 +238,8 @@ try {
 """;
     await script.writeAsString(code,flush:true);
     final process=await Process.start('powershell.exe',[
-      '-NoProfile','-ExecutionPolicy','Bypass','-File',script.path,
+      '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
+      '-File',script.path,
     ],mode:ProcessStartMode.detached);
     if(process.pid<=0)throw StateError('Updater helper did not start');
     // Remove file lock, stop LAN and tray, and let the elevated installer
