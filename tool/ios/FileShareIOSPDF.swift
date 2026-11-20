@@ -8,10 +8,14 @@ import UniformTypeIdentifiers
 /// the IPA smaller than bundling the Android-only PDF engine and SDK.
 @available(iOS 16.0, *)
 final class FileShareIOSPDF {
-    static func register(on controller: FlutterViewController) {
+    static func register(messenger: FlutterBinaryMessenger) {
         let channel = FlutterMethodChannel(
-            name: "file_share.ios_pdf", binaryMessenger: controller.binaryMessenger)
-        channel.setMethodCallHandler { [weak controller] call, reply in
+            name: "file_share.ios_pdf", binaryMessenger: messenger)
+        channel.setMethodCallHandler { call, reply in
+            let controller = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first(where: { $0.isKeyWindow })?.rootViewController
             guard let controller = controller else {
                 reply(FlutterError(code: "UNAVAILABLE",
                     message: "iOS PDF view is not available", details: nil))

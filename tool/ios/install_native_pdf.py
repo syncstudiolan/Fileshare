@@ -18,15 +18,24 @@ if not app_delegate.exists() or not source.exists():
 shutil.copyfile(source, runner / "FileShareIOSPDF.swift")
 
 text = app_delegate.read_text(encoding="utf8")
-needle = "GeneratedPluginRegistrant.register(with: self)"
-replacement = needle + """
-    if let flutterController = window?.rootViewController as? FlutterViewController {
-      FileShareIOSPDF.register(on: flutterController)
-    }"""
-if needle not in text:
-    raise SystemExit("Cannot identify Flutter plugin registration in AppDelegate")
+# Flutter 3.41+ uses a UIScene lifecycle, so the implicit engine
+# registers plugins in didInitializeImplicitFlutterEngine rather than launch.
+old = "GeneratedPluginRegistrant.register(with: self)"
+modern = "GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)"
 if "FileShareIOSPDF.register" not in text:
-    app_delegate.write_text(text.replace(needle, replacement), encoding="utf8")
+    if modern in text:
+        registration = modern + """
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FileShareIOSPDF") {
+      FileShareIOSPDF.register(messenger: registrar.messenger())
+    }"""
+        text = text.replace(modern, registration, 1)
+    elif old in text:
+        registration = old + """
+    FileShareIOSPDF.register(messenger: (window?.rootViewController as! FlutterViewController).binaryMessenger)"""
+        text = text.replace(old, registration, 1)
+    else:
+        raise SystemExit("Cannot identify Flutter plugin registration in AppDelegate")
+    app_delegate.write_text(text, encoding="utf8")
 
 ruby = r"""
 require 'xcodeproj'
