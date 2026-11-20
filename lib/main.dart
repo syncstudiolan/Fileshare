@@ -1710,7 +1710,11 @@ class LiveTransferCard extends StatelessWidget {
           preview,const SizedBox(width:10),
           Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
             details,const SizedBox(height:7),
-            Align(alignment:Alignment.centerRight,child:_buttons(context,file)),
+            Row(children:[
+              TransferCardTime(created:file.created,status:_status(file)),
+              const Spacer(),
+              Flexible(child:_buttons(context,file)),
+            ]),
           ]))
         ]);
       }));
@@ -1918,7 +1922,11 @@ class CloudInboxCard extends StatelessWidget {
                 Expanded(child:Column(
                   crossAxisAlignment:CrossAxisAlignment.start,children:[
                     details,const SizedBox(height:7),
-                    Align(alignment:Alignment.centerRight,child:actions),
+                    Row(children:[
+                      TransferCardTime(created:file.created,status:status),
+                      const Spacer(),
+                      Flexible(child:actions),
+                    ]),
                   ])),
               ]);
             })),
