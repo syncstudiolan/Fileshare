@@ -15,7 +15,7 @@ void main() {
   }
 
   testWidgets('Incoming mobile card leaves space on the right', (tester) async {
-    await tester.view.setPhysicalSize(const Size(400,800));
+    tester.view.physicalSize=const Size(400,800);
     tester.view.devicePixelRatio=1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -26,7 +26,7 @@ void main() {
   });
 
   testWidgets('Outgoing mobile card leaves space on the left', (tester) async {
-    await tester.view.setPhysicalSize(const Size(400,800));
+    tester.view.physicalSize=const Size(400,800);
     tester.view.devicePixelRatio=1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
