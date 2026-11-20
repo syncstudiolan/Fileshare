@@ -7,11 +7,12 @@ import 'file_share_text.dart';
 class TextTransferCard extends StatefulWidget {
   const TextTransferCard({super.key,required this.readMessage,
     required this.onDelete,required this.incoming,
-    required this.source,required this.created,this.status});
+    required this.source,required this.created,required this.wrap,this.status});
   final Future<File> Function() readMessage;
   final Future<void> Function() onDelete;
   final bool incoming;
   final String source;
+  final Widget Function(Widget content) wrap;
   final DateTime created;
   final Widget? status;
   @override State<TextTransferCard> createState()=>_TextTransferCardState();
@@ -47,13 +48,7 @@ class _TextTransferCardState extends State<TextTransferCard> {
     }
   }
   @override Widget build(BuildContext context){
-    final scheme=Theme.of(context).colorScheme;
-    return Align(alignment:widget.incoming?Alignment.centerLeft:Alignment.centerRight,
-      child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:510),
-        child:Card(color:widget.incoming?scheme.surfaceContainer:scheme.primaryContainer,
-          shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(20)),
-          child:Padding(padding:const EdgeInsets.all(14),
-            child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+    return widget.wrap(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
               Row(children:[
                 const Icon(Icons.chat_bubble_outline,size:19),
                 const SizedBox(width:8),
@@ -85,8 +80,6 @@ class _TextTransferCardState extends State<TextTransferCard> {
                     const SizedBox(width:4),widget.status!,
                   ]
                 ])),
-            ])),
-        )),
-    );
+            ]));
   }
 }
