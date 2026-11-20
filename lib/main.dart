@@ -856,8 +856,7 @@ class _LoginPageState extends State<LoginPage> {
     if(_busy)return;
     setState((){_busy=true;_error=null;});
     try{await PersonalCloud.instance.linkAccountDirectory();
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content:Text('Account linked to your personal Cloudflare Worker')));
+      if(mounted) FileShareTopNotice.show(context,'Account linked to your personal Cloudflare Worker');
     }
     catch(e){if(mounted)setState(()=>_error=e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
@@ -1340,8 +1339,7 @@ class FileCardOpenRouter {
           'open',{'path':path});
       } on PlatformException catch(e) {
         if(context.mounted){
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:Text('iPhone PDF editor could not open: ${e.message ?? e.code}')));
+          FileShareTopNotice.show(context,'iPhone PDF editor could not open: ${e.message ?? e.code}');
         }
       }
       return true;
@@ -1364,8 +1362,7 @@ class FileCardOpenRouter {
           'theme':theme,
         });
     }catch(e){
-      if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text('Cannot open this document in PDF Tools: $e')));
+      if(context.mounted)FileShareTopNotice.show(context,'Cannot open this document in PDF Tools: $e');
     }
     return true;
   }
@@ -1466,7 +1463,13 @@ class TransferBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     // Unlike the old full-width cards, opposing sides stay visibly separated.
-    final maxWidth = width >= 760 ? 610.0 : width * .91;
+    // Match the approved reference: received has a visible RIGHT gutter;
+    // sent has a visible LEFT gutter. The color alone is not the cue.
+    // Use a fixed width (rather than only maxWidth) so both compact and
+    // short text bubbles retain a visibly directional alignment.
+    final maxWidth = width >= 760
+        ? 610.0
+        : width * (width < 360 ? .86 : .79);
     final dark = FileTheme.dark(context);
     final fill = dark
       ? (incoming ? const Color(0xFF542947) : const Color(0xFF39315D))
@@ -1474,8 +1477,8 @@ class TransferBubble extends StatelessWidget {
     final accent = incoming ? FileTheme.pink : FileTheme.violet;
     return Align(
       alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
+      child: SizedBox(
+        width: maxWidth,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
           child: CustomPaint(
@@ -3475,8 +3478,7 @@ class FeatureDesignPage extends StatelessWidget {
                   await SharedPreferencesAsync().setBool('windows_autostart_decided',true);
                 }
                 catch (e) {
-                  if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(
-                    SnackBar(content: Text('Windows startup error: $e')));
+                  if (c.mounted) FileShareTopNotice.show(c,'Windows startup error: $e');
                 }
               },
             ),
@@ -3929,9 +3931,7 @@ class _MyQrPageState extends State<MyQrPage> {
                   Switch.adaptive(value:pref.enabled,
                     onChanged:(value){
                       unawaited(pref.setEnabled(value).catchError((Object e){
-                        if(context.mounted)ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content:Text(
-                            'Could not save Cloud setting: $e')));
+                        if(context.mounted)FileShareTopNotice.show(context,'Could not save Cloud setting: $e');
                       }));
                     }),
                 ]);
