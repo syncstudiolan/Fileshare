@@ -417,10 +417,8 @@ async function ownerApi(request, env, url) {
     return json({ok: true, qr: code.token,
       url: new URL('/q/' + code.token, request.url).href});
   }
-  if (url.pathname === '/v1/owner/qr' && request.method === 'DELETE') {
-    await env.DB.prepare('UPDATE qr_codes SET active=0 WHERE active=1').run();
-    return json({ok: true});
-  }
+  // Guest QR has no disable endpoint: the Auto Cloud Transfer preference
+  // affects only outgoing logged-in device transfers, never Guest QR uploads.
   if (url.pathname === '/v1/owner/qr/regenerate' && request.method === 'POST') {
     await env.DB.prepare('UPDATE qr_codes SET active=0 WHERE active=1').run();
     const token = id() + id();
