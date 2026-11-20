@@ -62,12 +62,33 @@ class _TextTransferCardState extends State<TextTransferCard> {
                     style:const TextStyle(fontSize:14)))),
               const SizedBox(height:8),
               Row(mainAxisAlignment:MainAxisAlignment.end,children:[
-                TextButton.icon(onPressed:()=>unawaited(_copy()),
-                  icon:const Icon(Icons.copy,size:16),
-                  label:const Text('Copy Text')),
-                TextButton.icon(onPressed:()=>unawaited(widget.onDelete()),
-                  icon:const Icon(Icons.delete_outline,size:16),
-                  label:const Text('Delete Text')),
+                Flexible(child:TextButton.icon(
+                  style:TextButton.styleFrom(
+                    visualDensity:VisualDensity.compact,
+                    elevation:3,
+                    padding:const EdgeInsets.symmetric(horizontal:6,vertical:7),
+                    backgroundColor:Theme.of(context).brightness==Brightness.dark
+                      ?const Color(0xFF205464):const Color(0xFFD7EBF3),
+                    foregroundColor:Theme.of(context).brightness==Brightness.dark
+                      ?const Color(0xFFEAF9FC):const Color(0xFF0A5262),
+                    textStyle:const TextStyle(fontSize:11,fontWeight:FontWeight.w600)),
+                  onPressed:()=>unawaited(_copy()),
+                  icon:const Icon(Icons.copy,size:15),
+                  label:const FittedBox(child:Text('Copy Text')))),
+                const SizedBox(width:8),
+                Flexible(child:TextButton.icon(
+                  style:TextButton.styleFrom(
+                    visualDensity:VisualDensity.compact,
+                    elevation:3,
+                    padding:const EdgeInsets.symmetric(horizontal:6,vertical:7),
+                    backgroundColor:Theme.of(context).brightness==Brightness.dark
+                      ?const Color(0xFF205464):const Color(0xFFD7EBF3),
+                    foregroundColor:Theme.of(context).brightness==Brightness.dark
+                      ?const Color(0xFFEAF9FC):const Color(0xFF0A5262),
+                    textStyle:const TextStyle(fontSize:11,fontWeight:FontWeight.w600)),
+                  onPressed:()=>unawaited(widget.onDelete()),
+                  icon:const Icon(Icons.delete_outline,size:15),
+                  label:const FittedBox(child:Text('Delete Text')))),
               ]),
               Align(alignment:Alignment.centerRight,
                 child:Row(mainAxisSize:MainAxisSize.min,children:[
