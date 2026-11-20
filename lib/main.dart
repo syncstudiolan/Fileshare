@@ -1862,54 +1862,65 @@ class CloudInboxCard extends StatelessWidget {
               fontWeight: FontWeight.w700, fontSize: 12))),
           if (grouped) Text('${items.length} files',
             style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
-          const SizedBox(width:4),
-          TransferCardTime(created:items.first.created,
-            status:Icon(device&&items.first.receivedAt==null
-              ?Icons.done_rounded:Icons.done_all_rounded,size:15,color:FileTheme.pink)),
+
         ]),
-        for (final file in items.take(5))
-          Padding(padding: const EdgeInsets.only(top: 8),
-            child: LayoutBuilder(builder: (context, constraints) {
-              final side = constraints.maxWidth < 290 ? 66.0 : 78.0;
-              return Row(crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(width: side, height: side,
-                    child: CloudImageThumbnail(
-                      key: ValueKey('qr-thumb-'+file.id),
-                      file: file, onOpen: () => onPreview(file))),
-                  const SizedBox(width: 10),
-                  Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      InkWell(onTap: () => onPreview(file),
-                        child: Text(file.name, maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: FileTheme.foreground(context),
-                            fontWeight: FontWeight.w700, fontSize: 13))),
-                      const SizedBox(height: 3),
-                      Text(_formatBytes(file.size),
-                        style: TextStyle(color: FileTheme.muted(context),
-                          fontSize: 11)),
-                      const SizedBox(height: 7),
-                      Align(alignment: Alignment.centerRight,
-                        child: TransferCardActions(actions: [
-                          if(!sent) Stack(clipBehavior: Clip.none, children: [
-                            action(device?'Download received cloud file':'Download received QR file', Icons.download_rounded,
-                              () => onSave(file)),
-                            Positioned(top: -8, right: -4,
-                              child: NewDownloadBadge(id: 'cloud_${file.id}')),
-                          ]),
-                          action(device?'Delete cloud file':'Delete QR file', Icons.delete_outline_rounded,
-                            () => onDelete(file)),
-                          action(device?'Share cloud file externally':'Share QR file externally', Icons.ios_share_rounded,
-                            () => onShare(file)),
-                          action('Open in Tools', Icons.auto_fix_high_rounded,
-                            () => onTools(file)),
-                        ])),
-                    ],
-                  )),
+        for(final file in items.take(5))
+          Padding(padding:const EdgeInsets.only(top:8),
+            child:LayoutBuilder(builder:(context,constraints){
+              final compact=constraints.maxWidth<460;
+              final side=compact?74.0:88.0;
+              final preview=SizedBox(width:side,height:side,
+                child:CloudImageThumbnail(
+                  key:ValueKey('qr-thumb-'+file.id),
+                  file:file,onOpen:()=>onPreview(file)));
+              final details=Column(crossAxisAlignment:CrossAxisAlignment.start,
+                children:[
+                  InkWell(onTap:()=>onPreview(file),
+                    child:Text(file.name,maxLines:2,
+                      overflow:TextOverflow.ellipsis,
+                      style:TextStyle(color:FileTheme.foreground(context),
+                        fontWeight:FontWeight.w700,fontSize:13))),
+                  const SizedBox(height:3),
+                  Text(_formatBytes(file.size),
+                    style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
                 ]);
+              final actions=TransferCardActions(actions:[
+                if(!sent)Stack(clipBehavior:Clip.none,children:[
+                  action(device?'Download received cloud file':'Download received QR file',
+                    Icons.download_rounded,()=>onSave(file)),
+                  Positioned(top:-8,right:-4,
+                    child:NewDownloadBadge(id:'cloud_${file.id}')),
+                ]),
+                action(device?'Delete cloud file':'Delete QR file',
+                  Icons.delete_outline_rounded,()=>onDelete(file)),
+                action(device?'Share cloud file externally':'Share QR file externally',
+                  Icons.ios_share_rounded,()=>onShare(file)),
+                action('Open in Tools',Icons.auto_fix_high_rounded,
+                  ()=>onTools(file)),
+              ]);
+              final status=Icon(device&&file.receivedAt==null
+                  ?Icons.done_rounded:Icons.done_all_rounded,
+                size:15,color:FileTheme.pink);
+              if(compact)return Column(
+                crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    preview,const SizedBox(width:10),Expanded(child:details),
+                  ]),
+                  const SizedBox(height:4),
+                  Row(children:[
+                    TransferCardTime(created:file.created,status:status),
+                    const Spacer(),
+                    Flexible(child:actions),
+                  ]),
+                ]);
+              return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                preview,const SizedBox(width:10),
+                Expanded(child:Column(
+                  crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    details,const SizedBox(height:7),
+                    Align(alignment:Alignment.centerRight,child:actions),
+                  ])),
+              ]);
             })),
         if (items.length > 5)
           Padding(padding: const EdgeInsets.only(top: 5),
