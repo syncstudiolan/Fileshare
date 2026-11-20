@@ -8,11 +8,11 @@
     "version": "0.1.0"
   },
   "ios": {
-    "build": 45,
+    "build": 47,
     "notes": "Unsigned iOS release \u2014 re-sign with AppleJR using the original certificate/profile and bundle ID.",
-    "sha256": "a514d12248ce8cdec9b8a64082bafe27ce2f450c7d9ab546f37a4b3f02112fb9",
-    "size": 30251636,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-ios-unsigned-build-45/FileShare-iOS-UNSIGNED.ipa",
+    "sha256": "1abf0ca2c104e1da024c57699caeb19f27c83984911fc6e2c278ef85d29322c3",
+    "size": 30230919,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-ios-unsigned-build-47/FileShare-iOS-UNSIGNED.ipa",
     "version": "0.1.0"
   },
   "schema": 1,
