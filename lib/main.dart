@@ -2492,10 +2492,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   /// durably copied them, never the user's original or image history.
   Future<void> _cleanupEditedCartSnapshots(Iterable<File> sources) async {
     final root=await getApplicationSupportDirectory();
-    final prefix=root.path+Platform.pathSeparator+'image_editing_cart'+
-      Platform.pathSeparator;
+    // Only our transient transfer snapshots; never remove the original,
+    // received LAN/Cloud file, or editor history. LAN enqueue has already
+    // durably copied the file before this cleanup is called.
+    final prefixes=[
+      for(final folder in ['image_editing_cart','signature_cart','editor_cart_versions'])
+        root.path+Platform.pathSeparator+folder+Platform.pathSeparator,
+    ];
     for(final file in sources){
-      if(!file.absolute.path.startsWith(prefix))continue;
+      if(!prefixes.any((prefix)=>file.absolute.path.startsWith(prefix)))continue;
       try{if(await file.exists())await file.delete();}catch(_){}
     }
   }
