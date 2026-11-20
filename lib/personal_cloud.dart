@@ -539,17 +539,35 @@ class PersonalCloud extends ChangeNotifier {
           job.progress=fraction;
           notifyListeners();
         });
+      // Server confirmed R2 upload. The local Cart snapshot is disposable;
+      // the original edited project/source remains untouched.
       job.progress=1;
       job.uploading=false;
       job.failed=false;
       notifyListeners();
-      await refreshFiles();
+      try{
+        await _deleteUploadedEditorSnapshot(job.file);
+      }catch(e){debugPrint('Cloud editor snapshot cleanup skipped: $e');}
+      // Inbox refresh failure must NOT mislabel a committed R2 upload as
+      // failed and let Retry create a duplicate transfer.
+      try{await refreshFiles();}catch(e){
+        debugPrint('Post-upload inbox reconciliation deferred: $e');
+      }
     }catch(e){
       job.uploading=false;
       job.failed=true;
       job.error=e.toString();
       notifyListeners();
     }
+  }
+
+  Future<void> _deleteUploadedEditorSnapshot(File file) async {
+    final root=await getApplicationSupportDirectory();
+    final folders=['editor_cart_versions','image_editing_cart','signature_cart'];
+    final path=file.absolute.path;
+    if(!folders.any((folder)=>path.startsWith(
+        root.path+Platform.pathSeparator+folder+Platform.pathSeparator)))return;
+    if(await file.exists())await file.delete();
   }
 
   /// A double tick requires the receiver to have explicitly saved the
