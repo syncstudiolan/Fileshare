@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check cloudflare/worker.js
-          node --test cloudflare/device_receipt.test.mjs cloudflare/inbox_events.test.mjs cloudflare/guest_instant.test.mjs
+          node --test cloudflare/device_receipt.test.mjs cloudflare/inbox_events.test.mjs cloudflare/guest_instant.test.mjs cloudflare/auto_cloud_midnight.test.mjs
           python3 - <<'PY'
           import sqlite3
           connection=sqlite3.connect(':memory:')
