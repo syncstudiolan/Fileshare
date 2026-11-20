@@ -1891,8 +1891,9 @@ class CloudInboxCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Align(alignment: Alignment.centerRight,
                         child: TransferCardTime(created: file.created,
-                          status: const Icon(Icons.done_all_rounded,
-                            size: 15, color: FileTheme.pink))),
+                          status: Icon(device && file.receivedAt==null
+                              ?Icons.done_rounded:Icons.done_all_rounded,
+                            size:15,color:FileTheme.pink))),
                     ],
                   )),
                 ]);
@@ -2036,7 +2037,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
   Widget _cloudUploadCard(CloudUploadJob job) {
-    final progress=job.progress.clamp(0.0,1.0);
+    final progress=job.progress.clamp(0.0,1.0).toDouble();
     return TransferBubble(
       incoming:false,
       child:Row(children:[
@@ -2670,6 +2671,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final result = await TransferDownloads.instance.export(downloaded, entry.name);
       if (result == null) return;
       await TransferDownloads.instance.markSaved('cloud_${entry.id}');
+      if(entry.deviceTransfer){
+        try{
+          await PersonalCloud.instance.acknowledgeDeviceReceipt(entry,appLan.deviceId);
+        }catch(e){debugPrint('Delivery receipt failed: $e');}
+      }
       _snack(Platform.isAndroid
         ? 'Downloaded to ${_isCloudImage(entry.name) ? 'Gallery / DCIM' : 'Downloads'}'
         : 'Saved: $result');
