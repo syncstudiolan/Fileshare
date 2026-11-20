@@ -364,28 +364,31 @@ class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver
 }
 
 class FileTheme {
-  static const pink = Color(0xFFE84D9F);
-  static const violet = Color(0xFF765ADB);
-  static const night = Color(0xFF171528);
+  // Product palette derived from the approved blue/teal raised-surface design.
+  // Retained identifiers keep existing tool widgets using the same palette.
+  static const pink = Color(0xFF087F87);
+  static const violet = Color(0xFF006977);
+  static const night = Color(0xFF071B27);
+  static const turquoise = Color(0xFF009A9C);
 
   static bool dark(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark;
 
   static Color surface(BuildContext context) =>
-      dark(context) ? const Color(0xFF2C2744) : const Color(0xFFFFFBFF);
+      dark(context) ? const Color(0xFF123846) : const Color(0xFFD6E8EF);
 
   static Color foreground(BuildContext context) =>
-      dark(context) ? const Color(0xFFF7F1FF) : const Color(0xFF251A3C);
+      dark(context) ? const Color(0xFFEAF9FC) : const Color(0xFF102A38);
 
   static Color muted(BuildContext context) =>
-      dark(context) ? const Color(0xFFBBB0D0) : const Color(0xFF6D6484);
+      dark(context) ? const Color(0xFFABC9D0) : const Color(0xFF526F7B);
 
   static Gradient background(BuildContext context) => LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: dark(context)
-            ? const [Color(0xFF171528), Color(0xFF2B2044), Color(0xFF19182D)]
-            : const [Color(0xFFF5DDF4), Color(0xFFE7E3FD), Color(0xFFFFF4FA)],
+            ? const [Color(0xFF061A24), Color(0xFF123341), Color(0xFF071C29)]
+            : const [Color(0xFFC5D9E5), Color(0xFFD6E6EE), Color(0xFFBED4E1)],
       );
 
   static ThemeData build(Brightness brightness) {
@@ -393,14 +396,14 @@ class FileTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: violet,
+        seedColor: turquoise,
         brightness: brightness,
       ),
-      scaffoldBackgroundColor: dark ? night : const Color(0xFFF8F0FA),
+      scaffoldBackgroundColor: dark ? night : const Color(0xFFCBDDE7),
       appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark ? const Color(0xFF302B49) : Colors.white,
+        fillColor: dark ? const Color(0xFF163B49) : const Color(0xFFD7E8EF),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
@@ -412,9 +415,7 @@ class FileTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
   }
@@ -1030,22 +1031,37 @@ const mockTransfers = <MockTransfer>[
 ];
 
 class DesignPanel extends StatelessWidget {
-  const DesignPanel({super.key, required this.child, this.padding = const EdgeInsets.all(16)});
+  const DesignPanel({super.key, required this.child,
+    this.padding = const EdgeInsets.all(16)});
   final Widget child;
   final EdgeInsets padding;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: padding,
-    decoration: BoxDecoration(
-      color: FileTheme.surface(context).withValues(alpha: .90),
-      border: Border.all(color: FileTheme.violet.withValues(alpha: .11)),
-      borderRadius: BorderRadius.circular(24),
-      boxShadow: [BoxShadow(color: FileTheme.violet.withValues(alpha: .085),
-        offset: const Offset(0, 5), blurRadius: 20)],
-    ),
-    child: child,
-  );
+  Widget build(BuildContext context) {
+    final dark=FileTheme.dark(context);
+    return Container(
+      padding:padding,
+      decoration:BoxDecoration(
+        gradient:LinearGradient(
+          begin:Alignment.topLeft,end:Alignment.bottomRight,
+          colors:dark
+            ? const [Color(0xFF1C4654),Color(0xFF113140),Color(0xFF092430)]
+            : const [Color(0xFFE9F5F9),Color(0xFFD3E7EF),Color(0xFFB9D4E1)],
+        ),
+        border:Border.all(
+          color:dark?const Color(0xFF468895):const Color(0xFFF6FDFF),
+          width:1.25),
+        borderRadius:BorderRadius.circular(24),
+        boxShadow:[
+          BoxShadow(color:Colors.black.withValues(alpha:dark?.46:.19),
+            offset:const Offset(0,9),blurRadius:18,spreadRadius:-3),
+          BoxShadow(color:const Color(0xFF6AA3B2).withValues(alpha:dark?.15:.25),
+            offset:const Offset(-2,-2),blurRadius:8),
+        ],
+      ),
+      child:child,
+    );
+  }
 }
 
 class DesignTag extends StatelessWidget {
@@ -1454,39 +1470,36 @@ class SelectedFileToolsPage extends StatelessWidget {
 /* Compact, direction-aware transfer bubble used by LAN and Guest QR.
    Draw the side tail with the card itself so it scales on both platforms. */
 class TransferBubble extends StatelessWidget {
-  const TransferBubble({super.key, required this.incoming,
-    required this.child});
+  const TransferBubble({super.key,required this.incoming,required this.child});
   final bool incoming;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    // Unlike the old full-width cards, opposing sides stay visibly separated.
-    // Match the approved reference: received has a visible RIGHT gutter;
-    // sent has a visible LEFT gutter. The color alone is not the cue.
-    // Use a fixed width (rather than only maxWidth) so both compact and
-    // short text bubbles retain a visibly directional alignment.
-    final maxWidth = width >= 760
-        ? 610.0
-        : width * (width < 360 ? .86 : .79);
-    final dark = FileTheme.dark(context);
-    final fill = dark
-      ? (incoming ? const Color(0xFF542947) : const Color(0xFF39315D))
-      : (incoming ? const Color(0xFFFFDDED) : const Color(0xFFF0E7FF));
-    final accent = incoming ? FileTheme.pink : FileTheme.violet;
+    final width=MediaQuery.sizeOf(context).width;
+    final compact=width<760;
+    // Received intentionally wider than Sent. Opposing gutters clearly
+    // distinguish direction even before reading the caption or color.
+    final cardWidth=compact
+        ? width*(incoming?(width<360?.84:.86):(width<360?.73:.75))
+        : (incoming?610.0:565.0);
+    final dark=FileTheme.dark(context);
+    final fill=dark
+        ? (incoming?const Color(0xFF153D50):const Color(0xFF075052))
+        : (incoming?const Color(0xFFD0E4F0):const Color(0xFFBEE3E6));
+    final accent=incoming?FileTheme.violet:FileTheme.turquoise;
     return Align(
-      alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
-      child: SizedBox(
-        width: maxWidth,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: CustomPaint(
-            painter: _TransferBubblePainter(incoming, fill, accent),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                incoming ? 14 : 10, 10, incoming ? 10 : 14, 10),
-              child: child),
+      alignment:incoming?Alignment.centerLeft:Alignment.centerRight,
+      child:SizedBox(
+        width:cardWidth,
+        child:Padding(
+          padding:const EdgeInsets.symmetric(vertical:7),
+          child:CustomPaint(
+            painter:_TransferBubblePainter(incoming,fill,accent),
+            child:Padding(
+              padding:EdgeInsets.fromLTRB(incoming?13:20,13,
+                incoming?20:13,13),
+              child:child),
           ),
         ),
       ),
@@ -1495,60 +1508,91 @@ class TransferBubble extends StatelessWidget {
 }
 
 class _TransferBubblePainter extends CustomPainter {
-  const _TransferBubblePainter(this.incoming, this.fill, this.accent);
+  const _TransferBubblePainter(this.incoming,this.fill,this.accent);
   final bool incoming;
-  final Color fill, accent;
+  final Color fill,accent;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final left = incoming ? 10.0 : 0.0;
-    final right = incoming ? size.width : size.width - 10.0;
-    final rect = RRect.fromRectAndRadius(
-      Rect.fromLTRB(left, 0, right, size.height),
-      const Radius.circular(23));
-    final path = Path()..addRRect(rect);
-    final mid = size.height > 100 ? 45.0 : size.height * .34;
-    if (incoming) {
-      path.moveTo(left + 1, mid - 12);
-      path.lineTo(0, mid);
-      path.lineTo(left + 1, mid + 12);
-    } else {
-      path.moveTo(right - 1, mid - 12);
-      path.lineTo(size.width, mid);
-      path.lineTo(right - 1, mid + 12);
+  void paint(Canvas canvas,Size size) {
+    // Like the approved reference: received notch on the right, sent on left.
+    final left=incoming?0.0:10.0;
+    final right=incoming?size.width-10.0:size.width;
+    final rect=RRect.fromRectAndRadius(
+      Rect.fromLTRB(left,0,right,size.height),const Radius.circular(25));
+    final path=Path()..addRRect(rect);
+    final mid=size.height>95?45.0:size.height*.35;
+    if(incoming) {
+      path.moveTo(right-1,mid-12);
+      path.lineTo(size.width,mid);
+      path.lineTo(right-1,mid+12);
+    }else{
+      path.moveTo(left+1,mid-12);
+      path.lineTo(0,mid);
+      path.lineTo(left+1,mid+12);
     }
     path.close();
-    canvas.drawShadow(path, accent.withValues(alpha: .29), 11, false);
-    canvas.drawPath(path, Paint()..color = fill);
-    canvas.drawPath(path, Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.35
-      ..color = accent.withValues(alpha: .8));
+    // Raised 3D depth, subtle bevel and cool top-left highlight.
+    canvas.drawShadow(path,Colors.black.withValues(alpha:.42),13,false);
+    canvas.drawShadow(path,accent.withValues(alpha:.24),6,false);
+    final gradient=LinearGradient(
+      begin:Alignment.topLeft,end:Alignment.bottomRight,
+      colors:[
+        Color.lerp(fill,Colors.white,.20)!,
+        fill,
+        Color.lerp(fill,Colors.black,.14)!,
+      ]);
+    canvas.drawPath(path,Paint()..shader=gradient.createShader(
+      Rect.fromLTWH(0,0,size.width,size.height)));
+    canvas.drawPath(path,Paint()
+      ..style=PaintingStyle.stroke
+      ..strokeWidth=1.5
+      ..color=accent.withValues(alpha:.72));
+    final glint=Path()
+      ..moveTo(left+23,2.3)
+      ..lineTo(right-24,2.3);
+    canvas.drawPath(glint,Paint()
+      ..color=Colors.white.withValues(alpha:.66)
+      ..strokeWidth=1.7
+      ..strokeCap=StrokeCap.round
+      ..style=PaintingStyle.stroke);
   }
 
   @override
-  bool shouldRepaint(covariant _TransferBubblePainter old) =>
-    old.incoming != incoming || old.fill != fill || old.accent != accent;
+  bool shouldRepaint(covariant _TransferBubblePainter old)=>
+    old.incoming!=incoming||old.fill!=fill||old.accent!=accent;
 }
 
 class TransferCardActions extends StatelessWidget {
-  const TransferCardActions({super.key, required this.actions});
+  const TransferCardActions({super.key,required this.actions});
   final List<Widget> actions;
   @override
-  Widget build(BuildContext context) => Wrap(
-    alignment: WrapAlignment.end,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    spacing: 1,
-    runSpacing: 0,
-    children: [
-      for (var i = 0; i < actions.length; i++) ...[
-        if (i > 0) SizedBox(height: 19, child: VerticalDivider(
-          width: 7, thickness: 1,
-          color: FileTheme.pink.withValues(alpha: .38))),
-        actions[i],
+  Widget build(BuildContext context) => Row(
+    mainAxisSize:MainAxisSize.min,
+    mainAxisAlignment:MainAxisAlignment.end,
+    children:[
+      for(var i=0;i<actions.length;i++)...[
+        if(i>0)Container(
+          width:1,height:18,
+          margin:const EdgeInsets.symmetric(horizontal:2),
+          color:FileTheme.violet.withValues(alpha:.35)),
+        DecoratedBox(
+          decoration:BoxDecoration(
+            gradient:LinearGradient(
+              begin:Alignment.topLeft,end:Alignment.bottomRight,
+              colors:FileTheme.dark(context)
+                ?const [Color(0xFF245768),Color(0xFF103A47)]
+                :const [Color(0xFFE4F3F8),Color(0xFFB7D3DE)]),
+            borderRadius:BorderRadius.circular(10),
+            border:Border.all(
+              color:FileTheme.dark(context)
+                ?const Color(0xFF367987):const Color(0xFFEDF9FC)),
+            boxShadow:[BoxShadow(
+              color:Colors.black.withValues(alpha:.16),
+              offset:const Offset(0,3),blurRadius:5)],
+          ),
+          child:actions[i]),
       ],
-    ],
-  );
+    ]);
 }
 
 class TransferCardTime extends StatelessWidget {
@@ -2898,13 +2942,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 decoration:BoxDecoration(
                   borderRadius:BorderRadius.circular(20),
                   color:preference.enabled
-                    ?const Color(0xFFC4A6FF):FileTheme.violet.withValues(alpha:.20),
+                    ?const Color(0xFF0BA4A8):FileTheme.violet.withValues(alpha:.20),
                   border:Border.all(color:FileTheme.violet.withValues(alpha:.55))),
                 child:Align(
                   alignment:preference.enabled?Alignment.centerRight:Alignment.centerLeft,
                   child:Container(width:18,height:18,decoration:BoxDecoration(
                     shape:BoxShape.circle,color:preference.enabled
-                      ?const Color(0xFF392B60):FileTheme.muted(context)))))),
+                      ?const Color(0xFF063B45):FileTheme.muted(context)))))),
           ),
         ]);
         return Row(children:[
