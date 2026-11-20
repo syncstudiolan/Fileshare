@@ -9,11 +9,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 1,
-    "notes": "Updates are published after a verified Windows installer release.",
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "size": 1,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/placeholder-windows/FileShare-Windows-Setup.exe",
+    "build": 512,
+    "notes": "fix(ios-ci): skip broadcast discovery in injected LAN unit tests",
+    "sha256": "5f9132b4bb1c85a65fe11b243867fdce240f4d786ab365e631045868638f83b9",
+    "size": 19245529,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-512/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
