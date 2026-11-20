@@ -15,6 +15,7 @@ import 'package:local_notifier/local_notifier.dart';
 import 'lan_engine.dart';
 import 'transfer_route.dart';
 import 'auto_cloud_transfer_preference.dart';
+import 'guest_qr_print.dart';
 import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
@@ -3756,6 +3757,11 @@ class _MyQrPageState extends State<MyQrPage> {
                       onPressed:()=>SharePlus.instance.share(ShareParams(text:link)),
                       icon:const Icon(Icons.share_outlined),
                       label:const Text('Share QR')),
+                    OutlinedButton.icon(
+                      onPressed:_busy?null:()=>_run(
+                        ()=>printGuestQr(link)),
+                      icon:const Icon(Icons.print_rounded),
+                      label:const Text('Print QR')),
                     OutlinedButton.icon(
                       onPressed:_busy?null:()=>_run(()=>cloud.regenerateQr()),
                       icon:const Icon(Icons.refresh_rounded),
