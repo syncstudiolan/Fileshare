@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 535,
-    "notes": "Merge PR #14: repair Android Gradle Maven dependency resolution",
-    "sha256": "211e61e83304edb1559527a9d4fb556ca18f032a81c350523c66e5284b92c93f",
-    "size": 19234405,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-535/FileShare-Windows-Setup.exe",
+    "build": 538,
+    "notes": "Merge PR #15: teal 3D reference dashboard, compact filters and directional cards",
+    "sha256": "99df3f3a55c3b3bd2782b8107b6b2c8285feaeb1707a1a65c6fe84395229aa58",
+    "size": 19238814,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-538/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
