@@ -567,7 +567,6 @@ class PersonalCloud extends ChangeNotifier {
       await _call('POST','/v1/owner/transfer/'+id+'/complete');
       onProgress?.call(1);
     }
-    await refreshFiles();
   }
 
   Future<void> _uploadDevicePart(File file,String id,int offset,int end,
