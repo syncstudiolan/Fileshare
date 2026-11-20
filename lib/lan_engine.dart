@@ -180,7 +180,10 @@ class LanEngine extends ChangeNotifier {
     // iOS rejects raw UDP broadcast without Apple's restricted multicast
     // entitlement. Bonjour is the system-supported discovery mechanism.
     // Android keeps the UDP v1 discovery for existing older clients.
-    if (!Platform.isIOS) try {
+    // Isolated unit tests need only the TCP queue/receiver. Broadcasting on
+    // hosted macOS runners can fail with 'No route to host' even while the
+    // local TCP port is usable. Production discovery is unchanged.
+    if (testSupportDirectory == null && !Platform.isIOS) try {
       _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
         discoveryPort, reuseAddress: true);
       _discovery!.broadcastEnabled = true;
