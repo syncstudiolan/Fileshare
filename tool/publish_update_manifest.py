@@ -2,7 +2,8 @@
 """Write a verified release to main/update_manifest.json after gh release create.
 
 Only the GitHub release workflow calls this. The manifest uses a single
-platform entry per signed APK/Windows installer; SHA-256 is computed on
+platform entry per signed APK, Windows installer, or unsigned iOS IPA;
+SHA-256 is computed on
 the exact published artifact. Never store GitHub tokens inside the repo.
 """
 from __future__ import annotations
@@ -39,7 +40,7 @@ def request(method: str, payload: dict | None = None):
 
 def publish(platform: str, version: str, build: int,
             tag: str, artifact: Path, notes: str) -> None:
-    if platform not in {"android", "windows"}:
+    if platform not in {"android", "windows", "ios"}:
         raise ValueError("unsupported platform")
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", version):
         raise ValueError("invalid app version")
@@ -47,7 +48,7 @@ def publish(platform: str, version: str, build: int,
         raise ValueError("invalid release tag")
     if not artifact.is_file() or artifact.stat().st_size < 1024:
         raise ValueError("release artifact missing or too small")
-    expected = "apk" if platform == "android" else "exe"
+    expected = {"android": "apk", "windows": "exe", "ios": "ipa"}[platform]
     if artifact.suffix.lower() != f".{expected}":
         raise ValueError("wrong release extension")
     sha = hashlib.file_digest(artifact.open("rb"), "sha256").hexdigest()
