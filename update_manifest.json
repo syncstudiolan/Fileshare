@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 516,
-    "notes": "Merge PR #13: visible Windows updates, AppleJR iOS checks and Cloud transfer repair",
-    "sha256": "459336d50cf331713bcb3ace6f94126bb0a6988b0a936e4f81a5e71e9b708c27",
-    "size": 19244656,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-516/FileShare-Windows-Setup.exe",
+    "build": 535,
+    "notes": "Merge PR #14: repair Android Gradle Maven dependency resolution",
+    "sha256": "211e61e83304edb1559527a9d4fb556ca18f032a81c350523c66e5284b92c93f",
+    "size": 19234405,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-535/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
