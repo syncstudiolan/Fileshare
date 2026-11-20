@@ -34,8 +34,9 @@ jobs:
         run: |
           flutter config --enable-ios
           flutter create --platforms=ios --project-name file_share .
-          python3 -m pip install --quiet Pillow
-          python3 tool/generate_brand_assets.py
+          python3 -m venv .ios-build-venv
+          .ios-build-venv/bin/python -m pip install --quiet Pillow
+          .ios-build-venv/bin/python tool/generate_brand_assets.py
           flutter pub get
           if ! ruby -e 'require "xcodeproj"' >/dev/null 2>&1; then sudo gem install xcodeproj --no-document; fi
           python3 tool/ios/install_native_pdf.py
