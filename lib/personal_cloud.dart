@@ -336,6 +336,7 @@ class PersonalCloud extends ChangeNotifier {
     _inboxReconnect=null;
     _inboxEventDebounce?.cancel();
     _inboxEventDebounce=null;
+    _inboxRefreshPending=false;
     final old=_inboxSocket;
     _inboxSocket=null;
     unawaited(_inboxSubscription?.cancel()??Future<void>.value());
