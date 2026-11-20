@@ -29,6 +29,14 @@ void main(){
     expect(UpdateRelease.fromJson(candidate(size:0),'android'),isNull);
     expect(UpdateRelease.fromJson(candidate(build:0),'android'),isNull);
   });
+  test('iOS channel accepts only trusted unsigned IPA release URLs',(){
+    final ipa=candidate(url:'${base}fileshare-ios-unsigned-build-45/FileShare-iOS-UNSIGNED.ipa');
+    expect(UpdateRelease.fromJson(ipa,'ios'),isNotNull);
+    expect(UpdateRelease.fromJson(ipa,'android'),isNull);
+    expect(UpdateRelease.fromJson(ipa,'windows'),isNull);
+    expect(UpdateRelease.fromJson(candidate(url:'https://other.example/evil.ipa'),'ios'),isNull);
+  });
+
   test('accepts windows installer only on the windows channel',(){
     final w=candidate(url:'${base}tag/FileShare-Windows-Setup.exe');
     expect(UpdateRelease.fromJson(w,'windows'),isNotNull);
