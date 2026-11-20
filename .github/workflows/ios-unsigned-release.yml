@@ -135,6 +135,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: file-share-ios-unsigned-ipa
@@ -151,3 +152,15 @@ jobs:
             --target "${{ github.sha }}" \
             --title "File Share iOS unsigned IPA" \
             --notes "UNSIGNED: must be signed with an appropriate Apple certificate/provisioning profile before installing on iPhone. Android-only native PDF tools do not run on iOS."
+      - name: Publish unsigned iOS update-check manifest (sign externally in AppleJR)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          test -s release/FileShare-iOS-UNSIGNED.ipa
+          python3 tool/publish_update_manifest.py ios "$version" ${{ github.run_number }} \
+            "fileshare-ios-unsigned-build-${{ github.run_number }}" \
+            release/FileShare-iOS-UNSIGNED.ipa "Unsigned iOS release — re-sign with AppleJR using the original certificate/profile and bundle ID."
+
