@@ -41,6 +41,21 @@ void main(){
     expect(find.text('50'),findsWidgets);
   });
 
+  testWidgets('Target KB choices expose temporary Apply control on all platforms',
+      (tester)async{
+    await tester.pumpWidget(const MaterialApp(home:SignatureEditPage()));
+    await tester.tap(find.text('Compress').last);
+    await tester.pump();
+    final apply=find.widgetWithText(FilledButton,'Apply Target Size');
+    expect(apply,findsOneWidget);
+    expect(tester.widget<FilledButton>(apply).onPressed,isNull,
+      reason:'No signature loaded yet; applying must not create a fake file');
+    await tester.tap(find.text('10 KB'));
+    await tester.pump();
+    expect(find.text('10'),findsWidgets);
+    expect(find.text('Apply Target Size'),findsOneWidget);
+  });
+
   testWidgets('Toolbox exposes both image editor and Signature Edit',
       (tester)async{
     await tester.pumpWidget(
