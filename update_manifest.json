@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 414,
-    "notes": "Merge PR #8: stable mobile photo enhancement, crop and signature filters, iOS IPA workflow",
-    "sha256": "1050be4fc4b88ae2b6948a66d1ccb2eed1a9a86db498aec508d144bf5aacd8a4",
-    "size": 114038477,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-414/FileShare-Android-ARM64-Release.apk",
+    "build": 435,
+    "notes": "ci(ios): identify macOS-only IPA build and preflight Xcode and Swift installer prerequisites",
+    "sha256": "d0e00f2e731a743106a68039068bb62cac87de65609c2cf7b183682fd61ef49d",
+    "size": 113873713,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-435/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "schema": 1,
