@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 512,
-    "notes": "fix(ios-ci): skip broadcast discovery in injected LAN unit tests",
-    "sha256": "ba74b88c9aaa02dea8d9dc71c56da311e86968596e751a74d761950d83aedafe",
+    "build": 516,
+    "notes": "Merge PR #13: visible Windows updates, AppleJR iOS checks and Cloud transfer repair",
+    "sha256": "d93fc6294548e102e379ae1eba5c4a23338226a418e85924ad0ca88750113f7e",
     "size": 114548409,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-512/FileShare-Android-ARM64-Release.apk",
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-516/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
