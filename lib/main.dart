@@ -1214,7 +1214,7 @@ class DesignFileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final sent = transfer.sent;
     final w=MediaQuery.sizeOf(context).width;
-    final maxWidth=w>740?(sent?565.0:610.0):w*(sent?.75:.86);
+    final maxWidth=w>740?(sent?565.0:610.0):w*(sent ? .75 : .86);
     return Align(
       alignment: sent ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -1486,7 +1486,7 @@ class TransferBubble extends StatelessWidget {
     // Received intentionally wider than Sent. Opposing gutters clearly
     // distinguish direction even before reading the caption or color.
     final cardWidth=compact
-        ? width*(incoming?(width<360?.84:.86):(width<360?.73:.75))
+        ? width*(incoming ? (width<360 ? .84 : .86) : (width<360 ? .73 : .75))
         : (incoming?610.0:565.0);
     final dark=FileTheme.dark(context);
     final fill=dark
