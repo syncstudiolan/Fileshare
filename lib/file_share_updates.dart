@@ -388,10 +388,10 @@ class FileShareUpdateBanner extends StatelessWidget {
                       updater.later();
                       fileShareNavigatorKey.currentState?.push(MaterialPageRoute<void>(
                         builder:(_)=>const FileShareUpdatePage()));
-                      unawaited(updater.download());
+                      if(!Platform.isIOS)unawaited(updater.download());
                     },
-                    icon:const Icon(Icons.download_rounded,size:18),
-                    label:const Text('Download now')),
+                    icon:Icon(Platform.isIOS?Icons.info_outline_rounded:Icons.download_rounded,size:18),
+                    label:Text(Platform.isIOS?'View AppleJR signing steps':'Download now')),
                   TextButton(onPressed:updater.later,
                     child:const Text('Install update later')),
                 ]),
