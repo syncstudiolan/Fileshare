@@ -1053,9 +1053,9 @@ class DesignPanel extends StatelessWidget {
           width:1.25),
         borderRadius:BorderRadius.circular(24),
         boxShadow:[
-          BoxShadow(color:Colors.black.withValues(alpha:dark?.46:.19),
+          BoxShadow(color:Colors.black.withValues(alpha:dark ? .46 : .19),
             offset:const Offset(0,9),blurRadius:18,spreadRadius:-3),
-          BoxShadow(color:const Color(0xFF6AA3B2).withValues(alpha:dark?.15:.25),
+          BoxShadow(color:const Color(0xFF6AA3B2).withValues(alpha:dark ? .15 : .25),
             offset:const Offset(-2,-2),blurRadius:8),
         ],
       ),
@@ -1213,7 +1213,8 @@ class DesignFileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sent = transfer.sent;
-    final maxWidth = MediaQuery.sizeOf(context).width > 740 ? 570.0 : 440.0;
+    final w=MediaQuery.sizeOf(context).width;
+    final maxWidth=w>740?(sent?565.0:610.0):w*(sent?.75:.86);
     return Align(
       alignment: sent ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -1221,17 +1222,21 @@ class DesignFileCard extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: FileTheme.dark(context)
-              ? (sent ? const Color(0xFF3C315E) : const Color(0xFF4B294B))
-              : (sent ? const Color(0xFFF0E7FF) : const Color(0xFFFFDDED)),
+          gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
+            colors:FileTheme.dark(context)
+              ?(sent?const [Color(0xFF126365),Color(0xFF073B45)]
+                  :const [Color(0xFF27566A),Color(0xFF113544)])
+              :(sent?const [Color(0xFFD9F0F0),Color(0xFFB1DBDF)]
+                  :const [Color(0xFFE4F3F9),Color(0xFFBDD9E8)])),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(24), topRight: const Radius.circular(23),
             bottomLeft: Radius.circular(sent ? 23 : 6),
             bottomRight: Radius.circular(sent ? 6 : 23),
           ),
-          border: Border.all(color: FileTheme.pink.withValues(alpha: .12)),
-          boxShadow: [BoxShadow(color: FileTheme.violet.withValues(alpha: .10),
-            blurRadius: 18, offset: const Offset(0, 6))],
+          border:Border.all(color:FileTheme.dark(context)
+              ?const Color(0xFF43949B):Colors.white.withValues(alpha:.90),width:1.3),
+          boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.24),
+            blurRadius:14,offset:const Offset(0,8))],
         ),
         child: transfer.group ? _group(context) : _single(context),
       ),
@@ -3131,10 +3136,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         child:Container(
                           width:small?32:37,height:42,
                           decoration:BoxDecoration(
-                            color:FileTheme.violet.withValues(alpha:.14),
+                            gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
+                              colors:FileTheme.dark(context)
+                                ?const [Color(0xFF245667),Color(0xFF103443)]
+                                :const [Color(0xFFE8F4F9),Color(0xFFB7D4E0)]),
                             borderRadius:BorderRadius.circular(12),
-                            border:Border.all(
-                              color:FileTheme.violet.withValues(alpha:.23))),
+                            border:Border.all(color:FileTheme.dark(context)
+                              ?const Color(0xFF438591):Colors.white),
+                            boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.19),
+                              offset:const Offset(0,3),blurRadius:5)]),
                           child:Icon(icon,size:small?19:21,color:FileTheme.violet)))));
                   return Row(children:[
                     action(Icons.add_rounded,'Choose files',_choosing?null:_choose),
@@ -3146,10 +3156,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     Expanded(child:Container(
                       constraints:const BoxConstraints(minHeight:54),
                       decoration:BoxDecoration(
-                        color:FileTheme.violet.withValues(alpha:.16),
+                        gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
+                          colors:FileTheme.dark(context)
+                            ?const [Color(0xFF173F4D),Color(0xFF0D2D3C)]
+                            :const [Color(0xFFDDEBF2),Color(0xFFC0DAE5)]),
                         borderRadius:BorderRadius.circular(15),
-                        border:Border.all(
-                          color:FileTheme.violet.withValues(alpha:.49))),
+                        border:Border.all(color:FileTheme.dark(context)
+                          ?const Color(0xFF468896):Colors.white),
+                        boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.13),
+                          offset:const Offset(0,3),blurRadius:5)]),
                       child:TextField(
                         controller:_messageController,
                         minLines:1,maxLines:5,
@@ -3162,6 +3177,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           hintStyle:TextStyle(fontSize:small?11:12,
                             color:FileTheme.muted(context)),
                           border:InputBorder.none,
+                          filled:false,
                           contentPadding:const EdgeInsets.symmetric(
                             horizontal:12,vertical:16)),
                         onChanged:(_)=>setState((){})))),
@@ -3174,9 +3190,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         child:Container(
                           width:small?39:45,height:53,
                           decoration:BoxDecoration(
-                            gradient:LinearGradient(colors:[
-                              FileTheme.pink,FileTheme.violet]),
-                            borderRadius:BorderRadius.circular(15)),
+                            gradient:const LinearGradient(
+                              begin:Alignment.topLeft,end:Alignment.bottomRight,
+                              colors:[Color(0xFF18C0BE),Color(0xFF008C93),Color(0xFF006D79)]),
+                            borderRadius:BorderRadius.circular(15),
+                            border:Border.all(color:const Color(0xFF62D0CE)),
+                            boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.24),
+                              offset:const Offset(0,5),blurRadius:8)]),
                           child:Icon(Icons.send_rounded,size:23,
                             color:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
                               ?Colors.white54:Colors.white)))),
