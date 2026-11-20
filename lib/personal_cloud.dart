@@ -468,7 +468,7 @@ class PersonalCloud extends ChangeNotifier {
     }else{
       var offset=0,part=1;
       while(offset<size){
-        final end=(offset+chunk).clamp(0,size);
+        final end=offset+chunk>size?size:offset+chunk;
         await _uploadDevicePart(source,id,offset,end,true,part:part);
         offset=end;
         part++;
