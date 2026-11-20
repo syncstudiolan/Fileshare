@@ -1915,10 +1915,12 @@ class CloudInboxCard extends StatelessWidget {
 }
 
 class TimelineGroup {
-  const TimelineGroup({this.lan, this.cloud});
+  const TimelineGroup({this.lan, this.cloud, this.upload});
   final List<LanFile>? lan;
   final List<CloudFile>? cloud;
-  DateTime get created => lan?.first.created ?? cloud!.first.created;
+  final CloudUploadJob? upload;
+  DateTime get created =>
+    upload?.created ?? lan?.first.created ?? cloud!.first.created;
 }
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
@@ -1941,8 +1943,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _desktopSidebarVisible = true;
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
-  String _keyOf(TimelineGroup g)=>g.lan!=null
-    ?'lan:${g.lan!.first.id}':'qr:${g.cloud!.first.id}';
+  String _keyOf(TimelineGroup g)=>g.upload!=null
+    ?'upload:${g.upload!.localId}'
+    : g.lan!=null ?'lan:${g.lan!.first.id}':'qr:${g.cloud!.first.id}';
   void _toggleCard(TimelineGroup g){
     if(_bulkBusy)return;
     final key=_keyOf(g);
@@ -2032,10 +2035,54 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       });
     }
   }
+  Widget _cloudUploadCard(CloudUploadJob job) {
+    final progress=job.progress.clamp(0.0,1.0);
+    return TransferBubble(
+      incoming:false,
+      child:Row(children:[
+        SizedBox(width:44,height:44,child:job.failed
+          ?IconButton(
+              tooltip:'Retry failed Cloud upload',
+              icon:const Icon(Icons.refresh_rounded),
+              color:FileTheme.pink,
+              onPressed:()=>unawaited(
+                PersonalCloud.instance.retryDeviceUpload(job)))
+          :job.uploading
+          ?TweenAnimationBuilder<double>(
+              tween:Tween<double>(begin:0,end:progress),
+              duration:const Duration(milliseconds:260),
+              builder:(context,value,_)=>Stack(alignment:Alignment.center,
+                children:[
+                  CircularProgressIndicator(value:value,strokeWidth:3,
+                    color:FileTheme.pink),
+                  Text('${(value*100).round()}%',style:const TextStyle(
+                    fontSize:10,fontWeight:FontWeight.bold)),
+                ]))
+          :const Icon(Icons.done_rounded,color:FileTheme.pink)),
+        const SizedBox(width:12),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+          children:[
+            Text(job.name,maxLines:1,overflow:TextOverflow.ellipsis,
+              style:const TextStyle(fontWeight:FontWeight.bold)),
+            const SizedBox(height:3),
+            Text(job.failed?'Cloud upload failed · Tap retry'
+                :job.uploading?'Online / Cloud · Uploading'
+                :'Online / Cloud · Uploaded',
+              style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+            if(job.error!=null) Text(job.error!,maxLines:2,
+              style:const TextStyle(fontSize:10,color:Colors.deepOrange)),
+          ])),
+        if(!job.uploading && !job.failed)
+          const Icon(Icons.done_rounded,color:FileTheme.pink,size:18)
+      ]),
+    );
+  }
+
   Widget _multiSelectCard(TimelineGroup g){
     final selected=_selectedCards.containsKey(_keyOf(g));
     final active=_selectedCards.isNotEmpty;
-    final card=g.lan!=null
+    final card=g.upload!=null ? _cloudUploadCard(g.upload!)
+      :g.lan!=null
       ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
         onDelete:_delete,onShare:_share,onTools:_openFileTools)
       :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
@@ -2575,6 +2622,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
     timeline.addAll(groupedCloud.values.map((group) =>
       TimelineGroup(cloud: group)));
+    if(_filter!='Received'){
+      timeline.addAll(PersonalCloud.instance.outgoingUploads.map(
+        (job)=>TimelineGroup(upload:job)));
+    }
     timeline.sort((a, b) => b.created.compareTo(a.created));
     return timeline;
   }
