@@ -2471,15 +2471,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           }else{
             final id=appLan.deviceId;
             if(id==null)throw StateError('Device ID unavailable');
-            // Remove each confirmed upload from Cart individually. If a later
-            // upload fails, retry will NOT upload successful files twice.
+            // Send moves each file straight into the Dashboard as a real
+            // uploading card. Uploads continue asynchronously; no double send.
             while(batch.sources.isNotEmpty){
               if(appLan.peers.isNotEmpty){
-                throw StateError('A nearby LAN device appeared. Cloud upload stopped; tap Send again for LAN.');
+                throw StateError('LAN device appeared. Remaining Cart files will use LAN when Send is tapped.');
               }
               final source=batch.sources.first,name=batch.labels.first;
-              await cloud.uploadDeviceFile(source,name,id,
-                senderName:Platform.localHostname);
+              cloud.queueDeviceUpload(source,name,id);
               if(mounted)setState((){
                 batch.sources.removeAt(0);
                 batch.labels.removeAt(0);
@@ -2487,7 +2486,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 if(batch.sources.isEmpty)_staged.remove(batch);
               });
               successful++;
-              unawaited(_cleanupEditedCartSnapshots([source]));
             }
           }
         }catch(e){
@@ -2498,7 +2496,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       }
       if(failed==0){
         _snack(useLan?'Nearby devices found: sent on LAN only.':
-          'No nearby devices: $successful file(s) uploaded through Cloudflare.');
+          'No nearby devices: $successful file(s) uploading to Cloudflare.');
       }
     }finally{
       if(mounted)setState(()=>_sending=false);
