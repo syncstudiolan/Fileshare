@@ -506,6 +506,9 @@ async function deviceTransferApi(request,env,url){
        typeof body.senderId!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(body.senderId))
       return fail('Invalid file or sender; max 200 MB',413);
     const fileId=id(),key='device-transfers/'+fileId;
+    // Device-to-device Cloud transfers and Guest QR share the SAME midnight
+    // IST expiry. LAN files alone use rolling 24-hour local retention.
+    const expiresAt=nextMidnightIST(now);
     const upload=body.size>CHUNK?await env.FILES.createMultipartUpload(key,{
       httpMetadata:{contentType:'application/octet-stream'}}):null;
     try{
@@ -513,9 +516,9 @@ async function deviceTransferApi(request,env,url){
         'INSERT INTO device_transfers(id,sender_id,sender_name,name,size,object_key,upload_id,created_at,expires_at) '+
         'VALUES(?,?,?,?,?,?,?,?,?)'
       ).bind(fileId,body.senderId,safeName(body.senderName||'Device'),
-        safeName(body.name),body.size,key,upload?.uploadId??null,now,now+DAY).run();
+        safeName(body.name),body.size,key,upload?.uploadId??null,now,expiresAt).run();
     }catch(e){if(upload)await upload.abort().catch(()=>{});throw e;}
-    return json({ok:true,id:fileId,chunkSize:CHUNK,expiresAt:now+DAY});
+    return json({ok:true,id:fileId,chunkSize:CHUNK,expiresAt});
   }
   const match=path.match(/^\/v1\/owner\/transfer\/([a-zA-Z0-9-]+)(?:\/(part\/[0-9]+|complete|received))?$/);
   if(!match)return fail('Not found',404);
@@ -599,7 +602,7 @@ async function deviceTransferApi(request,env,url){
   return fail('Unsupported transfer action',405);
 }
 
-// QR-only, midnight-IST cleanup. No persistent delete queue is created.
+// QR + Cloud transfer midnight-IST cleanup. No persistent delete queue is created.
 // A scheduled invocation deletes R2 objects in batches, removes their D1
 // uploads and multipart-part records, then broadcasts ONE invalidation event
 // for the whole run. Retry crons reuse the same expired D1 rows only if an
@@ -644,7 +647,8 @@ async function cleanup(env) {
         recordsDeleted+=chunk.length;
       }
     }
-    // Rolling 24-hour device transfer expiry; separate from Guest QR cleanup.
+    // Guest QR and authenticated Cloud transfers both expire at midnight IST.
+    // Abort unfinished multipart jobs and delete R2, part records, D1 metadata.
     for(let batch=0;batch<20;batch++){
       const result=await env.DB.prepare(
         'SELECT id,object_key,upload_id,completed FROM device_transfers WHERE expires_at<=? LIMIT 200'
