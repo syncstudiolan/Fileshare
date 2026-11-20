@@ -14,6 +14,7 @@ import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
 import 'transfer_route.dart';
+import 'auto_cloud_transfer_preference.dart';
 import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
@@ -42,6 +43,9 @@ Future<void> main([List<String> args = const []]) async {
   final mode = await prefs.getString('appearance');
   final previousOffline = await prefs.getBool('offline_start') ?? false;
   await TransferDownloads.instance.init();
+  // No network call: restore the per-device preference before the first Send.
+  try{await AutoCloudTransferPreference.instance.load();}
+  catch(e){debugPrint('Auto Cloud preference restore failed: $e');}
   // CI emulator only: run the real LAN backend without first-use tapping.
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
@@ -2517,7 +2521,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       if(!mounted)return;
       final cloud=PersonalCloud.instance;
       final route=chooseTransferRoute(
-        nearbyCount:appLan.peers.length,cloudSignedIn:cloud.signedIn);
+        nearbyCount:appLan.peers.length,
+        cloudSignedIn:cloud.signedIn,
+        autoCloudEnabled:AutoCloudTransferPreference.instance.enabled);
       final useLan=route==TransferRoute.lan;
       final batches=List<PendingBatch>.from(_staged);
       if(route==TransferRoute.pending){
@@ -2529,7 +2535,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             unawaited(_cleanupEditedCartSnapshots(batch.sources));
           }catch(e){_snack('Could not queue files: '+e.toString());}
         }
-        _snack('No LAN devices and cloud is not logged in. Saved to Pending.');
+        _snack('LAN Pending: auto Cloud is disabled or not logged in. '+
+          'Will send when a nearby LAN device connects.');
         return;
       }
       var successful=0,failed=0;
@@ -2788,6 +2795,37 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     ));
   }
 
+  /// This switch affects only the outgoing remote-device fallback.
+  /// Guest QR, logged-in incoming Cloud cards and realtime QR notifications
+  /// never observe this setting and therefore remain available at all times.
+  Widget _autoCloudTransferToggle({bool compact=false}) =>
+    AnimatedBuilder(
+      animation:AutoCloudTransferPreference.instance,
+      builder:(context,_) {
+        final preference=AutoCloudTransferPreference.instance;
+        return Row(mainAxisSize:MainAxisSize.min,children:[
+          if(!compact)Expanded(child:Column(
+            crossAxisAlignment:CrossAxisAlignment.start,children:[
+              const Text('Auto Cloud Transfer',
+                style:TextStyle(fontWeight:FontWeight.w700)),
+              Text(preference.enabled
+                ? 'ON: LAN first; Cloud if no LAN and signed in'
+                : 'OFF: LAN only; files wait for nearby devices',
+                style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+            ])),
+          if(compact)const Icon(Icons.cloud_outlined,
+            size:17,color:FileTheme.violet),
+          Switch.adaptive(
+            value:preference.enabled,
+            onChanged:(enabled){
+              unawaited(preference.setEnabled(enabled).catchError((Object e){
+                if(context.mounted)_snack('Could not save Cloud setting: $e');
+              }));
+            }),
+        ]);
+      },
+    );
+
   Widget _dashboardColumn(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
     final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
@@ -2850,6 +2888,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       onPressed:()=>_navigate('My QR'),
                       icon:const Icon(Icons.qr_code_2_rounded,
                         color:FileTheme.violet)),
+                    _autoCloudTransferToggle(compact:true),
                     AppearanceButton(mode:widget.mode,onChange:widget.onMode),
                     IconButton(tooltip:'Refresh nearby LAN devices',
                       onPressed:_refreshing?null:_refreshNearby,
