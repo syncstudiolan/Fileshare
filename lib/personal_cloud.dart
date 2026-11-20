@@ -551,24 +551,27 @@ class PersonalCloud extends ChangeNotifier {
     onCreated?.call(id);
     const chunk=6*1024*1024;
     if(size<=chunk){
-      await _uploadDevicePart(source,id,0,size,false);
+      await _uploadDevicePart(source,id,0,size,false,
+        onBytes:(count)=>onProgress?.call(count/size*0.98));
       onProgress?.call(1);
     }else{
       var offset=0,part=1;
       while(offset<size){
         final end=offset+chunk>size?size:offset+chunk;
-        await _uploadDevicePart(source,id,offset,end,true,part:part);
+        await _uploadDevicePart(source,id,offset,end,true,part:part,
+          onBytes:(count)=>onProgress?.call((count/size).clamp(0.0,0.98).toDouble()));
         offset=end;
-        onProgress?.call(offset/size);
+        onProgress?.call((offset/size).clamp(0.0,0.98).toDouble());
         part++;
       }
       await _call('POST','/v1/owner/transfer/'+id+'/complete');
+      onProgress?.call(1);
     }
     await refreshFiles();
   }
 
   Future<void> _uploadDevicePart(File file,String id,int offset,int end,
-      bool multipart,{int part=1})async{
+      bool multipart,{int part=1,void Function(int count)? onBytes})async{
     final uri=_host!.resolve('/v1/owner/transfer/'+id+
       (multipart?'/part/'+part.toString():''));
     for(var attempt=0;attempt<3;attempt++){
@@ -578,7 +581,12 @@ class PersonalCloud extends ChangeNotifier {
         request.headers.set(HttpHeaders.authorizationHeader,'Bearer '+_sessionToken!);
         request.headers.contentType=ContentType.binary;
         request.contentLength=end-offset;
-        await request.addStream(file.openRead(offset,end));
+        var read=0;
+        await request.addStream(file.openRead(offset,end).map((bytes){
+          read+=bytes.length;
+          onBytes?.call(offset+read);
+          return bytes;
+        }));
         final response=await request.close().timeout(const Duration(seconds:90));
         final body=await utf8.decoder.bind(response).join();
         if(response.statusCode<200||response.statusCode>=300){
