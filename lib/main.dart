@@ -1876,14 +1876,14 @@ class CloudInboxCard extends StatelessWidget {
                       Align(alignment: Alignment.centerRight,
                         child: TransferCardActions(actions: [
                           if(!sent) Stack(clipBehavior: Clip.none, children: [
-                            action('Download received cloud file', Icons.download_rounded,
+                            action(device?'Download received cloud file':'Download received QR file', Icons.download_rounded,
                               () => onSave(file)),
                             Positioned(top: -8, right: -4,
                               child: NewDownloadBadge(id: 'cloud_${file.id}')),
                           ]),
-                          action('Delete cloud file', Icons.delete_outline_rounded,
+                          action(device?'Delete cloud file':'Delete QR file', Icons.delete_outline_rounded,
                             () => onDelete(file)),
-                          action('Share cloud file externally', Icons.ios_share_rounded,
+                          action(device?'Share cloud file externally':'Share QR file externally', Icons.ios_share_rounded,
                             () => onShare(file)),
                           action('Open in Tools', Icons.auto_fix_high_rounded,
                             () => onTools(file)),
