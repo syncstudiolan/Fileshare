@@ -60,3 +60,26 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
   changed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS auth_attempts_expiry ON auth_attempts(changed_at);
+
+-- Account-only cross-network transfers: isolated from guest QR quota/expiry.
+-- Applied automatically by the SAME first-time API provisioning operation.
+CREATE TABLE IF NOT EXISTS device_transfers (
+  id TEXT PRIMARY KEY,
+  sender_id TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
+  name TEXT NOT NULL,
+  size INTEGER NOT NULL CHECK(size>0 AND size<=209715200),
+  object_key TEXT NOT NULL UNIQUE,
+  upload_id TEXT,
+  completed INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS device_transfers_inbox
+  ON device_transfers(completed,expires_at,created_at);
+CREATE TABLE IF NOT EXISTS device_transfer_parts (
+  file_id TEXT NOT NULL REFERENCES device_transfers(id) ON DELETE CASCADE,
+  part_number INTEGER NOT NULL,
+  etag TEXT NOT NULL,
+  PRIMARY KEY(file_id,part_number)
+);
