@@ -25,6 +25,10 @@ jobs:
           channel: stable
       - name: Generate Android Flutter runner
         run: flutter create --project-name file_share --platforms=android .
+      - name: Generate branded Android launcher resources
+        run: |
+          python3 -m pip install --quiet Pillow
+          python3 tool/generate_brand_assets.py
       - name: Install packages
         run: flutter pub get
       - name: Repair legacy WebView ProGuard for AGP 9
