@@ -1946,6 +1946,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _refreshing = false;
   bool _sending = false;
   bool _desktopSidebarVisible = true;
+  String? _dashboardNotice;
+  Timer? _dashboardNoticeTimer;
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
   String _keyOf(TimelineGroup g)=>g.upload!=null
@@ -2286,6 +2288,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
+    _dashboardNoticeTimer?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
@@ -2298,8 +2301,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 4)));
+    _dashboardNoticeTimer?.cancel();
+    setState(()=>_dashboardNotice=message);
+    _dashboardNoticeTimer=Timer(const Duration(seconds:4),(){
+      if(mounted)setState(()=>_dashboardNotice=null);
+    });
   }
 
   void _navigate(String title) {
@@ -2848,25 +2854,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       animation:AutoCloudTransferPreference.instance,
       builder:(context,_) {
         final preference=AutoCloudTransferPreference.instance;
-        return Row(mainAxisSize:MainAxisSize.min,children:[
-          if(!compact)Expanded(child:Column(
-            crossAxisAlignment:CrossAxisAlignment.start,children:[
-              const Text('Auto Cloud Transfer',
-                style:TextStyle(fontWeight:FontWeight.w700)),
-              Text(preference.enabled
-                ? 'ON: LAN first; Cloud if no LAN and signed in'
-                : 'OFF: LAN only; files wait for nearby devices',
-                style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
-            ])),
-          if(compact)const Icon(Icons.cloud_outlined,
-            size:17,color:FileTheme.violet),
-          Switch.adaptive(
-            value:preference.enabled,
-            onChanged:(enabled){
-              unawaited(preference.setEnabled(enabled).catchError((Object e){
-                if(context.mounted)_snack('Could not save Cloud setting: $e');
-              }));
-            }),
+        void toggle() {
+          unawaited(preference.setEnabled(!preference.enabled).catchError(
+            (Object e){if(context.mounted)_snack('Cloud setting: $e');}));
+        }
+        if(compact)return Row(mainAxisSize:MainAxisSize.min,children:[
+          const Icon(Icons.cloud_outlined,size:17,color:FileTheme.violet),
+          const SizedBox(width:3),
+          Tooltip(message:preference.enabled?'Auto Cloud ON':'Auto Cloud OFF',
+            child:InkWell(onTap:toggle,borderRadius:BorderRadius.circular(20),
+              child:AnimatedContainer(
+                duration:const Duration(milliseconds:170),
+                width:42,height:25,padding:const EdgeInsets.all(3),
+                decoration:BoxDecoration(
+                  borderRadius:BorderRadius.circular(20),
+                  color:preference.enabled
+                    ?const Color(0xFFC4A6FF):FileTheme.violet.withValues(alpha:.20),
+                  border:Border.all(color:FileTheme.violet.withValues(alpha:.55))),
+                child:Align(
+                  alignment:preference.enabled?Alignment.centerRight:Alignment.centerLeft,
+                  child:Container(width:18,height:18,decoration:BoxDecoration(
+                    shape:BoxShape.circle,color:preference.enabled
+                      ?const Color(0xFF392B60):FileTheme.muted(context)))))),
+          ),
+        ]);
+        return Row(children:[
+          Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            const Text('Auto Cloud Transfer',style:TextStyle(fontWeight:FontWeight.w700)),
+            Text(preference.enabled?'LAN first; Cloud when no LAN'
+                :'LAN only; pending until a device connects',
+              style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+          ])),
+          Switch.adaptive(value:preference.enabled,onChanged:(value)=>
+            unawaited(preference.setEnabled(value))),
         ]);
       },
     );
@@ -2887,6 +2907,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 5),
                 child: Row(children: [
                   IconButton(
+                    visualDensity:VisualDensity.compact,
+                    constraints:const BoxConstraints(minWidth:36,minHeight:38),
+                    padding:EdgeInsets.zero,
                     tooltip: desktop
                       ? (_desktopSidebarVisible ? 'Hide sidebar' : 'Show sidebar')
                       : 'Open navigation',
@@ -2898,14 +2921,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 17,
+                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 15,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
-                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN devices · ' +
-                        (appLan.receivingEnabled ? 'LAN active'
-                          : (appLan.started ? 'LAN receiver reconnecting'
-                            : 'Starting LAN')) +
-                        (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
+                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN device' +
+                        (appLan.peers.length==1?'':'s'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
@@ -2929,13 +2949,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     if(_bulkBusy)const SizedBox(width:17,height:17,
                       child:CircularProgressIndicator(strokeWidth:2)),
                   ]else...[
-                    IconButton(tooltip:'QR design preview',
+                    IconButton(visualDensity:VisualDensity.compact,
+                       constraints:const BoxConstraints(minWidth:32,minHeight:38),
+                       padding:EdgeInsets.zero,tooltip:'QR design preview',
                       onPressed:()=>_navigate('My QR'),
                       icon:const Icon(Icons.qr_code_2_rounded,
                         color:FileTheme.violet)),
                     _autoCloudTransferToggle(compact:true),
                     AppearanceButton(mode:widget.mode,onChange:widget.onMode),
-                    IconButton(tooltip:'Refresh nearby LAN devices',
+                    IconButton(visualDensity:VisualDensity.compact,
+                       constraints:const BoxConstraints(minWidth:34,minHeight:38),
+                       padding:EdgeInsets.zero,tooltip:'Refresh nearby LAN devices',
                       onPressed:_refreshing?null:_refreshNearby,
                       icon:AnimatedRotation(
                         turns:_refreshing?2:0,
@@ -2947,10 +2971,33 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 ]),
               ),
             ),
-            if (appLan.error != null)
-              Padding(padding: const EdgeInsets.symmetric(horizontal: 15),
-                child: Text(appLan.error!, maxLines: 2,
-                  style: const TextStyle(color: Colors.deepOrange, fontSize: 10))),
+            Padding(
+              padding:EdgeInsets.fromLTRB(wide?24:12,5,wide?24:12,8),
+              child:Container(
+                width:double.infinity,
+                padding:const EdgeInsets.symmetric(horizontal:13,vertical:9),
+                decoration:BoxDecoration(
+                  color:FileTheme.violet.withValues(alpha:.12),
+                  borderRadius:BorderRadius.circular(19),
+                  border:Border.all(color:FileTheme.violet.withValues(alpha:.45))),
+                child:Row(children:[
+                  Icon(appLan.error!=null?Icons.warning_amber_rounded
+                    :Icons.lan_outlined,size:17,
+                    color:appLan.error!=null?Colors.orange:FileTheme.violet),
+                  const SizedBox(width:10),
+                  Expanded(child:Text(
+                    _dashboardNotice ?? appLan.error ??
+                    (appLan.receivingEnabled
+                      ?'LAN ready · ${appLan.peers.length} nearby device${appLan.peers.length==1?'':'s'}'
+                      :'LAN transfer waiting for nearby devices…'),
+                    maxLines:2,overflow:TextOverflow.ellipsis,
+                    style:TextStyle(fontSize:12,
+                      color:FileTheme.foreground(context)))),
+                  if(_dashboardNotice==null&&appLan.error==null)
+                    const Icon(Icons.more_horiz_rounded,size:18,color:FileTheme.violet),
+                ]),
+              ),
+            ),
             Padding(
               padding: EdgeInsets.symmetric(horizontal: wide ? 24 : 10),
               child: Row(children: [
@@ -2960,9 +3007,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     child: Row(children: [
                       for (final choice in const ['All', 'Sent', 'Received'])
                         Padding(padding: const EdgeInsets.only(right: 5),
-                          child: ChoiceChip(label: Text(choice),
-                            selected: choice == _filter,
-                            onSelected: (_) => setState(() => _filter = choice))),
+                          child: ChoiceChip(
+                             avatar:Icon(choice=='All'?Icons.check_rounded
+                               :choice=='Sent'?Icons.send_outlined
+                               :Icons.download_rounded,size:16,
+                               color:FileTheme.violet),
+                             label:Text(choice),
+                             shape:RoundedRectangleBorder(
+                               borderRadius:BorderRadius.circular(13)),
+                             selected:choice==_filter,
+                             onSelected:(_)=>setState(()=>_filter=choice))),
                     ]),
                   ),
                 ),
