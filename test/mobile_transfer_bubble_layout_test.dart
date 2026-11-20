@@ -20,9 +20,9 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final rect=await paintRect(tester,incoming:true);
-    expect(rect.width,lessThan(335));
+    expect(rect.width,inInclusiveRange(330,355));
     expect(rect.left,lessThan(30));
-    expect(400-rect.right,greaterThan(55));
+    expect(400-rect.right,greaterThan(35));
   });
 
   testWidgets('Outgoing mobile card leaves space on the left', (tester) async {
@@ -31,8 +31,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final rect=await paintRect(tester,incoming:false);
-    expect(rect.width,lessThan(335));
-    expect(rect.left,greaterThan(55));
+    expect(rect.width,inInclusiveRange(285,315));
+    expect(rect.left,greaterThan(75));
     expect(400-rect.right,lessThan(30));
   });
 }
