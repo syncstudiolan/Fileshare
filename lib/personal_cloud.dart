@@ -314,12 +314,6 @@ class PersonalCloud extends ChangeNotifier {
     return _qrLink!;
   }
 
-  Future<void> revokeQr() async {
-    await _call('DELETE', '/v1/owner/qr');
-    _qrLink = null;
-    notifyListeners();
-  }
-
   /// Open one authenticated WebSocket while the dashboard is foregrounded.
   /// Only a 'files-changed' signal crosses the socket; metadata is fetched
   /// once on reconnect and when a real upload/delete event arrives.
