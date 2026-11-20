@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS device_transfers (
   object_key TEXT NOT NULL UNIQUE,
   upload_id TEXT,
   completed INTEGER NOT NULL DEFAULT 0,
+  received_at INTEGER,
+  received_by TEXT,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
