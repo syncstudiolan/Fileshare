@@ -3052,43 +3052,69 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             if (_staged.isNotEmpty)
               Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 child: _drafts(context)),
-            Padding(padding: EdgeInsets.fromLTRB(wide ? 24 : 10, 5,
-              wide ? 24 : 10, 10),
-              child: DesignPanel(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-                child: Row(children: [
-                  IconButton.filledTonal(
-                    tooltip: 'Choose files',
-                    onPressed: _choosing ? null : _choose,
-                    icon: const Icon(Icons.add_rounded)),
-                  IconButton(
-                    tooltip: 'Camera',
-                    onPressed:_choosing?null:_openTransferCamera,
-                    icon:const Icon(Icons.camera_alt_outlined,
-                      color:FileTheme.violet)),
-                  IconButton(
-                    tooltip: 'Tools',
-                    onPressed:()=>_navigate('Toolbox'),
-                    icon:const Icon(Icons.handyman_outlined,
-                      color:FileTheme.violet)),
-                  Expanded(child:TextField(
-                    controller:_messageController,
-                    minLines:1,maxLines:5,
-                    textCapitalization:TextCapitalization.sentences,
-                    keyboardType:TextInputType.multiline,
-                    textInputAction:TextInputAction.newline,
-                    decoration:InputDecoration(
-                      hintText:'Type or paste a message…',
-                      hintStyle:TextStyle(fontSize:12,color:FileTheme.muted(context)),
-                      border:InputBorder.none,isDense:true),
-                    onChanged:(_)=>setState((){}))),
-                  IconButton.filled(
-                    tooltip:_messageController.text.trim().isNotEmpty
-                      ?'Send text message':'Send selected files',
-                    onPressed:(_messageController.text.trim().isEmpty && _staged.isEmpty)
-                      || _sending ? null : () => unawaited(_sendTypedText()),
-                    icon: const Icon(Icons.send_rounded)),
-                ]),
+            Padding(padding:EdgeInsets.fromLTRB(wide?24:10,7,wide?24:10,10),
+              child:DesignPanel(
+                padding:const EdgeInsets.symmetric(horizontal:8,vertical:9),
+                child:LayoutBuilder(builder:(context,constraints){
+                  final small=constraints.maxWidth<365;
+                  Widget action(IconData icon,String label,VoidCallback? tap) =>
+                    Padding(padding:EdgeInsets.only(right:small?2:4),
+                      child:Tooltip(message:label,child:InkWell(
+                        onTap:tap,borderRadius:BorderRadius.circular(12),
+                        child:Container(
+                          width:small?32:37,height:42,
+                          decoration:BoxDecoration(
+                            color:FileTheme.violet.withValues(alpha:.14),
+                            borderRadius:BorderRadius.circular(12),
+                            border:Border.all(
+                              color:FileTheme.violet.withValues(alpha:.23))),
+                          child:Icon(icon,size:small?19:21,color:FileTheme.violet)))));
+                  return Row(children:[
+                    action(Icons.add_rounded,'Choose files',_choosing?null:_choose),
+                    action(Icons.camera_alt_outlined,'Camera',
+                      _choosing?null:_openTransferCamera),
+                    action(Icons.handyman_outlined,'Tools',
+                      ()=>_navigate('Toolbox')),
+                    const SizedBox(width:4),
+                    Expanded(child:Container(
+                      constraints:const BoxConstraints(minHeight:54),
+                      decoration:BoxDecoration(
+                        color:FileTheme.violet.withValues(alpha:.16),
+                        borderRadius:BorderRadius.circular(15),
+                        border:Border.all(
+                          color:FileTheme.violet.withValues(alpha:.49))),
+                      child:TextField(
+                        controller:_messageController,
+                        minLines:1,maxLines:5,
+                        textCapitalization:TextCapitalization.sentences,
+                        keyboardType:TextInputType.multiline,
+                        textInputAction:TextInputAction.newline,
+                        style:TextStyle(fontSize:13,color:FileTheme.foreground(context)),
+                        decoration:InputDecoration(
+                          hintText:'Type or paste a message…',
+                          hintStyle:TextStyle(fontSize:small?11:12,
+                            color:FileTheme.muted(context)),
+                          border:InputBorder.none,
+                          contentPadding:const EdgeInsets.symmetric(
+                            horizontal:12,vertical:16)),
+                        onChanged:(_)=>setState((){})))),
+                    const SizedBox(width:7),
+                    Tooltip(message:'Send message or selected files',
+                      child:InkWell(
+                        onTap:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
+                            ||_sending?null:()=>unawaited(_sendTypedText()),
+                        borderRadius:BorderRadius.circular(15),
+                        child:Container(
+                          width:small?39:45,height:53,
+                          decoration:BoxDecoration(
+                            gradient:LinearGradient(colors:[
+                              FileTheme.pink,FileTheme.violet]),
+                            borderRadius:BorderRadius.circular(15)),
+                          child:Icon(Icons.send_rounded,size:23,
+                            color:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
+                              ?Colors.white54:Colors.white)))),
+                  ]);
+                }),
               ),
             ),
           ]);
