@@ -2429,8 +2429,7 @@ class ImageEditingLauncherPage extends StatelessWidget {
       await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>
         ImageEditingPage(sourcePath:path,sourceName:file.name)));
     }catch(error){
-      if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text('Image selection failed: $error')));
+      if(context.mounted)FileShareTopNotice.show(context,'Image selection failed: $error');
     }
   }
   @override Widget build(BuildContext context)=>Scaffold(
