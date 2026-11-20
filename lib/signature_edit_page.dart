@@ -53,7 +53,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   int _target=20;
   final _targetController=TextEditingController(text:'20');
   final _picker=ImagePicker();
-  static const _filters=['Original','Black & White','Grayscale',
+  static const _filters=['Original','White Background','Black & White','Grayscale',
     'Blue Ink','Dark Ink','Red Ink','Green Ink','High Contrast',
     'Soft Ink','Sepia','Invert','Clean Paper','Pencil'];
   static const _tabs=['Crop','Compress','Filters'];
@@ -554,7 +554,8 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       Row(children:[
         const Icon(Icons.tune_rounded,size:18,color:FileTheme.violet),
         const SizedBox(width:8),
-        const Expanded(child:Text('Filter intensity')),
+        Expanded(child:Text(_filter=='White Background'
+          ?'Background whitening intensity':'Filter intensity')),
         Text('${(_filterIntensity*100).round()}%',
           style:const TextStyle(fontWeight:FontWeight.w700)),
       ]),
@@ -569,7 +570,9 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
             ()=>unawaited(_refreshFilterPreview()));
         }),
       const SizedBox(height:4),
-      Text('Tap a preview to apply its effect. Swipe to see more.',
+      Text(_filter=='White Background'
+        ?'Makes the paper white while preserving black or blue ink. Adjust strength above.'
+        :'Tap a preview to apply its effect. Swipe to see more.',
         style:TextStyle(color:FileTheme.muted(context),fontSize:12)),
       const SizedBox(height:10),
       SizedBox(height:132,child:ListView.separated(
