@@ -431,10 +431,20 @@ class PersonalCloud extends ChangeNotifier {
     notifyListeners();
     try {
       final fetched = <CloudFile>[];
+      // Current Worker serves QR and device transfers in ONE HTTP response.
+      // Older Workers fall back to their original endpoints unchanged.
+      Map<String,dynamic>? combined;
+      if(signedIn){
+        try{
+          combined=await _call('GET','/v1/owner/inbox');
+        }catch(e){
+          if(!e.toString().contains('Not found'))rethrow;
+        }
+      }
       var offset = 0;
       while (offset < 10000) {
-        final data = await _call('GET',
-          '/v1/owner/files?offset=' + offset.toString());
+        final data = combined!=null && offset==0 ? combined :
+          await _call('GET','/v1/owner/files?offset=' + offset.toString());
         final rows = (data['files'] as List?) ?? [];
         for (final raw in rows) {
           if (raw is! Map) continue;
@@ -454,8 +464,9 @@ class PersonalCloud extends ChangeNotifier {
       // Older Workers without this endpoint retain the existing QR inbox.
       if(signedIn){
         try{
-          final remote=await _call('GET','/v1/owner/transfers');
-          for(final entry in (remote['files'] as List? ?? [])){
+          final remote=combined ?? await _call('GET','/v1/owner/transfers');
+          final transferRows=combined!=null ? remote['transfers'] : remote['files'];
+          for(final entry in (transferRows as List? ?? [])){
             if(entry is! Map)continue;
             final id=entry['id'] as String;
             fetched.add(CloudFile(
