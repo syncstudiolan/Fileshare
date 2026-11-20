@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -79,8 +80,7 @@ class _GanderArchiveBrowserPageState
   void _noticeUser(String value){
     if(mounted){
       setState(()=>_notice=value);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text(value)));
+      FileShareTopNotice.show(context,value);
     }
   }
   Future<void> _open(String path)async{
