@@ -640,11 +640,15 @@ class PersonalCloud extends ChangeNotifier {
     }
   }
 
-  static int nextMidnightIst() {
-    const day = 86400000, offset = 19800000;
-    final ms = DateTime.now().toUtc().millisecondsSinceEpoch;
-    return ((ms + offset) ~/ day + 1) * day - offset;
+  /// Midnight IST immediately following a file's creation timestamp.
+  /// Never recompute a cache entry's expiry from the current date.
+  static int midnightAfterIst(int epochMillis) {
+    const day=86400000, offset=19800000;
+    return ((epochMillis+offset)~/day+1)*day-offset;
   }
+
+  static int nextMidnightIst() =>
+    midnightAfterIst(DateTime.now().toUtc().millisecondsSinceEpoch);
 
   Future<Directory> _cacheDir() async {
     final support = await getApplicationSupportDirectory();
@@ -669,13 +673,13 @@ class PersonalCloud extends ChangeNotifier {
   /// Streams to private app storage; no 200 MB allocation in Dart RAM.
   // The dashboard can hide expired QR cards at midnight with ZERO network calls.
   void removeExpiredLocalEntries() {
-    const day = 86400000, istOffset = 19800000;
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
     final before = files.length;
     files.removeWhere((entry) {
       final created = entry.created.toUtc().millisecondsSinceEpoch;
-      final expiry = entry.deviceTransfer ? created+day :
-        ((created + istOffset) ~/ day + 1) * day - istOffset;
+      // LAN is rolling-24h (inside LanEngine). ALL Cloud entries, both QR
+      // and logged-in transfers, expire at the next midnight in India.
+      final expiry = midnightAfterIst(created);
       return expiry <= now;
     });
     if (files.length != before) notifyListeners();
@@ -702,9 +706,8 @@ class PersonalCloud extends ChangeNotifier {
     final cache=await _cacheDir();
     final safe=item.name.replaceAll(RegExp(r'[/\\\x00-\x1f]'),'_');
     final target=File(cache.path+Platform.pathSeparator+'cloud_'+
-      (item.deviceTransfer
-        ? item.created.millisecondsSinceEpoch+const Duration(hours:24).inMilliseconds
-        : nextMidnightIst()).toString()+'_'+item.id+'_'+safe);
+      midnightAfterIst(item.created.toUtc().millisecondsSinceEpoch)
+        .toString()+'_'+item.id+'_'+safe);
     if(await target.exists()){
       if(await target.length()==item.size)return target;
       await target.delete();
