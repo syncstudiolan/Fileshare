@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -116,6 +117,9 @@ class LanEngine extends ChangeNotifier {
   final Map<String, DateTime> _attempts = {};
   ServerSocket? _server;
   RawDatagramSocket? _discovery;
+  static const MethodChannel _bonjour = MethodChannel('file_share.lan_discovery');
+  final Set<String> _bonjourPeerIds = <String>{};
+  bool _bonjourStarted = false;
   Timer? _heartbeat, _cleanup, _listenerRetry;
   bool _bindingReceiver = false;
   int _listenerGeneration = 0;
@@ -169,7 +173,10 @@ class LanEngine extends ChangeNotifier {
     _listenerRetry = Timer.periodic(const Duration(seconds: 8), (_) {
       if (_server == null) unawaited(_bindReceiver());
     });
-    try {
+    // iOS rejects raw UDP broadcast without Apple's restricted multicast
+    // entitlement. Bonjour is the system-supported discovery mechanism.
+    // Android keeps the UDP v1 discovery for existing older clients.
+    if (!Platform.isIOS) try {
       _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
         discoveryPort, reuseAddress: true);
       _discovery!.broadcastEnabled = true;
@@ -187,6 +194,14 @@ class LanEngine extends ChangeNotifier {
         _dispatchQueued();
       });
     } catch (e) { error = 'LAN broadcast unavailable: ' + e.toString(); }
+    if (testSupportDirectory == null && (Platform.isIOS || Platform.isAndroid)) {
+      await _startBonjour();
+    }
+    // Keep peer cleanup and queued delivery alive even on iOS without UDP.
+    _heartbeat ??= Timer.periodic(const Duration(seconds: 5), (_) {
+      _expirePeers();
+      _dispatchQueued();
+    });
     _cleanup = Timer.periodic(const Duration(minutes: 1),
       (_) { unawaited(cleanExpired()); });
     started = true;
@@ -234,6 +249,55 @@ class LanEngine extends ChangeNotifier {
     }
   }
 
+  /// iOS Bonjour and Android NsdManager advertise the same TCP receiver.
+  /// Both platforms announce stable IDs via TXT records and resolve to IPv4.
+  Future<void> _startBonjour() async {
+    if (_bonjourStarted || _server == null || deviceId == null) return;
+    _bonjour.setMethodCallHandler((call) async {
+      if (_disposed || !started && _starting == null) return;
+      final data = call.arguments;
+      if (data is! Map) return;
+      if (call.method == 'lost') {
+        final id = data['id'];
+        if (id is String && _bonjourPeerIds.remove(id)) {
+          peers.remove(id);
+          _notify();
+        }
+        return;
+      }
+      if (call.method == 'error') {
+        error = 'Nearby discovery: ${data['message'] ?? 'unavailable'}';
+        _notify();
+        return;
+      }
+      if (call.method != 'peer') return;
+      final id = data['id'], address = data['address'];
+      final name = data['name'], port = data['port'];
+      if (id is! String || id.isEmpty || id == deviceId ||
+          id.length > 100 || address is! String ||
+          InternetAddress.tryParse(address)?.type != InternetAddressType.IPv4 ||
+          port is! int || port < 1 || port > 65535) return;
+      final first = !peers.containsKey(id);
+      _bonjourPeerIds.add(id);
+      peers[id] = LanPeer(id, safeFileName(name is String ? name : 'Device'),
+          address, port, DateTime.now());
+      _notify();
+      if (first) _dispatchQueued();
+    });
+    try {
+      await _bonjour.invokeMethod<void>('start', {
+        'id': deviceId!, 'name': Platform.localHostname, 'port': _server!.port,
+      });
+      _bonjourStarted = true;
+    } on PlatformException catch (e) {
+      error = 'Bonjour discovery unavailable: ${e.message ?? e.code}';
+      _notify();
+    } on MissingPluginException {
+      error = 'Nearby discovery module missing. Install the updated build.';
+      _notify();
+    }
+  }
+
   Future<void> retryReceiver() => _bindReceiver();
 
   void refresh() {
@@ -266,7 +330,8 @@ class LanEngine extends ChangeNotifier {
 
   void _expirePeers() {
     final cutoff = DateTime.now().subtract(const Duration(seconds: 22));
-    peers.removeWhere((key, peer) => peer.lastSeen.isBefore(cutoff));
+    peers.removeWhere((key, peer) =>
+      !_bonjourPeerIds.contains(key) && peer.lastSeen.isBefore(cutoff));
     _notify();
   }
 
@@ -686,6 +751,12 @@ class LanEngine extends ChangeNotifier {
     _heartbeat?.cancel();
     _cleanup?.cancel();
     _discovery?.close();
+    if (_bonjourStarted) {
+      _bonjourStarted = false;
+      try { await _bonjour.invokeMethod<void>('stop'); } catch (_) {}
+    }
+    _bonjourPeerIds.clear();
+    peers.clear();
     await _server?.close();
     _server = null;
     _discovery = null;
