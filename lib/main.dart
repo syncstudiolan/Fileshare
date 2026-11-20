@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'file_share_text.dart';
+import 'text_transfer_card.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -13,6 +15,9 @@ import 'package:tray_manager/tray_manager.dart' as desktop_tray;
 import 'package:local_notifier/local_notifier.dart';
 
 import 'lan_engine.dart';
+import 'transfer_route.dart';
+import 'auto_cloud_transfer_preference.dart';
+import 'guest_qr_print.dart';
 import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
 import 'toolbox_page.dart';
@@ -41,6 +46,9 @@ Future<void> main([List<String> args = const []]) async {
   final mode = await prefs.getString('appearance');
   final previousOffline = await prefs.getBool('offline_start') ?? false;
   await TransferDownloads.instance.init();
+  // No network call: restore the per-device preference before the first Send.
+  try{await AutoCloudTransferPreference.instance.load();}
+  catch(e){debugPrint('Auto Cloud preference restore failed: $e');}
   // CI emulator only: run the real LAN backend without first-use tapping.
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
@@ -1822,6 +1830,8 @@ class CloudInboxCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final grouped = items.length > 1;
+    final device = items.first.deviceTransfer;
+    final sent = device && items.first.senderId == appLan.deviceId;
     Widget action(String name, IconData icon, VoidCallback onPressed) =>
       IconButton(
         tooltip: name, onPressed: onPressed, iconSize: 19,
@@ -1830,7 +1840,7 @@ class CloudInboxCard extends StatelessWidget {
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: FileTheme.pink));
     return TransferBubble(
-      incoming: true,
+      incoming: !sent,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 15,
@@ -1838,7 +1848,7 @@ class CloudInboxCard extends StatelessWidget {
             child: const Icon(Icons.download_rounded,
               size: 19, color: FileTheme.pink)),
           const SizedBox(width: 8),
-          Expanded(child: Text('From Guest browser · Guest QR · Online',
+          Expanded(child: Text(device ? (sent ? 'Sent · Online / Cloud' : 'From '+items.first.senderName+' · Online / Cloud') : 'From Guest browser · Guest QR · Online',
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: FileTheme.foreground(context),
               fontWeight: FontWeight.w700, fontSize: 12))),
@@ -1872,15 +1882,15 @@ class CloudInboxCard extends StatelessWidget {
                       const SizedBox(height: 7),
                       Align(alignment: Alignment.centerRight,
                         child: TransferCardActions(actions: [
-                          Stack(clipBehavior: Clip.none, children: [
-                            action('Download received QR file', Icons.download_rounded,
+                          if(!sent) Stack(clipBehavior: Clip.none, children: [
+                            action(device?'Download received cloud file':'Download received QR file', Icons.download_rounded,
                               () => onSave(file)),
                             Positioned(top: -8, right: -4,
                               child: NewDownloadBadge(id: 'cloud_${file.id}')),
                           ]),
-                          action('Delete QR file', Icons.delete_outline_rounded,
+                          action(device?'Delete cloud file':'Delete QR file', Icons.delete_outline_rounded,
                             () => onDelete(file)),
-                          action('Share QR file externally', Icons.ios_share_rounded,
+                          action(device?'Share cloud file externally':'Share QR file externally', Icons.ios_share_rounded,
                             () => onShare(file)),
                           action('Open in Tools', Icons.auto_fix_high_rounded,
                             () => onTools(file)),
@@ -1888,8 +1898,9 @@ class CloudInboxCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Align(alignment: Alignment.centerRight,
                         child: TransferCardTime(created: file.created,
-                          status: const Icon(Icons.done_all_rounded,
-                            size: 15, color: FileTheme.pink))),
+                          status: Icon(device && file.receivedAt==null
+                              ?Icons.done_rounded:Icons.done_all_rounded,
+                            size:15,color:FileTheme.pink))),
                     ],
                   )),
                 ]);
@@ -1898,7 +1909,7 @@ class CloudInboxCard extends StatelessWidget {
           Padding(padding: const EdgeInsets.only(top: 5),
             child: Text('+${items.length - 5} more files',
               style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
-        if (grouped)
+        if (grouped && !sent)
           Align(alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: () async {
@@ -1912,10 +1923,12 @@ class CloudInboxCard extends StatelessWidget {
 }
 
 class TimelineGroup {
-  const TimelineGroup({this.lan, this.cloud});
+  const TimelineGroup({this.lan, this.cloud, this.upload});
   final List<LanFile>? lan;
   final List<CloudFile>? cloud;
-  DateTime get created => lan?.first.created ?? cloud!.first.created;
+  final CloudUploadJob? upload;
+  DateTime get created =>
+    upload?.created ?? lan?.first.created ?? cloud!.first.created;
 }
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
@@ -1930,15 +1943,18 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final _scaffold = GlobalKey<ScaffoldState>();
   final List<PendingBatch> _staged = [];
+  final TextEditingController _messageController=TextEditingController();
   String _filter = 'All';
   bool _choosing = false;
   bool _showSamples = true;
   bool _refreshing = false;
+  bool _sending = false;
   bool _desktopSidebarVisible = true;
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
-  String _keyOf(TimelineGroup g)=>g.lan!=null
-    ?'lan:${g.lan!.first.id}':'qr:${g.cloud!.first.id}';
+  String _keyOf(TimelineGroup g)=>g.upload!=null
+    ?'upload:${g.upload!.localId}'
+    : g.lan!=null ?'lan:${g.lan!.first.id}':'qr:${g.cloud!.first.id}';
   void _toggleCard(TimelineGroup g){
     if(_bulkBusy)return;
     final key=_keyOf(g);
@@ -2028,10 +2044,82 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       });
     }
   }
+  Widget _cloudUploadCard(CloudUploadJob job) {
+    final progress=job.progress.clamp(0.0,1.0).toDouble();
+    return TransferBubble(
+      incoming:false,
+      child:Row(children:[
+        SizedBox(width:44,height:44,child:job.failed
+          ?IconButton(
+              tooltip:'Retry failed Cloud upload',
+              icon:const Icon(Icons.refresh_rounded),
+              color:FileTheme.pink,
+              onPressed:()=>unawaited(
+                PersonalCloud.instance.retryDeviceUpload(job)))
+          :job.uploading
+          ?TweenAnimationBuilder<double>(
+              tween:Tween<double>(begin:0,end:progress),
+              duration:const Duration(milliseconds:260),
+              builder:(context,value,_)=>Stack(alignment:Alignment.center,
+                children:[
+                  CircularProgressIndicator(value:value,strokeWidth:3,
+                    color:FileTheme.pink),
+                  Text('${(value*100).round()}%',style:const TextStyle(
+                    fontSize:10,fontWeight:FontWeight.bold)),
+                ]))
+          :const Icon(Icons.done_rounded,color:FileTheme.pink)),
+        const SizedBox(width:12),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+          children:[
+            Text(job.name,maxLines:1,overflow:TextOverflow.ellipsis,
+              style:const TextStyle(fontWeight:FontWeight.bold)),
+            const SizedBox(height:3),
+            Text(job.failed?'Cloud upload failed · Tap retry'
+                :job.uploading?'Online / Cloud · Uploading'
+                :'Online / Cloud · Uploaded',
+              style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+            if(job.error!=null) Text(job.error!,maxLines:2,
+              style:const TextStyle(fontSize:10,color:Colors.deepOrange)),
+          ])),
+        if(!job.uploading && !job.failed)
+          const Icon(Icons.done_rounded,color:FileTheme.pink,size:18)
+      ]),
+    );
+  }
+
   Widget _multiSelectCard(TimelineGroup g){
     final selected=_selectedCards.containsKey(_keyOf(g));
     final active=_selectedCards.isNotEmpty;
-    final card=g.lan!=null
+    final lanText=g.lan!=null && g.lan!.length==1 &&
+      FileShareText.isText(g.lan!.first.name);
+    final cloudText=g.cloud!=null && g.cloud!.length==1 &&
+      FileShareText.isText(g.cloud!.first.name);
+    final card=lanText
+      ?TextTransferCard(
+        key:ValueKey('text-lan-${g.lan!.first.id}'),
+        wrap:(content)=>TransferBubble(incoming:g.lan!.first.incoming,child:content),
+        readMessage:()async=>File(g.lan!.first.path),
+        onDelete:()=>_delete(g.lan!.first),
+        incoming:g.lan!.first.incoming,
+        source:(g.lan!.first.incoming?'From ':'To ')+g.lan!.first.peer+' · Offline LAN',
+        created:g.lan!.first.created,
+        status:Icon(g.lan!.first.state==TransferState.delivered
+          ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,color:FileTheme.pink))
+      :cloudText
+      ?TextTransferCard(
+        key:ValueKey('text-cloud-${g.cloud!.first.id}'),
+        wrap:(content)=>TransferBubble(incoming:g.cloud!.first.senderId!=appLan.deviceId,child:content),
+        readMessage:()=>PersonalCloud.instance.download(g.cloud!.first),
+        onDelete:()=>_deleteCloud(g.cloud!.first),
+        incoming:g.cloud!.first.senderId!=appLan.deviceId,
+        source:g.cloud!.first.senderId==appLan.deviceId
+          ?'Sent · Online / Cloud'
+          :'From ${g.cloud!.first.senderName} · Online / Cloud',
+        created:g.cloud!.first.created,
+        status:Icon(g.cloud!.first.receivedAt==null
+          ?Icons.done_rounded:Icons.done_all_rounded,size:15,color:FileTheme.pink))
+      :g.upload!=null ? _cloudUploadCard(g.upload!)
+      :g.lan!=null
       ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
         onDelete:_delete,onShare:_share,onTools:_openFileTools)
       :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
@@ -2079,14 +2167,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   static const _native = MethodChannel('file_share.native');
   Timer? _midnight;
   bool _dashboardForeground=true;
+  bool _previousSignedIn=false;
 
   void _resumeCloudInbox() {
     if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
     final cloud=PersonalCloud.instance;
     if(cloud.signedIn){
+      // The WebSocket reconciles on connect and pushes future changes.
+      // Returning from brief 'inactive' state with a healthy socket should
+      // not issue another Worker/D1 request.
       cloud.startLiveInbox();
-      // Fetch once when opening/resuming to recover missed offline events.
-      if(!cloud.loading)unawaited(cloud.refreshFiles());
     }
   }
 
@@ -2110,8 +2200,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
     }else if(state==AppLifecycleState.paused ||
-             state==AppLifecycleState.inactive ||
              state==AppLifecycleState.detached){
+      // 'inactive' may be a brief system permission sheet: keep the socket.
       // Windows tray is still a running foreground-capable desktop process:
       // keep the event-driven QR inbox socket while hidden. Android releases
       // it on background to respect phone battery/platform restrictions.
@@ -2128,6 +2218,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _previousSignedIn=PersonalCloud.instance.signedIn;
     _armMidnight();
     appLan.addListener(_changed);
     PersonalCloud.instance.addListener(_changed);
@@ -2159,7 +2250,23 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     });
   }
 
-  void _changed() { if (mounted) setState(() {}); }
+  void _changed() {
+    if(!mounted)return;
+    final signedIn=PersonalCloud.instance.signedIn;
+    // Reconnect immediately on login without creating a refresh loop:
+    // refreshFiles() also notifies listeners.
+    if(signedIn!=_previousSignedIn){
+      _previousSignedIn=signedIn;
+      if(signedIn){
+        if(_dashboardForeground && widget.enableBackends){
+          PersonalCloud.instance.startLiveInbox();
+        }
+      }else{
+        PersonalCloud.instance.stopLiveInbox();
+      }
+    }
+    setState(() {});
+  }
 
   Future<void> _importEditedCart() async {
     if(!mounted)return;
@@ -2185,6 +2292,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _midnight?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
+    _messageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appLan.removeListener(_changed);
     PersonalCloud.instance.removeListener(_changed);
@@ -2421,26 +2529,105 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   /// durably copied them, never the user's original or image history.
   Future<void> _cleanupEditedCartSnapshots(Iterable<File> sources) async {
     final root=await getApplicationSupportDirectory();
-    final prefix=root.path+Platform.pathSeparator+'image_editing_cart'+
-      Platform.pathSeparator;
+    // Only our transient transfer snapshots; never remove the original,
+    // received LAN/Cloud file, or editor history. LAN enqueue has already
+    // durably copied the file before this cleanup is called.
+    final prefixes=[
+      for(final folder in ['image_editing_cart','signature_cart','editor_cart_versions'])
+        root.path+Platform.pathSeparator+folder+Platform.pathSeparator,
+    ];
     for(final file in sources){
-      if(!file.absolute.path.startsWith(prefix))continue;
+      if(!prefixes.any((prefix)=>file.absolute.path.startsWith(prefix)))continue;
       try{if(await file.exists())await file.delete();}catch(_){}
     }
   }
+  /// LAN has absolute priority for the whole Send batch: 1+ reachable
+  /// peers means NO Cloudflare upload, regardless of how many are remote.
+  /// Only a completed discovery window with zero peers permits cloud.
+  Future<void> _sendTypedText() async {
+    final message=_messageController.text;
+    if(message.trim().isEmpty){await _send();return;}
+    try{
+      final id=LanEngine.newId();
+      final file=await FileShareText.create(message,id);
+      final size=await file.length();
+      if(!mounted)return;
+      setState((){
+        _staged.add(PendingBatch(id,[file],[file.uri.pathSegments.last],[size]));
+        _messageController.clear();_showSamples=false;
+      });
+      if(!appLan.started){_snack('Text ready in Cart. Tap Send when LAN starts.');return;}
+      await _send();
+    }catch(e){_snack('Text send failed: $e');}
+  }
   Future<void> _send() async {
-    if(_staged.isEmpty || !appLan.started)return;
-    final batches=List<PendingBatch>.from(_staged);
-    for(final batch in batches){
-      try {
-        // This persists a private copy and queues even with ZERO peers.
-        await appLan.enqueue(batch.sources,names:batch.labels);
-        if(mounted)setState(()=>_staged.remove(batch));
-        unawaited(_cleanupEditedCartSnapshots(batch.sources));
-      }catch(e){_snack('Could not queue selected files: '+e.toString());}
-    }
-    if(appLan.peers.isEmpty){
-      _snack('Saved to Pending. Will send when nearby devices appear.');
+    if(_sending || _staged.isEmpty || !appLan.started)return;
+    setState(()=>_sending=true);
+    try {
+      // Refresh iOS Bonjour, Android NSD/UDP, or Windows mDNS/UDP.
+      appLan.refresh();
+      await Future<void>.delayed(const Duration(seconds:3));
+      if(!mounted)return;
+      final cloud=PersonalCloud.instance;
+      final route=chooseTransferRoute(
+        nearbyCount:appLan.peers.length,
+        cloudSignedIn:cloud.signedIn,
+        autoCloudEnabled:AutoCloudTransferPreference.instance.enabled);
+      final useLan=route==TransferRoute.lan;
+      final batches=List<PendingBatch>.from(_staged);
+      if(route==TransferRoute.pending){
+        // Preserve previous no-login behavior: queue locally, never upload.
+        for(final batch in batches){
+          try{
+            await appLan.enqueue(batch.sources,names:batch.labels);
+            if(mounted)setState(()=>_staged.remove(batch));
+            unawaited(_cleanupEditedCartSnapshots(batch.sources));
+          }catch(e){_snack('Could not queue files: '+e.toString());}
+        }
+        _snack('LAN Pending: auto Cloud is disabled or not logged in. '+
+          'Will send when a nearby LAN device connects.');
+        return;
+      }
+      var successful=0,failed=0;
+      for(final batch in batches){
+        try{
+          if(useLan){
+            await appLan.enqueue(batch.sources,names:batch.labels);
+            successful+=batch.sources.length;
+            if(mounted)setState(()=>_staged.remove(batch));
+            unawaited(_cleanupEditedCartSnapshots(batch.sources));
+          }else{
+            final id=appLan.deviceId;
+            if(id==null)throw StateError('Device ID unavailable');
+            // Send moves each file straight into the Dashboard as a real
+            // uploading card. Uploads continue asynchronously; no double send.
+            while(batch.sources.isNotEmpty){
+              if(appLan.peers.isNotEmpty){
+                throw StateError('LAN device appeared. Remaining Cart files will use LAN when Send is tapped.');
+              }
+              final source=batch.sources.first,name=batch.labels.first;
+              cloud.queueDeviceUpload(source,name,id);
+              if(mounted)setState((){
+                batch.sources.removeAt(0);
+                batch.labels.removeAt(0);
+                batch.sizes.removeAt(0);
+                if(batch.sources.isEmpty)_staged.remove(batch);
+              });
+              successful++;
+            }
+          }
+        }catch(e){
+          failed++;
+          _snack(useLan?'LAN queue failed: '+e.toString():
+            'Cloud upload stopped. Remaining files kept in Cart: '+e.toString());
+        }
+      }
+      if(failed==0){
+        _snack(useLan?'Nearby devices found: sent on LAN only.':
+          'No nearby devices: $successful file(s) uploading to Cloudflare.');
+      }
+    }finally{
+      if(mounted)setState(()=>_sending=false);
     }
   }
 
@@ -2507,13 +2694,18 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
     final timeline = groupedLan.values.map((group) =>
       TimelineGroup(lan: group)).toList();
-    if (_filter != 'Sent') {
-      final groupedCloud = <String, List<CloudFile>>{};
-      for (final item in PersonalCloud.instance.files) {
-        groupedCloud.putIfAbsent(item.session, () => []).add(item);
-      }
-      timeline.addAll(groupedCloud.values.map((group) =>
-        TimelineGroup(cloud: group)));
+    final groupedCloud = <String, List<CloudFile>>{};
+    for (final item in PersonalCloud.instance.files) {
+      final sent = item.deviceTransfer && item.senderId == appLan.deviceId;
+      if((_filter == 'Sent' && !sent) ||
+         (_filter == 'Received' && sent))continue;
+      groupedCloud.putIfAbsent(item.session, () => []).add(item);
+    }
+    timeline.addAll(groupedCloud.values.map((group) =>
+      TimelineGroup(cloud: group)));
+    if(_filter!='Received'){
+      timeline.addAll(PersonalCloud.instance.outgoingUploads.map(
+        (job)=>TimelineGroup(upload:job)));
     }
     timeline.sort((a, b) => b.created.compareTo(a.created));
     return timeline;
@@ -2521,7 +2713,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   LanFile _cloudAsLocalFile(CloudFile entry, File local) => LanFile(
     id:'cloud_'+entry.id,batch:entry.session,name:entry.name,
-    path:local.path,peer:'Guest browser',incoming:true,
+    path:local.path,peer:entry.deviceTransfer ? entry.senderName : 'Guest browser',
+    incoming:entry.senderId!=appLan.deviceId,
     size:entry.size,created:entry.created,state:TransferState.delivered);
 
   Future<void> _previewCloud(CloudFile entry) async {
@@ -2558,6 +2751,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       final result = await TransferDownloads.instance.export(downloaded, entry.name);
       if (result == null) return;
       await TransferDownloads.instance.markSaved('cloud_${entry.id}');
+      if(entry.deviceTransfer){
+        try{
+          await PersonalCloud.instance.acknowledgeDeviceReceipt(entry,appLan.deviceId);
+        }catch(e){debugPrint('Delivery receipt failed: $e');}
+      }
       _snack(Platform.isAndroid
         ? 'Downloaded to ${_isCloudImage(entry.name) ? 'Gallery / DCIM' : 'Downloads'}'
         : 'Saved: $result');
@@ -2646,6 +2844,37 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     ));
   }
 
+  /// This switch affects only the outgoing remote-device fallback.
+  /// Guest QR, logged-in incoming Cloud cards and realtime QR notifications
+  /// never observe this setting and therefore remain available at all times.
+  Widget _autoCloudTransferToggle({bool compact=false}) =>
+    AnimatedBuilder(
+      animation:AutoCloudTransferPreference.instance,
+      builder:(context,_) {
+        final preference=AutoCloudTransferPreference.instance;
+        return Row(mainAxisSize:MainAxisSize.min,children:[
+          if(!compact)Expanded(child:Column(
+            crossAxisAlignment:CrossAxisAlignment.start,children:[
+              const Text('Auto Cloud Transfer',
+                style:TextStyle(fontWeight:FontWeight.w700)),
+              Text(preference.enabled
+                ? 'ON: LAN first; Cloud if no LAN and signed in'
+                : 'OFF: LAN only; files wait for nearby devices',
+                style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+            ])),
+          if(compact)const Icon(Icons.cloud_outlined,
+            size:17,color:FileTheme.violet),
+          Switch.adaptive(
+            value:preference.enabled,
+            onChanged:(enabled){
+              unawaited(preference.setEnabled(enabled).catchError((Object e){
+                if(context.mounted)_snack('Could not save Cloud setting: $e');
+              }));
+            }),
+        ]);
+      },
+    );
+
   Widget _dashboardColumn(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
     final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
@@ -2708,6 +2937,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       onPressed:()=>_navigate('My QR'),
                       icon:const Icon(Icons.qr_code_2_rounded,
                         color:FileTheme.violet)),
+                    _autoCloudTransferToggle(compact:true),
                     AppearanceButton(mode:widget.mode,onChange:widget.onMode),
                     IconButton(tooltip:'Refresh nearby LAN devices',
                       onPressed:_refreshing?null:_refreshNearby,
@@ -2791,15 +3021,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     onPressed:()=>_navigate('Toolbox'),
                     icon:const Icon(Icons.handyman_outlined,
                       color:FileTheme.violet)),
-                  Expanded(child: Text(_staged.isEmpty
-                      ? 'Choose files to send...'
-                      : _staged.length.toString() + ' selection(s)',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12,
-                      color: FileTheme.muted(context)))),
+                  Expanded(child:TextField(
+                    controller:_messageController,
+                    minLines:1,maxLines:5,
+                    textCapitalization:TextCapitalization.sentences,
+                    keyboardType:TextInputType.multiline,
+                    textInputAction:TextInputAction.newline,
+                    decoration:InputDecoration(
+                      hintText:'Type or paste a message…',
+                      hintStyle:TextStyle(fontSize:12,color:FileTheme.muted(context)),
+                      border:InputBorder.none,isDense:true),
+                    onChanged:(_)=>setState((){}))),
                   IconButton.filled(
-                    tooltip: 'Send selected files',
-                    onPressed: _staged.isEmpty ? null : () => unawaited(_send()),
+                    tooltip:_messageController.text.trim().isNotEmpty
+                      ?'Send text message':'Send selected files',
+                    onPressed:(_messageController.text.trim().isEmpty && _staged.isEmpty)
+                      || _sending ? null : () => unawaited(_sendTypedText()),
                     icon: const Icon(Icons.send_rounded)),
                 ]),
               ),
@@ -3503,17 +3740,6 @@ class _MyQrPageState extends State<MyQrPage> {
     finally{if(mounted)setState(()=>_busy=false);}
   }
 
-  Future<void> _revoke() async {
-    final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(
-      title:const Text('Revoke permanent QR?'),
-      content:const Text('Guests will no longer be able to use the old QR URL.'),
-      actions:[
-        TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),
-        FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Revoke')),
-      ],
-    ));
-    if(yes==true) await _run(() => PersonalCloud.instance.revokeQr());
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -3542,7 +3768,7 @@ class _MyQrPageState extends State<MyQrPage> {
                   color:FileTheme.foreground(context))),
               const SizedBox(height:10),
               Text(cloud.signedIn
-                  ? 'Your QR remains until you revoke or regenerate it.'
+                  ? 'Your Guest QR remains available in both Auto Cloud modes.'
                   : 'Connect your own Cloudflare Worker first.',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:12),
                 textAlign:TextAlign.center),
@@ -3587,13 +3813,14 @@ class _MyQrPageState extends State<MyQrPage> {
                       icon:const Icon(Icons.share_outlined),
                       label:const Text('Share QR')),
                     OutlinedButton.icon(
+                      onPressed:_busy?null:()=>_run(
+                        ()=>printGuestQr(link)),
+                      icon:const Icon(Icons.print_rounded),
+                      label:const Text('Print QR')),
+                    OutlinedButton.icon(
                       onPressed:_busy?null:()=>_run(()=>cloud.regenerateQr()),
                       icon:const Icon(Icons.refresh_rounded),
                       label:const Text('Regenerate')),
-                    OutlinedButton.icon(
-                      onPressed:_busy?null:_revoke,
-                      icon:const Icon(Icons.delete_outline_rounded),
-                      label:const Text('Revoke')),
                   ]),
               ],
               if(_busy)const Padding(padding:EdgeInsets.all(14),
@@ -3602,6 +3829,38 @@ class _MyQrPageState extends State<MyQrPage> {
                 child:Text(_error!,style:const TextStyle(
                   color:Colors.deepOrange,fontSize:12))),
             ])),
+            const SizedBox(height:14),
+            DesignPanel(child:AnimatedBuilder(
+              animation:AutoCloudTransferPreference.instance,
+              builder:(context,_) {
+                final pref=AutoCloudTransferPreference.instance;
+                return Row(children:[
+                  const Icon(Icons.cloud_outlined,color:FileTheme.violet),
+                  const SizedBox(width:12),
+                  Expanded(child:Column(
+                    crossAxisAlignment:CrossAxisAlignment.start,children:[
+                      const Text('Auto Cloud Transfer',
+                        style:TextStyle(fontWeight:FontWeight.w700)),
+                      Text(pref.enabled
+                        ? 'ON: LAN first; Cloud if zero LAN devices and logged in'
+                        : 'OFF: LAN only; files wait for a LAN device',
+                        style:TextStyle(fontSize:11,
+                          color:FileTheme.muted(context))),
+                      const SizedBox(height:3),
+                      const Text('Guest QR always works in either mode.',
+                        style:TextStyle(fontSize:11,color:FileTheme.violet)),
+                    ])),
+                  Switch.adaptive(value:pref.enabled,
+                    onChanged:(value){
+                      unawaited(pref.setEnabled(value).catchError((Object e){
+                        if(context.mounted)ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content:Text(
+                            'Could not save Cloud setting: $e')));
+                      }));
+                    }),
+                ]);
+              },
+            )),
             const SizedBox(height:14),
             DesignPanel(child:Text(
               'Guest limit: 200 MB total and 4 upload sessions per IST day. '

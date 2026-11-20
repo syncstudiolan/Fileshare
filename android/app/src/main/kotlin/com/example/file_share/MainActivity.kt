@@ -361,7 +361,7 @@ class FileShareApplication : Application() {
             .filter { it.code >= 32 }.take(140).ifBlank { "document.pdf" }
         val name = if (safe.endsWith(".pdf", ignoreCase = true)) safe else "$safe.pdf"
         val folder = File(filesDir, "fileshare_inbox").apply { mkdirs() }
-        val copy = File(folder, "pdf_cart_" + System.nanoTime() + "_" + name)
+        val copy = File(folder, "pdf_cart_" + java.util.UUID.randomUUID().toString() + "_" + name)
         return try {
             source.copyTo(copy)
             synchronized(shared) {

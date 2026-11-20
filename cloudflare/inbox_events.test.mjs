@@ -86,6 +86,9 @@ test('midnight clears QR R2 and D1 in batches and broadcasts only once',async()=
           return this;
         },
         async all(){
+          // This fixture has expired Guest QR files but no device transfers.
+          if(sql.startsWith('SELECT id,object_key,upload_id,completed FROM device_transfers'))
+            return {results:[]};
           if(!sql.startsWith('SELECT id,object_key,upload_id FROM uploads'))
             throw Error('Unexpected SELECT '+sql);
           return {results:[...uploads.values()].filter(

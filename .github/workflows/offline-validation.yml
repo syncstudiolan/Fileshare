@@ -42,6 +42,23 @@ jobs:
       - run: flutter pub get
       - name: Repair upstream WebView ProGuard configuration for AGP 9
         run: python3 tool/fix_legacy_inappwebview_gradle.py
+      - name: Check existing Worker and automatic device-transfer schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check cloudflare/worker.js
+          node --test cloudflare/device_receipt.test.mjs cloudflare/inbox_events.test.mjs cloudflare/guest_instant.test.mjs cloudflare/auto_cloud_midnight.test.mjs
+          python3 - <<'PY'
+          import sqlite3
+          connection=sqlite3.connect(':memory:')
+          script=open('cloudflare/schema.sql',encoding='utf8').read()
+          connection.executescript(script)
+          for table in ('device_transfers','device_transfer_parts','uploads','accounts'):
+              assert connection.execute(
+                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                  (table,)).fetchone(),table
+          print('Existing Cloudflare setup auto-installs device transfer tables.')
+          PY
       - name: Analyze all Dart sources
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Run Toolbox UI and image processing regression tests
@@ -200,11 +217,12 @@ jobs:
       - run: flutter config --enable-windows-desktop
       - name: Generate missing Windows runner
         run: flutter create --project-name file_share --platforms=windows .
-      - name: Generate final Windows EXE, installer and tray logo
+      - name: Generate and verify File Share Windows taskbar EXE icon
         shell: pwsh
         run: |
           python -m pip install --quiet Pillow
           python tool/generate_brand_assets.py
+          python tool/fix_windows_taskbar.py
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
@@ -410,7 +428,7 @@ jobs:
 
   publish_windows_release:
     name: Publish Windows installer and update manifest
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows.result == 'success'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.windows.result == 'success'
     needs: [windows]
     runs-on: ubuntu-latest
     permissions:

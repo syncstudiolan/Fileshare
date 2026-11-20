@@ -417,10 +417,8 @@ async function ownerApi(request, env, url) {
     return json({ok: true, qr: code.token,
       url: new URL('/q/' + code.token, request.url).href});
   }
-  if (url.pathname === '/v1/owner/qr' && request.method === 'DELETE') {
-    await env.DB.prepare('UPDATE qr_codes SET active=0 WHERE active=1').run();
-    return json({ok: true});
-  }
+  // Guest QR has no disable endpoint: the Auto Cloud Transfer preference
+  // affects only outgoing logged-in device transfers, never Guest QR uploads.
   if (url.pathname === '/v1/owner/qr/regenerate' && request.method === 'POST') {
     await env.DB.prepare('UPDATE qr_codes SET active=0 WHERE active=1').run();
     const token = id() + id();
@@ -429,6 +427,24 @@ async function ownerApi(request, env, url) {
     ).bind(token, Date.now()).run();
     return json({ok: true, qr: token,
       url: new URL('/q/' + token, request.url).href});
+  }
+  // One authenticated HTTP request returns both QR and Cloud transfer inbox
+  // metadata. Two indexed D1 reads but HALF the Worker HTTP requests per
+  // realtime event; no per-device database records or timer-based polling.
+  if (url.pathname === '/v1/owner/inbox' && request.method === 'GET') {
+    const now=Date.now();
+    const [qr,transfers]=await Promise.all([
+      env.DB.prepare(
+        'SELECT id,name,size,session_id,created_at FROM uploads '+
+        'WHERE completed=1 AND expires_at>? ORDER BY created_at DESC LIMIT 100'
+      ).bind(now).all(),
+      env.DB.prepare(
+        'SELECT id,name,size,sender_id,sender_name,received_at,received_by,created_at,expires_at '+
+        'FROM device_transfers WHERE completed=1 AND expires_at>? '+
+        'ORDER BY created_at DESC LIMIT 100'
+      ).bind(now).all(),
+    ]);
+    return json({ok:true,files:qr.results||[],transfers:transfers.results||[]});
   }
   if (url.pathname === '/v1/owner/files' && request.method === 'GET') {
     const offset = Math.max(0, Math.min(100000, Number(url.searchParams.get('offset')) || 0));
@@ -470,7 +486,123 @@ async function ownerApi(request, env, url) {
   return fail('Not found', 404);
 }
 
-// QR-only, midnight-IST cleanup. No persistent delete queue is created.
+
+// Device-to-device remote transfer shares the owner's existing login and R2.
+// Each upload is initiated only after a completed zero-peer LAN discovery.
+async function deviceTransferApi(request,env,url){
+  if(!await owner(request,env))return fail('Login required',401);
+  const path=url.pathname,now=Date.now();
+  if(path==='/v1/owner/transfers'&&request.method==='GET'){
+    const data=await env.DB.prepare(
+      'SELECT id,name,size,sender_id,sender_name,received_at,received_by,created_at,expires_at FROM device_transfers '+
+      'WHERE completed=1 AND expires_at>? ORDER BY created_at DESC LIMIT 100'
+    ).bind(now).all();
+    return json({ok:true,files:data.results});
+  }
+  if(path==='/v1/owner/transfer'&&request.method==='POST'){
+    const body=await request.json().catch(()=>null);
+    if(typeof body?.name!=='string'||!body.name.trim()||body.name.length>500||
+       !Number.isSafeInteger(body.size)||body.size<1||body.size>QUOTA||
+       typeof body.senderId!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(body.senderId))
+      return fail('Invalid file or sender; max 200 MB',413);
+    const fileId=id(),key='device-transfers/'+fileId;
+    // Device-to-device Cloud transfers and Guest QR share the SAME midnight
+    // IST expiry. LAN files alone use rolling 24-hour local retention.
+    const expiresAt=nextMidnightIST(now);
+    const upload=body.size>CHUNK?await env.FILES.createMultipartUpload(key,{
+      httpMetadata:{contentType:'application/octet-stream'}}):null;
+    try{
+      await env.DB.prepare(
+        'INSERT INTO device_transfers(id,sender_id,sender_name,name,size,object_key,upload_id,created_at,expires_at) '+
+        'VALUES(?,?,?,?,?,?,?,?,?)'
+      ).bind(fileId,body.senderId,safeName(body.senderName||'Device'),
+        safeName(body.name),body.size,key,upload?.uploadId??null,now,expiresAt).run();
+    }catch(e){if(upload)await upload.abort().catch(()=>{});throw e;}
+    return json({ok:true,id:fileId,chunkSize:CHUNK,expiresAt});
+  }
+  const match=path.match(/^\/v1\/owner\/transfer\/([a-zA-Z0-9-]+)(?:\/(part\/[0-9]+|complete|received))?$/);
+  if(!match)return fail('Not found',404);
+  const fileId=match[1],mode=match[2];
+  const f=await env.DB.prepare('SELECT * FROM device_transfers WHERE id=?')
+    .bind(fileId).first();
+  if(!f||f.expires_at<=now)return fail('Transfer expired',404);
+  // Double tick means a *different* logged-in device has fully fetched
+  // the file and explicitly acknowledged its local copy, not just that R2
+  // stored it. Metadata listing and sender's own reads never acknowledge.
+  if(mode==='received'&&request.method==='POST'){
+    if(!f.completed)return fail('Upload not complete',409);
+    const body=await request.json().catch(()=>null);
+    const receiverId=body?.deviceId;
+    if(typeof receiverId!=='string'||
+       !/^[a-zA-Z0-9_-]{8,100}$/.test(receiverId)||
+       receiverId===f.sender_id)return fail('Other approved device ID required',400);
+    const result=await env.DB.prepare(
+      'UPDATE device_transfers SET received_at=?,received_by=? '+
+      'WHERE id=? AND completed=1 AND received_at IS NULL'
+    ).bind(now,receiverId,fileId).run();
+    if(result.meta?.changes)await notifyOwnerInbox(env);
+    return json({ok:true,received:true});
+  }
+  if(!mode&&request.method==='GET'){
+    if(!f.completed)return fail('Upload incomplete',409);
+    const obj=await env.FILES.get(f.object_key);
+    if(!obj?.body)return fail('File unavailable',404);
+    return new Response(obj.body,{headers:{
+      'content-type':'application/octet-stream','cache-control':'private, no-store',
+      'content-disposition':'attachment; filename="'+safeName(f.name).replace(/["\\]/g,'_')+'"'
+    }});
+  }
+  if(!mode&&request.method==='DELETE'){
+    if(f.upload_id&&!f.completed)
+      await env.FILES.resumeMultipartUpload(f.object_key,f.upload_id).abort().catch(()=>{});
+    await env.FILES.delete(f.object_key);
+    await env.DB.prepare('DELETE FROM device_transfer_parts WHERE file_id=?').bind(fileId).run();
+    await env.DB.prepare('DELETE FROM device_transfers WHERE id=?').bind(fileId).run();
+    await notifyOwnerInbox(env);
+    return json({ok:true});
+  }
+  if(f.completed)return json({ok:true,duplicate:true});
+  if(!mode&&request.method==='PUT'&&f.size<=CHUNK){
+    if(Number(request.headers.get('content-length'))!==f.size)return fail('Size mismatch',413);
+    const bytes=await request.arrayBuffer();
+    if(bytes.byteLength!==f.size)return fail('Incomplete file',400);
+    await env.FILES.put(f.object_key,bytes,{httpMetadata:{contentType:'application/octet-stream'}});
+    await env.DB.prepare('UPDATE device_transfers SET completed=1 WHERE id=?').bind(fileId).run();
+    await notifyOwnerInbox(env);
+    return json({ok:true});
+  }
+  if(mode?.startsWith('part/')&&request.method==='PUT'&&f.upload_id){
+    const part=Number(mode.slice(5)),count=Math.ceil(f.size/CHUNK);
+    if(!Number.isInteger(part)||part<1||part>count)return fail('Invalid part');
+    const expected=part===count?f.size-CHUNK*(count-1):CHUNK;
+    if(Number(request.headers.get('content-length'))!==expected)return fail('Chunk length mismatch',413);
+    const bytes=await request.arrayBuffer();
+    if(bytes.byteLength!==expected)return fail('Incomplete chunk',400);
+    const saved=await env.FILES.resumeMultipartUpload(f.object_key,f.upload_id).uploadPart(part,bytes);
+    await env.DB.prepare(
+      'INSERT INTO device_transfer_parts(file_id,part_number,etag) VALUES(?,?,?) '+
+      'ON CONFLICT(file_id,part_number) DO UPDATE SET etag=excluded.etag'
+    ).bind(fileId,part,saved.etag).run();
+    return json({ok:true,part});
+  }
+  if(mode==='complete'&&request.method==='POST'&&f.upload_id){
+    const rows=await env.DB.prepare(
+      'SELECT part_number,etag FROM device_transfer_parts WHERE file_id=? ORDER BY part_number'
+    ).bind(fileId).all();
+    const parts=rows.results||[],count=Math.ceil(f.size/CHUNK);
+    if(parts.length!==count||parts.some((p,i)=>p.part_number!==i+1))return fail('Missing chunks',409);
+    try{
+      await env.FILES.resumeMultipartUpload(f.object_key,f.upload_id).complete(
+        parts.map(p=>({partNumber:p.part_number,etag:p.etag})));
+    }catch(e){if(!await env.FILES.head(f.object_key))throw e;}
+    await env.DB.prepare('UPDATE device_transfers SET completed=1 WHERE id=?').bind(fileId).run();
+    await notifyOwnerInbox(env);
+    return json({ok:true});
+  }
+  return fail('Unsupported transfer action',405);
+}
+
+// QR + Cloud transfer midnight-IST cleanup. No persistent delete queue is created.
 // A scheduled invocation deletes R2 objects in batches, removes their D1
 // uploads and multipart-part records, then broadcasts ONE invalidation event
 // for the whole run. Retry crons reuse the same expired D1 rows only if an
@@ -513,6 +645,25 @@ async function cleanup(env) {
           ).bind(...chunk),
         ]);
         recordsDeleted+=chunk.length;
+      }
+    }
+    // Guest QR and authenticated Cloud transfers both expire at midnight IST.
+    // Abort unfinished multipart jobs and delete R2, part records, D1 metadata.
+    for(let batch=0;batch<20;batch++){
+      const result=await env.DB.prepare(
+        'SELECT id,object_key,upload_id,completed FROM device_transfers WHERE expires_at<=? LIMIT 200'
+      ).bind(now).all(), items=result.results||[];
+      if(!items.length)break;
+      for(const item of items)if(item.upload_id&&!item.completed)
+        await env.FILES.resumeMultipartUpload(item.object_key,item.upload_id).abort().catch(()=>{});
+      await env.FILES.delete(items.map(item=>item.object_key));
+      for(let i=0;i<items.length;i+=90){
+        const ids=items.slice(i,i+90).map(item=>item.id),qs=ids.map(()=>'?').join(',');
+        await env.DB.batch([
+          env.DB.prepare('DELETE FROM device_transfer_parts WHERE file_id IN ('+qs+')').bind(...ids),
+          env.DB.prepare('DELETE FROM device_transfers WHERE id IN ('+qs+')').bind(...ids)
+        ]);
+        recordsDeleted+=ids.length;
       }
     }
     // Remove expired, unreferenced guest session metadata at midnight.
@@ -559,6 +710,11 @@ export default {
         return room.fetch(new Request('https://inbox.internal/internal/inbox-socket',{
           headers:{Upgrade:'websocket'},
         }));
+      }
+      if (url.pathname === '/v1/owner/transfers' ||
+          url.pathname === '/v1/owner/transfer' ||
+          url.pathname.startsWith('/v1/owner/transfer/')) {
+        return deviceTransferApi(request,env,url);
       }
       if (url.pathname.startsWith('/v1/owner/')) {
         return ownerApi(request, env, url);

@@ -28,10 +28,11 @@ RestartApplications=no
 
 [Files]
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\assets\branding\file_share_tray.ico"; DestDir: "{app}"; DestName: "FileShare.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\File Share"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\File Share"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\File Share"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\FileShare.ico"; AppUserModelID: "FileShare.Desktop"
+Name: "{autodesktop}\File Share"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\FileShare.ico"; AppUserModelID: "FileShare.Desktop"; Tasks: desktopicon
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
