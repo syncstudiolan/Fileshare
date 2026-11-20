@@ -1934,6 +1934,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _choosing = false;
   bool _showSamples = true;
   bool _refreshing = false;
+  bool _sending = false;
   bool _desktopSidebarVisible = true;
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
@@ -2428,19 +2429,56 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       try{if(await file.exists())await file.delete();}catch(_){}
     }
   }
+  /// LAN has absolute priority for the whole Send batch: 1+ reachable
+  /// peers means NO Cloudflare upload, regardless of how many are remote.
+  /// Only a completed discovery window with zero peers permits cloud.
   Future<void> _send() async {
-    if(_staged.isEmpty || !appLan.started)return;
-    final batches=List<PendingBatch>.from(_staged);
-    for(final batch in batches){
-      try {
-        // This persists a private copy and queues even with ZERO peers.
-        await appLan.enqueue(batch.sources,names:batch.labels);
-        if(mounted)setState(()=>_staged.remove(batch));
-        unawaited(_cleanupEditedCartSnapshots(batch.sources));
-      }catch(e){_snack('Could not queue selected files: '+e.toString());}
-    }
-    if(appLan.peers.isEmpty){
-      _snack('Saved to Pending. Will send when nearby devices appear.');
+    if(_sending || _staged.isEmpty || !appLan.started)return;
+    setState(()=>_sending=true);
+    try {
+      // Refresh iOS Bonjour, Android NSD/UDP, or Windows mDNS/UDP.
+      appLan.refresh();
+      await Future<void>.delayed(const Duration(seconds:3));
+      if(!mounted)return;
+      final useLan=appLan.peers.isNotEmpty;
+      final cloud=PersonalCloud.instance;
+      final batches=List<PendingBatch>.from(_staged);
+      if(!useLan && !cloud.signedIn){
+        // Preserve previous no-login behavior: queue locally, never upload.
+        for(final batch in batches){
+          try{
+            await appLan.enqueue(batch.sources,names:batch.labels);
+            if(mounted)setState(()=>_staged.remove(batch));
+            unawaited(_cleanupEditedCartSnapshots(batch.sources));
+          }catch(e){_snack('Could not queue files: '+e.toString());}
+        }
+        _snack('No LAN devices and cloud is not logged in. Saved to Pending.');
+        return;
+      }
+      for(final batch in batches){
+        try{
+          if(useLan){
+            await appLan.enqueue(batch.sources,names:batch.labels);
+          }else{
+            final id=appLan.deviceId;
+            if(id==null)throw StateError('Device ID unavailable');
+            // Cloud route is chosen ONLY when zero peers were seen at Send.
+            for(var i=0;i<batch.sources.length;i++){
+              await cloud.uploadDeviceFile(batch.sources[i],batch.labels[i],id,
+                senderName:Platform.localHostname);
+            }
+          }
+          if(mounted)setState(()=>_staged.remove(batch));
+          unawaited(_cleanupEditedCartSnapshots(batch.sources));
+        }catch(e){
+          _snack(useLan?'LAN queue failed: '+e.toString():
+            'Cloud transfer failed. File kept in Cart: '+e.toString());
+        }
+      }
+      if(useLan)_snack('Nearby device detected: sending on LAN only.');
+      else _snack('No LAN devices: uploaded using your personal cloud.');
+    }finally{
+      if(mounted)setState(()=>_sending=false);
     }
   }
 
@@ -2799,7 +2837,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.muted(context)))),
                   IconButton.filled(
                     tooltip: 'Send selected files',
-                    onPressed: _staged.isEmpty ? null : () => unawaited(_send()),
+                    onPressed: _staged.isEmpty || _sending ? null : () => unawaited(_send()),
                     icon: const Icon(Icons.send_rounded)),
                 ]),
               ),
