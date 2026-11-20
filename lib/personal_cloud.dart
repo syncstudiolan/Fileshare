@@ -13,12 +13,29 @@ import 'account_directory.dart';
 class CloudFile {
   const CloudFile({required this.id, required this.name, required this.size,
     required this.session, required this.created,
-    this.deviceTransfer=false, this.senderId='', this.senderName=''});
+    this.deviceTransfer=false, this.senderId='', this.senderName='',
+    this.receivedAt});
   final String id, name, session, senderId, senderName;
   final bool deviceTransfer;
   final int size;
   final DateTime created;
+  final DateTime? receivedAt;
 }
+
+/// A local outgoing Dashboard card, created immediately after Send.
+/// Progress reflects acknowledged R2 chunks, not a simulated timer.
+class CloudUploadJob {
+  CloudUploadJob(this.localId,this.file,this.name,this.size,this.senderId);
+  final String localId,name,senderId;
+  final File file;
+  final int size;
+  String? remoteId,error;
+  double progress=0;
+  bool uploading=true;
+  bool failed=false;
+  DateTime created=DateTime.now();
+}
+
 
 class PersonalCloud extends ChangeNotifier {
   PersonalCloud._();
@@ -32,6 +49,8 @@ class PersonalCloud extends ChangeNotifier {
   int _sessionExpiry = 0;
   String? _qrLink;
   final List<CloudFile> files = [];
+  final List<CloudUploadJob> outgoingUploads = [];
+  int _uploadSequence=0;
   final Map<String, Future<File>> _downloadsInFlight = {};
   // A single foreground WebSocket replaces all periodic inbox polling.
   WebSocket? _inboxSocket;
@@ -429,6 +448,9 @@ class PersonalCloud extends ChangeNotifier {
               session:'device_'+id,
               senderId:(entry['sender_id'] as String?)??'',
               senderName:(entry['sender_name'] as String?)??'Device',
+              receivedAt:entry['received_at'] is num
+                ?DateTime.fromMillisecondsSinceEpoch(
+                    (entry['received_at'] as num).toInt()):null,
               deviceTransfer:true,
               created:DateTime.fromMillisecondsSinceEpoch(
                 (entry['created_at'] as num).toInt())));
@@ -436,6 +458,12 @@ class PersonalCloud extends ChangeNotifier {
         }catch(e){debugPrint('Device inbox unavailable: '+e.toString());}
       }
       files..clear()..addAll(fetched);
+      // A completed outgoing progress card is replaced by the durable
+      // cloud card once it appears in the unified inbox.
+      final uploadedIds=fetched.map((f)=>f.id).toSet();
+      outgoingUploads.removeWhere((job)=>
+        !job.uploading && !job.failed && job.remoteId!=null &&
+        uploadedIds.contains(job.remoteId));
       error = null;
     } catch (e) { error = 'Cloud inbox refresh failed: ' + e.toString(); }
     finally {
@@ -450,10 +478,67 @@ class PersonalCloud extends ChangeNotifier {
     }
   }
 
+  /// Move a file out of Cart immediately; upload continues from this
+  /// existing process while the user navigates to another dashboard page.
+  /// On platforms that suspend background work (especially iOS), completion
+  /// still requires OS runtime and is not guaranteed after force-quit.
+  void queueDeviceUpload(File file,String name,String senderId) {
+    final job=CloudUploadJob(
+      '${DateTime.now().microsecondsSinceEpoch}_${_uploadSequence++}',
+      file,name,file.lengthSync(),senderId);
+    outgoingUploads.add(job);
+    notifyListeners();
+    unawaited(_runOutgoingJob(job));
+  }
+
+  Future<void> retryDeviceUpload(CloudUploadJob job) async {
+    if(job.uploading)return;
+    job.uploading=true;
+    job.failed=false;
+    job.error=null;
+    job.progress=0;
+    notifyListeners();
+    await _runOutgoingJob(job);
+  }
+
+  Future<void> _runOutgoingJob(CloudUploadJob job) async {
+    try {
+      await uploadDeviceFile(job.file,job.name,job.senderId,
+        senderName:Platform.localHostname,
+        onCreated:(id){job.remoteId=id;notifyListeners();},
+        onProgress:(fraction){
+          job.progress=fraction;
+          notifyListeners();
+        });
+      job.progress=1;
+      job.uploading=false;
+      job.failed=false;
+      notifyListeners();
+      await refreshFiles();
+    }catch(e){
+      job.uploading=false;
+      job.failed=true;
+      job.error=e.toString();
+      notifyListeners();
+    }
+  }
+
+  /// A double tick requires the receiver to have explicitly saved the
+  /// complete downloaded file. Merely seeing inbox metadata is not delivery.
+  Future<void> acknowledgeDeviceReceipt(CloudFile item,String? receiverId) async {
+    if(!item.deviceTransfer || receiverId==null ||
+       receiverId.isEmpty || receiverId==item.senderId || !signedIn)return;
+    await _call('POST','/v1/owner/transfer/${item.id}/received',{
+      'deviceId':receiverId,
+    });
+  }
+
   /// 200MB cross-network sends are only invoked after the LAN-first gate.
   /// Reuse the user's existing Cloudflare login and Worker; no second API key.
   Future<void> uploadDeviceFile(File source,String name,String senderId,
-      {String senderName='File Share'})async{
+      {String senderName='File Share',
+       void Function(double fraction)? onProgress,
+       void Function(String id)? onCreated})async{
     if(!signedIn||_host==null)throw StateError('Log in to enable cloud transfer');
     if(senderId.isEmpty)throw StateError('Device identity is not ready');
     if(!await source.exists())throw StateError('Selected file is missing');
@@ -463,15 +548,18 @@ class PersonalCloud extends ChangeNotifier {
       'name':name,'size':size,'senderId':senderId,'senderName':senderName,
     });
     final id=init['id'] as String;
+    onCreated?.call(id);
     const chunk=6*1024*1024;
     if(size<=chunk){
       await _uploadDevicePart(source,id,0,size,false);
+      onProgress?.call(1);
     }else{
       var offset=0,part=1;
       while(offset<size){
         final end=offset+chunk>size?size:offset+chunk;
         await _uploadDevicePart(source,id,offset,end,true,part:part);
         offset=end;
+        onProgress?.call(offset/size);
         part++;
       }
       await _call('POST','/v1/owner/transfer/'+id+'/complete');
