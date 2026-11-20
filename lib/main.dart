@@ -1743,11 +1743,11 @@ class LiveTransferCard extends StatelessWidget {
               Expanded(child:details),
             ]),
             const SizedBox(height:4),
-            Row(children:[
-              TransferCardTime(created:file.created,status:_status(file)),
-              const Spacer(),
-              Flexible(child:_buttons(context,file)),
-            ]),
+            Align(alignment:Alignment.centerRight,
+              child:_buttons(context,file)),
+            const SizedBox(height:3),
+            Align(alignment:Alignment.centerRight,
+              child:TransferCardTime(created:file.created,status:_status(file))),
           ]);
         }
         return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -1955,11 +1955,10 @@ class CloudInboxCard extends StatelessWidget {
                     preview,const SizedBox(width:10),Expanded(child:details),
                   ]),
                   const SizedBox(height:4),
-                  Row(children:[
-                    TransferCardTime(created:file.created,status:status),
-                    const Spacer(),
-                    Flexible(child:actions),
-                  ]),
+                  Align(alignment:Alignment.centerRight,child:actions),
+                  const SizedBox(height:3),
+                  Align(alignment:Alignment.centerRight,
+                    child:TransferCardTime(created:file.created,status:status)),
                 ]);
               return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
                 preview,const SizedBox(width:10),
@@ -2019,8 +2018,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _refreshing = false;
   bool _sending = false;
   bool _desktopSidebarVisible = true;
-  String? _dashboardNotice;
-  Timer? _dashboardNoticeTimer;
+
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
   String _keyOf(TimelineGroup g)=>g.upload!=null
@@ -2361,7 +2359,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
-    _dashboardNoticeTimer?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
@@ -2373,12 +2370,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   void _snack(String message) {
-    if (!mounted) return;
-    _dashboardNoticeTimer?.cancel();
-    setState(()=>_dashboardNotice=message);
-    _dashboardNoticeTimer=Timer(const Duration(seconds:4),(){
-      if(mounted)setState(()=>_dashboardNotice=null);
-    });
+    if(!mounted)return;
+    // Transient, non-intercepting top overlay; no dedicated LAN status card.
+    FileShareTopNotice.show(context,message,
+      duration:const Duration(seconds:4));
   }
 
   void _navigate(String title) {
@@ -3045,51 +3040,50 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ),
             ),
             Padding(
-              padding:EdgeInsets.fromLTRB(wide?24:12,5,wide?24:12,8),
-              child:Container(
-                width:double.infinity,
-                padding:const EdgeInsets.symmetric(horizontal:13,vertical:9),
-                decoration:BoxDecoration(
-                  color:FileTheme.violet.withValues(alpha:.12),
-                  borderRadius:BorderRadius.circular(19),
-                  border:Border.all(color:FileTheme.violet.withValues(alpha:.45))),
-                child:Row(children:[
-                  Icon(appLan.error!=null?Icons.warning_amber_rounded
-                    :Icons.lan_outlined,size:17,
-                    color:appLan.error!=null?Colors.orange:FileTheme.violet),
-                  const SizedBox(width:10),
-                  Expanded(child:Text(
-                    _dashboardNotice ?? appLan.error ??
-                    (appLan.receivingEnabled
-                      ?'LAN ready · ${appLan.peers.length} nearby device${appLan.peers.length==1?'':'s'}'
-                      :'LAN transfer waiting for nearby devices…'),
-                    maxLines:2,overflow:TextOverflow.ellipsis,
-                    style:TextStyle(fontSize:12,
-                      color:FileTheme.foreground(context)))),
-                  if(_dashboardNotice==null&&appLan.error==null)
-                    const Icon(Icons.more_horiz_rounded,size:18,color:FileTheme.violet),
-                ]),
-              ),
-            ),
-            Padding(
               padding: EdgeInsets.symmetric(horizontal: wide ? 24 : 10),
               child: Row(children: [
                 Expanded(
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(children: [
-                      for (final choice in const ['All', 'Sent', 'Received'])
-                        Padding(padding: const EdgeInsets.only(right: 5),
-                          child: ChoiceChip(
-                             avatar:Icon(choice=='All'?Icons.check_rounded
-                               :choice=='Sent'?Icons.send_outlined
-                               :Icons.download_rounded,size:16,
-                               color:FileTheme.violet),
-                             label:Text(choice),
-                             shape:RoundedRectangleBorder(
-                               borderRadius:BorderRadius.circular(13)),
-                             selected:choice==_filter,
-                             onSelected:(_)=>setState(()=>_filter=choice))),
+                      for(final choice in const ['All','Sent','Received'])
+                        Padding(padding:const EdgeInsets.only(right:6),
+                          child:InkWell(
+                            key:ValueKey('filter-$choice'),
+                            borderRadius:BorderRadius.circular(14),
+                            onTap:()=>setState(()=>_filter=choice),
+                            child:AnimatedContainer(
+                              duration:const Duration(milliseconds:180),
+                              height:32,
+                              padding:const EdgeInsets.symmetric(horizontal:10),
+                              decoration:BoxDecoration(
+                                borderRadius:BorderRadius.circular(14),
+                                gradient:LinearGradient(
+                                  begin:Alignment.topLeft,end:Alignment.bottomRight,
+                                  colors:choice==_filter
+                                    ? const [Color(0xFF12A9AC),Color(0xFF007580)]
+                                    : FileTheme.dark(context)
+                                      ?const [Color(0xFF1C4755),Color(0xFF102F3B)]
+                                      :const [Color(0xFFE3F0F6),Color(0xFFB9D2DE)]),
+                                border:Border.all(
+                                  color:FileTheme.dark(context)
+                                    ?const Color(0xFF3B7783):const Color(0xFFF6FCFE)),
+                                boxShadow:[BoxShadow(
+                                  color:Colors.black.withValues(alpha:.18),
+                                  offset:const Offset(0,3),blurRadius:5)]),
+                              child:Row(mainAxisSize:MainAxisSize.min,children:[
+                                Icon(choice=='All'?Icons.check_rounded
+                                  :choice=='Sent'?Icons.send_rounded:Icons.download_rounded,
+                                  size:14,color:choice==_filter
+                                    ?Colors.white:FileTheme.foreground(context)),
+                                const SizedBox(width:5),
+                                Text(choice,style:TextStyle(fontSize:12,
+                                  fontWeight:FontWeight.w600,
+                                  color:choice==_filter
+                                    ?Colors.white:FileTheme.foreground(context))),
+                              ]),
+                            ),
+                          )),
                     ]),
                   ),
                 ),
