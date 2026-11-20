@@ -72,8 +72,11 @@ Future<void> main([List<String> args = const []]) async {
       await WindowsBackground.instance.enableDefaultStart(prefs);
     }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
   }
-  if ((offline || androidBackgroundEnabled) &&
-      (Platform.isAndroid || Platform.isWindows)) {
+  // iPhone LAN receiver/discovery must start even before sign-in; local
+  // file transfer is independent of the cloud account and login flow.
+  if (Platform.isIOS ||
+      ((offline || androidBackgroundEnabled) &&
+       (Platform.isAndroid || Platform.isWindows))) {
     unawaited(appLan.start().catchError((Object e) {
       debugPrint('Background LAN start failed: $e');
     }));
@@ -2102,6 +2105,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if(state==AppLifecycleState.resumed){
       _dashboardForeground=true;
       if (Platform.isAndroid) unawaited(_takeSharedFiles());
+      if (Platform.isIOS) appLan.refresh();
       _resumeCloudInbox();
       unawaited(appLan.cleanExpired());
       PersonalCloud.instance.removeExpiredLocalEntries();
