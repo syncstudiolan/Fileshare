@@ -430,6 +430,24 @@ async function ownerApi(request, env, url) {
     return json({ok: true, qr: token,
       url: new URL('/q/' + token, request.url).href});
   }
+  // One authenticated HTTP request returns both QR and Cloud transfer inbox
+  // metadata. Two indexed D1 reads but HALF the Worker HTTP requests per
+  // realtime event; no per-device database records or timer-based polling.
+  if (url.pathname === '/v1/owner/inbox' && request.method === 'GET') {
+    const now=Date.now();
+    const [qr,transfers]=await Promise.all([
+      env.DB.prepare(
+        'SELECT id,name,size,session_id,created_at FROM uploads '+
+        'WHERE completed=1 AND expires_at>? ORDER BY created_at DESC LIMIT 100'
+      ).bind(now).all(),
+      env.DB.prepare(
+        'SELECT id,name,size,sender_id,sender_name,received_at,received_by,created_at,expires_at '+
+        'FROM device_transfers WHERE completed=1 AND expires_at>? '+
+        'ORDER BY created_at DESC LIMIT 100'
+      ).bind(now).all(),
+    ]);
+    return json({ok:true,files:qr.results||[],transfers:transfers.results||[]});
+  }
   if (url.pathname === '/v1/owner/files' && request.method === 'GET') {
     const offset = Math.max(0, Math.min(100000, Number(url.searchParams.get('offset')) || 0));
     const rows = await env.DB.prepare(
