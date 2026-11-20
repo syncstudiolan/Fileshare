@@ -7,6 +7,14 @@
     "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-512/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
+  "ios": {
+    "build": 45,
+    "notes": "Unsigned iOS release \u2014 re-sign with AppleJR using the original certificate/profile and bundle ID.",
+    "sha256": "a514d12248ce8cdec9b8a64082bafe27ce2f450c7d9ab546f37a4b3f02112fb9",
+    "size": 30251636,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-ios-unsigned-build-45/FileShare-iOS-UNSIGNED.ipa",
+    "version": "0.1.0"
+  },
   "schema": 1,
   "windows": {
     "build": 512,
