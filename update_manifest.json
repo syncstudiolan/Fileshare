@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 535,
-    "notes": "Merge PR #14: repair Android Gradle Maven dependency resolution",
-    "sha256": "679ad7f1d426165f0037c7387a3a8ca91e3465c0ff48418010826204ed0f912e",
-    "size": 114483045,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-535/FileShare-Android-ARM64-Release.apk",
+    "build": 538,
+    "notes": "Merge PR #15: teal 3D reference dashboard, compact filters and directional cards",
+    "sha256": "636f2506fed4da86e75fffd8f4369a6dfab6a9446087194525f3ca8d4cbc4961",
+    "size": 114482873,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-538/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
