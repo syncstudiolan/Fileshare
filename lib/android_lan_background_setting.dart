@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -36,8 +37,7 @@ class _AndroidLanBackgroundSettingState
         .setBool('android_receive_background',enabled);
       if(mounted)setState(()=>_enabled=enabled);
     }catch(e){
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content:Text('Background receiving could not be changed: $e')));
+      if(mounted)FileShareTopNotice.show(context,'Background receiving could not be changed: $e');
     }finally{
       if(mounted)setState(()=>_busy=false);
     }
