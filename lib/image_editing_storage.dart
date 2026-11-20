@@ -140,9 +140,9 @@ class ImageEditingCart extends ChangeNotifier {
     return '${time}_${_sequence++}';
   }
 
-  Future<File> _versionFile(String name,String version)async{
-    final root=await getApplicationSupportDirectory();
-    final folder=Directory('${root.path}${Platform.pathSeparator}editor_cart_versions');
+  Future<File> _versionFile(String name,String version,{Directory? destinationDirectory})async{
+    final folder=destinationDirectory??Directory(
+      '${(await getApplicationSupportDirectory()).path}${Platform.pathSeparator}editor_cart_versions');
     await folder.create(recursive:true);
     final safe=name.replaceAll(RegExp(r'[\\/\x00-\x1f]'),'_');
     return File('${folder.path}${Platform.pathSeparator}${version}_${safe.isEmpty?'edited_file':safe}');
@@ -151,10 +151,10 @@ class ImageEditingCart extends ChangeNotifier {
   /// Persist fresh edited bytes before notifying the Dashboard listener.
   /// The source image/draft and any previous Cart snapshot stay untouched.
   Future<ImageEditingCartEntry> addEditedBytes(
-      List<int> bytes,String name)async{
+      List<int> bytes,String name,{Directory? destinationDirectory})async{
     if(bytes.isEmpty)throw StateError('Edited file is empty');
     final version=_newVersionId();
-    final file=await _versionFile(name,version);
+    final file=await _versionFile(name,version,destinationDirectory:destinationDirectory);
     try{
       await file.writeAsBytes(bytes,flush:true);
       final item=ImageEditingCartEntry(file,name,versionId:version);
@@ -169,10 +169,10 @@ class ImageEditingCart extends ChangeNotifier {
 
   /// History and other editors can re-add the SAME source any number of times.
   Future<ImageEditingCartEntry> addEditedFile(
-      File source,String name)async{
+      File source,String name,{Directory? destinationDirectory})async{
     if(!await source.exists())throw StateError('Edited file unavailable');
     final version=_newVersionId();
-    final file=await _versionFile(name,version);
+    final file=await _versionFile(name,version,destinationDirectory:destinationDirectory);
     try{
       await source.copy(file.path);
       if(await file.length()==0)throw StateError('Edited file is empty');
