@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-      - fix/photo-enhancement-crop-signature-visual-20261119
 
 permissions:
   contents: read
