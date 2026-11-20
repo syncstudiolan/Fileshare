@@ -478,7 +478,7 @@ async function deviceTransferApi(request,env,url){
   const path=url.pathname,now=Date.now();
   if(path==='/v1/owner/transfers'&&request.method==='GET'){
     const data=await env.DB.prepare(
-      'SELECT id,name,size,sender_id,sender_name,created_at,expires_at FROM device_transfers '+
+      'SELECT id,name,size,sender_id,sender_name,received_at,received_by,created_at,expires_at FROM device_transfers '+
       'WHERE completed=1 AND expires_at>? ORDER BY created_at DESC LIMIT 100'
     ).bind(now).all();
     return json({ok:true,files:data.results});
@@ -501,12 +501,29 @@ async function deviceTransferApi(request,env,url){
     }catch(e){if(upload)await upload.abort().catch(()=>{});throw e;}
     return json({ok:true,id:fileId,chunkSize:CHUNK,expiresAt:now+DAY});
   }
-  const match=path.match(/^\/v1\/owner\/transfer\/([a-zA-Z0-9-]+)(?:\/(part\/[0-9]+|complete))?$/);
+  const match=path.match(/^\/v1\/owner\/transfer\/([a-zA-Z0-9-]+)(?:\/(part\/[0-9]+|complete|received))?$/);
   if(!match)return fail('Not found',404);
   const fileId=match[1],mode=match[2];
   const f=await env.DB.prepare('SELECT * FROM device_transfers WHERE id=?')
     .bind(fileId).first();
   if(!f||f.expires_at<=now)return fail('Transfer expired',404);
+  // Double tick means a *different* logged-in device has fully fetched
+  // the file and explicitly acknowledged its local copy, not just that R2
+  // stored it. Metadata listing and sender's own reads never acknowledge.
+  if(mode==='received'&&request.method==='POST'){
+    if(!f.completed)return fail('Upload not complete',409);
+    const body=await request.json().catch(()=>null);
+    const receiverId=body?.deviceId;
+    if(typeof receiverId!=='string'||
+       !/^[a-zA-Z0-9_-]{8,100}$/.test(receiverId)||
+       receiverId===f.sender_id)return fail('Other approved device ID required',400);
+    const result=await env.DB.prepare(
+      'UPDATE device_transfers SET received_at=?,received_by=? '+
+      'WHERE id=? AND completed=1 AND received_at IS NULL'
+    ).bind(now,receiverId,fileId).run();
+    if(result.meta?.changes)await notifyOwnerInbox(env);
+    return json({ok:true,received:true});
+  }
   if(!mode&&request.method==='GET'){
     if(!f.completed)return fail('Upload incomplete',409);
     const obj=await env.FILES.get(f.object_key);
