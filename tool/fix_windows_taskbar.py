@@ -49,12 +49,12 @@ def main()->None:
     window_icon_code='''  // File Share branded taskbar and Alt-Tab icons.
   HWND hwnd = GetHandle();
   HINSTANCE module = GetModuleHandle(nullptr);
-  HICON small = static_cast<HICON>(LoadImage(
+  HICON iconSmall = static_cast<HICON>(LoadImage(
       module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
-  HICON large = static_cast<HICON>(LoadImage(
+  HICON iconLarge = static_cast<HICON>(LoadImage(
       module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
-  if (hwnd && small) SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
-  if (hwnd && large) SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(large));
+  if (hwnd && iconSmall) SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
+  if (hwnd && iconLarge) SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconLarge));
 '''
     if on_create not in window_code:
         raise SystemExit("Unknown Flutter Windows runner: OnCreate signature changed")
