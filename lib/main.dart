@@ -2097,6 +2097,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final card=lanText
       ?TextTransferCard(
         key:ValueKey('text-lan-${g.lan!.first.id}'),
+        wrap:(content)=>TransferBubble(incoming:g.lan!.first.incoming,child:content),
         readMessage:()async=>File(g.lan!.first.path),
         onDelete:()=>_delete(g.lan!.first),
         incoming:g.lan!.first.incoming,
@@ -2107,6 +2108,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       :cloudText
       ?TextTransferCard(
         key:ValueKey('text-cloud-${g.cloud!.first.id}'),
+        wrap:(content)=>TransferBubble(incoming:g.cloud!.first.senderId!=appLan.deviceId,child:content),
         readMessage:()=>PersonalCloud.instance.download(g.cloud!.first),
         onDelete:()=>_deleteCloud(g.cloud!.first),
         incoming:g.cloud!.first.senderId!=appLan.deviceId,
