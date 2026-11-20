@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 435,
-    "notes": "ci(ios): identify macOS-only IPA build and preflight Xcode and Swift installer prerequisites",
-    "sha256": "d0e00f2e731a743106a68039068bb62cac87de65609c2cf7b183682fd61ef49d",
-    "size": 113873713,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-435/FileShare-Android-ARM64-Release.apk",
+    "build": 437,
+    "notes": "Merge PR #10: Cross-platform Bonjour/NSD LAN discovery and release validation",
+    "sha256": "c2a4fbbac075332f1795d57dc3eaad1a52179d64ed0544861bed2016abd0282c",
+    "size": 113874053,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-437/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "schema": 1,
