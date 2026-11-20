@@ -722,12 +722,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         ?'jpg':'png';
       final name='edited_${DateTime.now().microsecondsSinceEpoch}.$type';
       if(cart){
-        final directory=await getApplicationSupportDirectory();
-        final folder=Directory('${directory.path}${Platform.pathSeparator}image_editing_cart');
-        await folder.create(recursive:true);
-        final file=File('${folder.path}${Platform.pathSeparator}$name');
-        await file.writeAsBytes(data,flush:true);
-        ImageEditingCart.instance.add(file,name);
+        await ImageEditingCart.instance.addEditedBytes(data,name);
         if(mounted)returnToFileShareCart(context);
       }else if(action=='share'){
         final directory=await getTemporaryDirectory();
@@ -2283,13 +2278,9 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
   Future<void> _cart(ImageEditingDraft draft)async{
     // History's Cart always sends the saved edited stage, not import bytes.
     final original=File(draft.filePath);
-    final root=await getApplicationSupportDirectory();
-    final cart=Directory('${root.path}${Platform.pathSeparator}image_editing_cart');
-    await cart.create(recursive:true);
     final isJpg=draft.filePath.toLowerCase().endsWith('.jpg');
     final name='edited_${DateTime.now().microsecondsSinceEpoch}.${isJpg?'jpg':'png'}';
-    final file=await original.copy('${cart.path}${Platform.pathSeparator}$name');
-    ImageEditingCart.instance.add(file,name);
+    await ImageEditingCart.instance.addEditedFile(original,name);
     if(mounted)FileShareTopNotice.show(context,'Added to File Share Cart');
   }
   Future<void> _historyAction(ImageEditingDraft entry,String action)async{
