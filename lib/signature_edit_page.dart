@@ -25,6 +25,20 @@ class SignatureEditPage extends StatefulWidget {
 
 class _SignatureEditPageState extends State<SignatureEditPage> {
   Uint8List? _original,_preview;
+  Uint8List? _appliedJpeg,_appliedPreview;
+  double? _appliedAspect;
+  int? _appliedTargetKb;
+
+  void _discardApplied(){
+    _appliedJpeg=null;
+    _appliedPreview=null;
+    _appliedAspect=null;
+    _appliedTargetKb=null;
+  }
+
+  int? get _selectedTargetKb => int.tryParse(_targetController.text.trim());
+  bool get _validTarget => _selectedTargetKb!=null &&
+    _selectedTargetKb!>=5 && _selectedTargetKb!<=10240;
   String? _error;
   bool _busy=false;
   double _aspect=1.8;
@@ -76,6 +90,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       setState((){
         _original=bytes;
         _preview=bytes;
+        _discardApplied();
         _aspect=d[0]/d[1];
         _crop=SignatureCrop.full;
         _quad=[const Offset(.08,.08),const Offset(.92,.08),
@@ -122,16 +137,18 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   Future<void> _export(String action)async{
     if(_original==null||_busy)return;
-    final target=int.tryParse(_targetController.text.trim());
+    final target=_selectedTargetKb;
     if(target==null||target<5||target>10240){
       _show('Enter a target between 5 KB and 10,240 KB');
       return;
     }
     setState(()=>_busy=true);
     try{
-      final data=await SignatureEditEngine.exactJpeg(
-        _original!,_selection,_filter,target,
-        intensity:_filterIntensity);
+      final data=_appliedTargetKb==target && _appliedJpeg!=null
+        ?_appliedJpeg!
+        :await SignatureEditEngine.exactJpeg(
+          _original!,_selection,_filter,target,
+          intensity:_filterIntensity);
       if(data.length!=target*1024)throw StateError('Exact size check failed');
       final name='Signature_${DateTime.now().millisecondsSinceEpoch}_${target}KB.jpg';
       if(action=='cart'){
@@ -157,6 +174,47 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     }finally{if(mounted)setState(()=>_busy=false);}
   }
 
+  /// Preview the exact-size file in memory without overwriting the source.
+  /// Save / Share / Cart reuse these same verified bytes until an edit changes.
+  Future<void> _applyTargetSize() async {
+    final source=_original;
+    if(source==null||_busy)return;
+    final kb=_selectedTargetKb;
+    if(kb==null||kb<5||kb>10240){
+      _show('Enter a target between 5 KB and 10,240 KB');
+      return;
+    }
+    _filterRevision++;
+    _filterTimer?.cancel();
+    setState(()=>_busy=true);
+    try{
+      final encoded=await SignatureEditEngine.exactJpeg(
+        source,_selection,_filter,kb,intensity:_filterIntensity);
+      if(encoded.lengthInBytes!=kb*1024){
+        throw StateError('Exact target size could not be verified');
+      }
+      final rendered=await SignatureEditEngine.preview(
+        encoded,SignatureCrop.full,'Original');
+      final dimensions=await compute(_signatureDimensions,rendered);
+      if(!mounted)return;
+      setState((){
+        _appliedJpeg=encoded;
+        _appliedPreview=rendered;
+        _appliedAspect=dimensions[0]/dimensions[1];
+        _appliedTargetKb=kb;
+        _error=null;
+      });
+      _show('Applied exactly $kb KB. Ready to Save, Share or Add to Cart.');
+    }catch(e){
+      if(mounted){
+        setState(()=>_discardApplied());
+        _show('Cannot apply selected size: $e');
+      }
+    }finally{
+      if(mounted)setState(()=>_busy=false);
+    }
+  }
+
   Future<void> _refreshFilterThumbnails(Uint8List source)async{
     final revision=++_thumbnailRevision;
     if(mounted)setState(()=>_filterThumbnails={});
@@ -172,7 +230,10 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   Future<void> _changeFilter(String filter)async{
     if(_original==null||_busy)return;
-    setState(()=>_filter=filter);
+    setState((){
+      _discardApplied();
+      _filter=filter;
+    });
     await _refreshFilterPreview();
   }
 
@@ -206,6 +267,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       setState((){
         _original=cropped;
         _preview=preview;
+        _discardApplied();
         _aspect=dimensions[0]/dimensions[1];
         _crop=SignatureCrop.full;
         _quad=[const Offset(0,0),const Offset(1,0),
@@ -227,6 +289,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   void _setMode(String value) => setState((){
     _cropMode=value;
+    _discardApplied();
     _corner=-1;
     _lastDrag=null;
   });
