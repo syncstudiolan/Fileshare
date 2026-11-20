@@ -2460,28 +2460,46 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         _snack('No LAN devices and cloud is not logged in. Saved to Pending.');
         return;
       }
+      var successful=0,failed=0;
       for(final batch in batches){
         try{
           if(useLan){
             await appLan.enqueue(batch.sources,names:batch.labels);
+            successful+=batch.sources.length;
+            if(mounted)setState(()=>_staged.remove(batch));
+            unawaited(_cleanupEditedCartSnapshots(batch.sources));
           }else{
             final id=appLan.deviceId;
             if(id==null)throw StateError('Device ID unavailable');
-            // Cloud route is chosen ONLY when zero peers were seen at Send.
-            for(var i=0;i<batch.sources.length;i++){
-              await cloud.uploadDeviceFile(batch.sources[i],batch.labels[i],id,
+            // Remove each confirmed upload from Cart individually. If a later
+            // upload fails, retry will NOT upload successful files twice.
+            while(batch.sources.isNotEmpty){
+              if(appLan.peers.isNotEmpty){
+                throw StateError('A nearby LAN device appeared. Cloud upload stopped; tap Send again for LAN.');
+              }
+              final source=batch.sources.first,name=batch.labels.first;
+              await cloud.uploadDeviceFile(source,name,id,
                 senderName:Platform.localHostname);
+              if(mounted)setState((){
+                batch.sources.removeAt(0);
+                batch.labels.removeAt(0);
+                batch.sizes.removeAt(0);
+                if(batch.sources.isEmpty)_staged.remove(batch);
+              });
+              successful++;
+              unawaited(_cleanupEditedCartSnapshots([source]));
             }
           }
-          if(mounted)setState(()=>_staged.remove(batch));
-          unawaited(_cleanupEditedCartSnapshots(batch.sources));
         }catch(e){
+          failed++;
           _snack(useLan?'LAN queue failed: '+e.toString():
-            'Cloud transfer failed. File kept in Cart: '+e.toString());
+            'Cloud upload stopped. Remaining files kept in Cart: '+e.toString());
         }
       }
-      if(useLan)_snack('Nearby device detected: sending on LAN only.');
-      else _snack('No LAN devices: uploaded using your personal cloud.');
+      if(failed==0){
+        _snack(useLan?'Nearby devices found: sent on LAN only.':
+          'No nearby devices: $successful file(s) uploaded through Cloudflare.');
+      }
     }finally{
       if(mounted)setState(()=>_sending=false);
     }
