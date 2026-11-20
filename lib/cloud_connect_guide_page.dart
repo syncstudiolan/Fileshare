@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'main.dart' show FileTheme, CloudConnectPage;
@@ -195,8 +196,7 @@ class _CloudConnectGuidePageState extends State<CloudConnectGuidePage> {
                 child:TextButton.icon(
                   onPressed:(){
                     Clipboard.setData(ClipboardData(text:step.link!));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content:Text('Official documentation URL copied')));
+                    FileShareTopNotice.show(context,'Official documentation URL copied');
                   },
                   icon:const Icon(Icons.copy_outlined,size:16),
                   label:const Text('Copy official help URL'))),

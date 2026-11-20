@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -131,8 +132,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   }
 
   void _show(String message){
-    if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content:Text(message)));
+    if(mounted)FileShareTopNotice.show(context,message);
   }
 
   Future<void> _export(String action)async{

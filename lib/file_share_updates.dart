@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -258,8 +259,8 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
   Future<void> _copyIosSigningLink(BuildContext context,UpdateRelease? release) async {
     if(release==null)return;
     await Clipboard.setData(ClipboardData(text:release.url));
-    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content:Text('IPA link copied. Sign it in AppleJR with the same certificate and bundle ID before installing.')));
+    if(context.mounted)FileShareTopNotice.show(context,
+      'IPA link copied. Re-sign with your existing AppleJR certificate and bundle ID before installing.');
   }
   @override void initState(){super.initState();updates.addListener(_changed);}
   void _changed(){if(mounted)setState((){});}

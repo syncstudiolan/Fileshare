@@ -35,6 +35,35 @@ def main()->None:
         )+source[open_brace+1:]
     MAIN.write_text(source,encoding="utf-8")
 
+    # The Windows taskbar uses the HWND's small/big icons, not the tray icon
+    # nor necessarily the EXE's resource icon. Explicitly attach the exact
+    # approved ICO resource to the Flutter window as soon as it is created.
+    # Flutter regenerates this C++ runner in CI, so patch after flutter create.
+    flutter_window=ROOT/"windows/runner/flutter_window.cpp"
+    if not flutter_window.is_file():
+        raise SystemExit("Generated FlutterWindow C++ source is missing")
+    window_code=flutter_window.read_text(encoding="utf-8")
+    if '#include "resource.h"' not in window_code:
+        window_code='#include "resource.h"\n'+window_code
+    on_create='bool FlutterWindow::OnCreate() {'
+    window_icon_code='''  // File Share branded taskbar and Alt-Tab icons.
+  HWND hwnd = GetHandle();
+  HINSTANCE module = GetModuleHandle(nullptr);
+  HICON iconSmall = static_cast<HICON>(LoadImage(
+      module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
+  HICON iconLarge = static_cast<HICON>(LoadImage(
+      module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
+  if (hwnd && iconSmall) SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
+  if (hwnd && iconLarge) SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconLarge));
+'''
+    if on_create not in window_code:
+        raise SystemExit("Unknown Flutter Windows runner: OnCreate signature changed")
+    if 'File Share branded taskbar and Alt-Tab icons.' not in window_code:
+        window_code=window_code.replace(on_create,on_create+'\n'+window_icon_code,1)
+    flutter_window.write_text(window_code,encoding="utf-8")
+    assert 'WM_SETICON, ICON_SMALL' in window_code
+    assert 'WM_SETICON, ICON_BIG' in window_code
+
     resources=RC.read_text(encoding="utf-8")
     if 'IDI_APP_ICON' not in resources or 'app_icon.ico' not in resources:
         raise SystemExit("Windows Runner.rc does not reference the branded app_icon.ico")

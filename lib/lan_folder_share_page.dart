@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -141,8 +142,7 @@ class _LanFolderSharePageState extends State<LanFolderSharePage> {
       setState(()=>_status=appLan.peers.isEmpty
         ?'Queued safely. Will send when a nearby LAN device appears.'
         :'Queued for LAN transfer. Track it in your dashboard.');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content:Text('Added to unified File Share dashboard')));
+      FileShareTopNotice.show(context,'Added to unified File Share dashboard');
     }catch(e){
       if(mounted)setState(()=>_status='Could not queue transfer: $e');
     }finally{if(mounted)setState(()=>_busy=false);}

@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -414,7 +415,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
   void _message(String value){
     if(mounted){
       setState(()=>_status=value);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(value)));
+      FileShareTopNotice.show(context,value);
     }
   }
   Future<void> _findAndReplace()async{

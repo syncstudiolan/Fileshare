@@ -856,8 +856,7 @@ class _LoginPageState extends State<LoginPage> {
     if(_busy)return;
     setState((){_busy=true;_error=null;});
     try{await PersonalCloud.instance.linkAccountDirectory();
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content:Text('Account linked to your personal Cloudflare Worker')));
+      if(mounted) FileShareTopNotice.show(context,'Account linked to your personal Cloudflare Worker');
     }
     catch(e){if(mounted)setState(()=>_error=e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
@@ -1210,7 +1209,7 @@ class DesignFileCard extends StatelessWidget {
               ? (sent ? const Color(0xFF3C315E) : const Color(0xFF4B294B))
               : (sent ? const Color(0xFFF0E7FF) : const Color(0xFFFFDDED)),
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(23), topRight: const Radius.circular(23),
+            topLeft: const Radius.circular(24), topRight: const Radius.circular(23),
             bottomLeft: Radius.circular(sent ? 23 : 6),
             bottomRight: Radius.circular(sent ? 6 : 23),
           ),
@@ -1340,8 +1339,7 @@ class FileCardOpenRouter {
           'open',{'path':path});
       } on PlatformException catch(e) {
         if(context.mounted){
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:Text('iPhone PDF editor could not open: ${e.message ?? e.code}')));
+          FileShareTopNotice.show(context,'iPhone PDF editor could not open: ${e.message ?? e.code}');
         }
       }
       return true;
@@ -1364,8 +1362,7 @@ class FileCardOpenRouter {
           'theme':theme,
         });
     }catch(e){
-      if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text('Cannot open this document in PDF Tools: $e')));
+      if(context.mounted)FileShareTopNotice.show(context,'Cannot open this document in PDF Tools: $e');
     }
     return true;
   }
@@ -1466,23 +1463,29 @@ class TransferBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     // Unlike the old full-width cards, opposing sides stay visibly separated.
-    final maxWidth = width >= 760 ? 610.0 : width * .88;
+    // Match the approved reference: received has a visible RIGHT gutter;
+    // sent has a visible LEFT gutter. The color alone is not the cue.
+    // Use a fixed width (rather than only maxWidth) so both compact and
+    // short text bubbles retain a visibly directional alignment.
+    final maxWidth = width >= 760
+        ? 610.0
+        : width * (width < 360 ? .86 : .79);
     final dark = FileTheme.dark(context);
     final fill = dark
-      ? (incoming ? const Color(0xFF4B294B) : const Color(0xFF3C315E))
+      ? (incoming ? const Color(0xFF542947) : const Color(0xFF39315D))
       : (incoming ? const Color(0xFFFFDDED) : const Color(0xFFF0E7FF));
     final accent = incoming ? FileTheme.pink : FileTheme.violet;
     return Align(
       alignment: incoming ? Alignment.centerLeft : Alignment.centerRight,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
+      child: SizedBox(
+        width: maxWidth,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 7),
+          padding: const EdgeInsets.symmetric(vertical: 5),
           child: CustomPaint(
             painter: _TransferBubblePainter(incoming, fill, accent),
             child: Padding(
               padding: EdgeInsets.fromLTRB(
-                incoming ? 16 : 10, 11, incoming ? 10 : 16, 11),
+                incoming ? 14 : 10, 10, incoming ? 10 : 14, 10),
               child: child),
           ),
         ),
@@ -1515,12 +1518,12 @@ class _TransferBubblePainter extends CustomPainter {
       path.lineTo(right - 1, mid + 12);
     }
     path.close();
-    canvas.drawShadow(path, accent.withValues(alpha: .25), 9, false);
+    canvas.drawShadow(path, accent.withValues(alpha: .29), 11, false);
     canvas.drawPath(path, Paint()..color = fill);
     canvas.drawPath(path, Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..color = accent.withValues(alpha: .65));
+      ..strokeWidth = 1.35
+      ..color = accent.withValues(alpha: .8));
   }
 
   @override
@@ -1663,50 +1666,58 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   Widget _file(BuildContext context, LanFile file) {
-    final active = file.state == TransferState.sending ||
-      file.state == TransferState.receiving ||
-      file.state == TransferState.preparing;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: LayoutBuilder(builder: (context, constraints) {
-        final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
-        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => _preview(context, file),
-            child: SizedBox(width: side, height: side, child: _visual(file))),
-          const SizedBox(width: 10),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              InkWell(onTap: () => _preview(context,file),
-                child: Text(file.name, maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                    color: FileTheme.foreground(context)))),
-              const SizedBox(height: 3),
-              Text(_formatBytes(file.size),
-                style: TextStyle(color: FileTheme.muted(context), fontSize: 11)),
-              if(active || file.state == TransferState.failed) ...[
-                const SizedBox(height: 3),
-                Text(file.state.name, style: const TextStyle(
-                  fontSize: 10, color: FileTheme.pink)),
-                if (active) LinearProgressIndicator(
-                  value: file.progress, minHeight: 2),
-              ],
-              const SizedBox(height: 7),
-              // On narrow devices the actions wrap instead of causing overflow.
-              Align(alignment: Alignment.centerRight,
-                child: _buttons(context, file)),
-              const SizedBox(height: 3),
-              Align(alignment: Alignment.centerRight,
-                child: TransferCardTime(created: file.created,
-                  status: _status(file))),
-            ],
-          )),
+    final active=file.state==TransferState.sending ||
+      file.state==TransferState.receiving ||
+      file.state==TransferState.preparing;
+    return Padding(padding:const EdgeInsets.only(top:8),
+      child:LayoutBuilder(builder:(context,constraints){
+        final compact=constraints.maxWidth<460;
+        final side=compact?74.0:88.0;
+        final preview=InkWell(
+          borderRadius:BorderRadius.circular(12),
+          onTap:()=>_preview(context,file),
+          child:SizedBox(width:side,height:side,child:_visual(file)));
+        final details=Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          InkWell(onTap:()=>_preview(context,file),
+            child:Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis,
+              style:TextStyle(fontSize:13,fontWeight:FontWeight.w700,
+                color:FileTheme.foreground(context)))),
+          const SizedBox(height:3),
+          Text(_formatBytes(file.size),
+            style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
+          if(active||file.state==TransferState.failed)...[
+            const SizedBox(height:3),
+            Text(file.state.name,style:const TextStyle(fontSize:10,
+              color:FileTheme.pink)),
+            if(active)LinearProgressIndicator(value:file.progress,minHeight:2),
+          ]
         ]);
-      }),
-    );
+        if(compact) {
+          return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              preview,const SizedBox(width:10),
+              Expanded(child:details),
+            ]),
+            const SizedBox(height:4),
+            Row(children:[
+              TransferCardTime(created:file.created,status:_status(file)),
+              const Spacer(),
+              Flexible(child:_buttons(context,file)),
+            ]),
+          ]);
+        }
+        return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          preview,const SizedBox(width:10),
+          Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            details,const SizedBox(height:7),
+            Row(children:[
+              TransferCardTime(created:file.created,status:_status(file)),
+              const Spacer(),
+              Flexible(child:_buttons(context,file)),
+            ]),
+          ]))
+        ]);
+      }));
   }
 
   @override
@@ -1732,6 +1743,7 @@ class LiveTransferCard extends StatelessWidget {
               fontWeight: FontWeight.w700, fontSize: 12))),
           if(multiple) Text('${items.length} files',
             style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
+
         ]),
         for (final file in items.take(4)) _file(context, file),
         if (items.length > 4)
@@ -1854,56 +1866,69 @@ class CloudInboxCard extends StatelessWidget {
               fontWeight: FontWeight.w700, fontSize: 12))),
           if (grouped) Text('${items.length} files',
             style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
+
         ]),
-        for (final file in items.take(5))
-          Padding(padding: const EdgeInsets.only(top: 8),
-            child: LayoutBuilder(builder: (context, constraints) {
-              final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
-              return Row(crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(width: side, height: side,
-                    child: CloudImageThumbnail(
-                      key: ValueKey('qr-thumb-'+file.id),
-                      file: file, onOpen: () => onPreview(file))),
-                  const SizedBox(width: 10),
-                  Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      InkWell(onTap: () => onPreview(file),
-                        child: Text(file.name, maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: FileTheme.foreground(context),
-                            fontWeight: FontWeight.w700, fontSize: 13))),
-                      const SizedBox(height: 3),
-                      Text(_formatBytes(file.size),
-                        style: TextStyle(color: FileTheme.muted(context),
-                          fontSize: 11)),
-                      const SizedBox(height: 7),
-                      Align(alignment: Alignment.centerRight,
-                        child: TransferCardActions(actions: [
-                          if(!sent) Stack(clipBehavior: Clip.none, children: [
-                            action(device?'Download received cloud file':'Download received QR file', Icons.download_rounded,
-                              () => onSave(file)),
-                            Positioned(top: -8, right: -4,
-                              child: NewDownloadBadge(id: 'cloud_${file.id}')),
-                          ]),
-                          action(device?'Delete cloud file':'Delete QR file', Icons.delete_outline_rounded,
-                            () => onDelete(file)),
-                          action(device?'Share cloud file externally':'Share QR file externally', Icons.ios_share_rounded,
-                            () => onShare(file)),
-                          action('Open in Tools', Icons.auto_fix_high_rounded,
-                            () => onTools(file)),
-                        ])),
-                      const SizedBox(height: 3),
-                      Align(alignment: Alignment.centerRight,
-                        child: TransferCardTime(created: file.created,
-                          status: Icon(device && file.receivedAt==null
-                              ?Icons.done_rounded:Icons.done_all_rounded,
-                            size:15,color:FileTheme.pink))),
-                    ],
-                  )),
+        for(final file in items.take(5))
+          Padding(padding:const EdgeInsets.only(top:8),
+            child:LayoutBuilder(builder:(context,constraints){
+              final compact=constraints.maxWidth<460;
+              final side=compact?74.0:88.0;
+              final preview=SizedBox(width:side,height:side,
+                child:CloudImageThumbnail(
+                  key:ValueKey('qr-thumb-'+file.id),
+                  file:file,onOpen:()=>onPreview(file)));
+              final details=Column(crossAxisAlignment:CrossAxisAlignment.start,
+                children:[
+                  InkWell(onTap:()=>onPreview(file),
+                    child:Text(file.name,maxLines:2,
+                      overflow:TextOverflow.ellipsis,
+                      style:TextStyle(color:FileTheme.foreground(context),
+                        fontWeight:FontWeight.w700,fontSize:13))),
+                  const SizedBox(height:3),
+                  Text(_formatBytes(file.size),
+                    style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
                 ]);
+              final actions=TransferCardActions(actions:[
+                if(!sent)Stack(clipBehavior:Clip.none,children:[
+                  action(device?'Download received cloud file':'Download received QR file',
+                    Icons.download_rounded,()=>onSave(file)),
+                  Positioned(top:-8,right:-4,
+                    child:NewDownloadBadge(id:'cloud_${file.id}')),
+                ]),
+                action(device?'Delete cloud file':'Delete QR file',
+                  Icons.delete_outline_rounded,()=>onDelete(file)),
+                action(device?'Share cloud file externally':'Share QR file externally',
+                  Icons.ios_share_rounded,()=>onShare(file)),
+                action('Open in Tools',Icons.auto_fix_high_rounded,
+                  ()=>onTools(file)),
+              ]);
+              final status=Icon(device&&file.receivedAt==null
+                  ?Icons.done_rounded:Icons.done_all_rounded,
+                size:15,color:FileTheme.pink);
+              if(compact)return Column(
+                crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    preview,const SizedBox(width:10),Expanded(child:details),
+                  ]),
+                  const SizedBox(height:4),
+                  Row(children:[
+                    TransferCardTime(created:file.created,status:status),
+                    const Spacer(),
+                    Flexible(child:actions),
+                  ]),
+                ]);
+              return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                preview,const SizedBox(width:10),
+                Expanded(child:Column(
+                  crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    details,const SizedBox(height:7),
+                    Row(children:[
+                      TransferCardTime(created:file.created,status:status),
+                      const Spacer(),
+                      Flexible(child:actions),
+                    ]),
+                  ])),
+              ]);
             })),
         if (items.length > 5)
           Padding(padding: const EdgeInsets.only(top: 5),
@@ -1950,6 +1975,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _refreshing = false;
   bool _sending = false;
   bool _desktopSidebarVisible = true;
+  String? _dashboardNotice;
+  Timer? _dashboardNoticeTimer;
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
   String _keyOf(TimelineGroup g)=>g.upload!=null
@@ -2290,6 +2317,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void dispose() {
     _midnight?.cancel();
+    _dashboardNoticeTimer?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
@@ -2302,8 +2330,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 4)));
+    _dashboardNoticeTimer?.cancel();
+    setState(()=>_dashboardNotice=message);
+    _dashboardNoticeTimer=Timer(const Duration(seconds:4),(){
+      if(mounted)setState(()=>_dashboardNotice=null);
+    });
   }
 
   void _navigate(String title) {
@@ -2852,25 +2883,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       animation:AutoCloudTransferPreference.instance,
       builder:(context,_) {
         final preference=AutoCloudTransferPreference.instance;
-        return Row(mainAxisSize:MainAxisSize.min,children:[
-          if(!compact)Expanded(child:Column(
-            crossAxisAlignment:CrossAxisAlignment.start,children:[
-              const Text('Auto Cloud Transfer',
-                style:TextStyle(fontWeight:FontWeight.w700)),
-              Text(preference.enabled
-                ? 'ON: LAN first; Cloud if no LAN and signed in'
-                : 'OFF: LAN only; files wait for nearby devices',
-                style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
-            ])),
-          if(compact)const Icon(Icons.cloud_outlined,
-            size:17,color:FileTheme.violet),
-          Switch.adaptive(
-            value:preference.enabled,
-            onChanged:(enabled){
-              unawaited(preference.setEnabled(enabled).catchError((Object e){
-                if(context.mounted)_snack('Could not save Cloud setting: $e');
-              }));
-            }),
+        void toggle() {
+          unawaited(preference.setEnabled(!preference.enabled).catchError(
+            (Object e){if(context.mounted)_snack('Cloud setting: $e');}));
+        }
+        if(compact)return Row(mainAxisSize:MainAxisSize.min,children:[
+          const Icon(Icons.cloud_outlined,size:17,color:FileTheme.violet),
+          const SizedBox(width:3),
+          Tooltip(message:preference.enabled?'Auto Cloud ON':'Auto Cloud OFF',
+            child:InkWell(onTap:toggle,borderRadius:BorderRadius.circular(20),
+              child:AnimatedContainer(
+                duration:const Duration(milliseconds:170),
+                width:42,height:25,padding:const EdgeInsets.all(3),
+                decoration:BoxDecoration(
+                  borderRadius:BorderRadius.circular(20),
+                  color:preference.enabled
+                    ?const Color(0xFFC4A6FF):FileTheme.violet.withValues(alpha:.20),
+                  border:Border.all(color:FileTheme.violet.withValues(alpha:.55))),
+                child:Align(
+                  alignment:preference.enabled?Alignment.centerRight:Alignment.centerLeft,
+                  child:Container(width:18,height:18,decoration:BoxDecoration(
+                    shape:BoxShape.circle,color:preference.enabled
+                      ?const Color(0xFF392B60):FileTheme.muted(context)))))),
+          ),
+        ]);
+        return Row(children:[
+          Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            const Text('Auto Cloud Transfer',style:TextStyle(fontWeight:FontWeight.w700)),
+            Text(preference.enabled?'LAN first; Cloud when no LAN'
+                :'LAN only; pending until a device connects',
+              style:TextStyle(fontSize:11,color:FileTheme.muted(context))),
+          ])),
+          Switch.adaptive(value:preference.enabled,onChanged:(value)=>
+            unawaited(preference.setEnabled(value))),
         ]);
       },
     );
@@ -2891,6 +2936,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 5),
                 child: Row(children: [
                   IconButton(
+                    visualDensity:VisualDensity.compact,
+                    constraints:const BoxConstraints(minWidth:36,minHeight:38),
+                    padding:EdgeInsets.zero,
                     tooltip: desktop
                       ? (_desktopSidebarVisible ? 'Hide sidebar' : 'Show sidebar')
                       : 'Open navigation',
@@ -2902,14 +2950,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 17,
+                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 15,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
-                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN devices · ' +
-                        (appLan.receivingEnabled ? 'LAN active'
-                          : (appLan.started ? 'LAN receiver reconnecting'
-                            : 'Starting LAN')) +
-                        (PersonalCloud.instance.connected ? ' · QR Cloud connected' : ' · Cloud not connected'),
+                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN device' +
+                        (appLan.peers.length==1?'':'s'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
@@ -2933,13 +2978,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     if(_bulkBusy)const SizedBox(width:17,height:17,
                       child:CircularProgressIndicator(strokeWidth:2)),
                   ]else...[
-                    IconButton(tooltip:'QR design preview',
+                    IconButton(visualDensity:VisualDensity.compact,
+                       constraints:const BoxConstraints(minWidth:32,minHeight:38),
+                       padding:EdgeInsets.zero,tooltip:'QR design preview',
                       onPressed:()=>_navigate('My QR'),
                       icon:const Icon(Icons.qr_code_2_rounded,
                         color:FileTheme.violet)),
                     _autoCloudTransferToggle(compact:true),
                     AppearanceButton(mode:widget.mode,onChange:widget.onMode),
-                    IconButton(tooltip:'Refresh nearby LAN devices',
+                    IconButton(visualDensity:VisualDensity.compact,
+                       constraints:const BoxConstraints(minWidth:34,minHeight:38),
+                       padding:EdgeInsets.zero,tooltip:'Refresh nearby LAN devices',
                       onPressed:_refreshing?null:_refreshNearby,
                       icon:AnimatedRotation(
                         turns:_refreshing?2:0,
@@ -2951,10 +3000,33 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                 ]),
               ),
             ),
-            if (appLan.error != null)
-              Padding(padding: const EdgeInsets.symmetric(horizontal: 15),
-                child: Text(appLan.error!, maxLines: 2,
-                  style: const TextStyle(color: Colors.deepOrange, fontSize: 10))),
+            Padding(
+              padding:EdgeInsets.fromLTRB(wide?24:12,5,wide?24:12,8),
+              child:Container(
+                width:double.infinity,
+                padding:const EdgeInsets.symmetric(horizontal:13,vertical:9),
+                decoration:BoxDecoration(
+                  color:FileTheme.violet.withValues(alpha:.12),
+                  borderRadius:BorderRadius.circular(19),
+                  border:Border.all(color:FileTheme.violet.withValues(alpha:.45))),
+                child:Row(children:[
+                  Icon(appLan.error!=null?Icons.warning_amber_rounded
+                    :Icons.lan_outlined,size:17,
+                    color:appLan.error!=null?Colors.orange:FileTheme.violet),
+                  const SizedBox(width:10),
+                  Expanded(child:Text(
+                    _dashboardNotice ?? appLan.error ??
+                    (appLan.receivingEnabled
+                      ?'LAN ready · ${appLan.peers.length} nearby device${appLan.peers.length==1?'':'s'}'
+                      :'LAN transfer waiting for nearby devices…'),
+                    maxLines:2,overflow:TextOverflow.ellipsis,
+                    style:TextStyle(fontSize:12,
+                      color:FileTheme.foreground(context)))),
+                  if(_dashboardNotice==null&&appLan.error==null)
+                    const Icon(Icons.more_horiz_rounded,size:18,color:FileTheme.violet),
+                ]),
+              ),
+            ),
             Padding(
               padding: EdgeInsets.symmetric(horizontal: wide ? 24 : 10),
               child: Row(children: [
@@ -2964,9 +3036,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     child: Row(children: [
                       for (final choice in const ['All', 'Sent', 'Received'])
                         Padding(padding: const EdgeInsets.only(right: 5),
-                          child: ChoiceChip(label: Text(choice),
-                            selected: choice == _filter,
-                            onSelected: (_) => setState(() => _filter = choice))),
+                          child: ChoiceChip(
+                             avatar:Icon(choice=='All'?Icons.check_rounded
+                               :choice=='Sent'?Icons.send_outlined
+                               :Icons.download_rounded,size:16,
+                               color:FileTheme.violet),
+                             label:Text(choice),
+                             shape:RoundedRectangleBorder(
+                               borderRadius:BorderRadius.circular(13)),
+                             selected:choice==_filter,
+                             onSelected:(_)=>setState(()=>_filter=choice))),
                     ]),
                   ),
                 ),
@@ -3002,43 +3081,69 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             if (_staged.isNotEmpty)
               Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 child: _drafts(context)),
-            Padding(padding: EdgeInsets.fromLTRB(wide ? 24 : 10, 5,
-              wide ? 24 : 10, 10),
-              child: DesignPanel(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-                child: Row(children: [
-                  IconButton.filledTonal(
-                    tooltip: 'Choose files',
-                    onPressed: _choosing ? null : _choose,
-                    icon: const Icon(Icons.add_rounded)),
-                  IconButton(
-                    tooltip: 'Camera',
-                    onPressed:_choosing?null:_openTransferCamera,
-                    icon:const Icon(Icons.camera_alt_outlined,
-                      color:FileTheme.violet)),
-                  IconButton(
-                    tooltip: 'Tools',
-                    onPressed:()=>_navigate('Toolbox'),
-                    icon:const Icon(Icons.handyman_outlined,
-                      color:FileTheme.violet)),
-                  Expanded(child:TextField(
-                    controller:_messageController,
-                    minLines:1,maxLines:5,
-                    textCapitalization:TextCapitalization.sentences,
-                    keyboardType:TextInputType.multiline,
-                    textInputAction:TextInputAction.newline,
-                    decoration:InputDecoration(
-                      hintText:'Type or paste a message…',
-                      hintStyle:TextStyle(fontSize:12,color:FileTheme.muted(context)),
-                      border:InputBorder.none,isDense:true),
-                    onChanged:(_)=>setState((){}))),
-                  IconButton.filled(
-                    tooltip:_messageController.text.trim().isNotEmpty
-                      ?'Send text message':'Send selected files',
-                    onPressed:(_messageController.text.trim().isEmpty && _staged.isEmpty)
-                      || _sending ? null : () => unawaited(_sendTypedText()),
-                    icon: const Icon(Icons.send_rounded)),
-                ]),
+            Padding(padding:EdgeInsets.fromLTRB(wide?24:10,7,wide?24:10,10),
+              child:DesignPanel(
+                padding:const EdgeInsets.symmetric(horizontal:8,vertical:9),
+                child:LayoutBuilder(builder:(context,constraints){
+                  final small=constraints.maxWidth<365;
+                  Widget action(IconData icon,String label,VoidCallback? tap) =>
+                    Padding(padding:EdgeInsets.only(right:small?2:4),
+                      child:Tooltip(message:label,child:InkWell(
+                        onTap:tap,borderRadius:BorderRadius.circular(12),
+                        child:Container(
+                          width:small?32:37,height:42,
+                          decoration:BoxDecoration(
+                            color:FileTheme.violet.withValues(alpha:.14),
+                            borderRadius:BorderRadius.circular(12),
+                            border:Border.all(
+                              color:FileTheme.violet.withValues(alpha:.23))),
+                          child:Icon(icon,size:small?19:21,color:FileTheme.violet)))));
+                  return Row(children:[
+                    action(Icons.add_rounded,'Choose files',_choosing?null:_choose),
+                    action(Icons.camera_alt_outlined,'Camera',
+                      _choosing?null:_openTransferCamera),
+                    action(Icons.handyman_outlined,'Tools',
+                      ()=>_navigate('Toolbox')),
+                    const SizedBox(width:4),
+                    Expanded(child:Container(
+                      constraints:const BoxConstraints(minHeight:54),
+                      decoration:BoxDecoration(
+                        color:FileTheme.violet.withValues(alpha:.16),
+                        borderRadius:BorderRadius.circular(15),
+                        border:Border.all(
+                          color:FileTheme.violet.withValues(alpha:.49))),
+                      child:TextField(
+                        controller:_messageController,
+                        minLines:1,maxLines:5,
+                        textCapitalization:TextCapitalization.sentences,
+                        keyboardType:TextInputType.multiline,
+                        textInputAction:TextInputAction.newline,
+                        style:TextStyle(fontSize:13,color:FileTheme.foreground(context)),
+                        decoration:InputDecoration(
+                          hintText:'Type or paste a message…',
+                          hintStyle:TextStyle(fontSize:small?11:12,
+                            color:FileTheme.muted(context)),
+                          border:InputBorder.none,
+                          contentPadding:const EdgeInsets.symmetric(
+                            horizontal:12,vertical:16)),
+                        onChanged:(_)=>setState((){})))),
+                    const SizedBox(width:7),
+                    Tooltip(message:'Send message or selected files',
+                      child:InkWell(
+                        onTap:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
+                            ||_sending?null:()=>unawaited(_sendTypedText()),
+                        borderRadius:BorderRadius.circular(15),
+                        child:Container(
+                          width:small?39:45,height:53,
+                          decoration:BoxDecoration(
+                            gradient:LinearGradient(colors:[
+                              FileTheme.pink,FileTheme.violet]),
+                            borderRadius:BorderRadius.circular(15)),
+                          child:Icon(Icons.send_rounded,size:23,
+                            color:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
+                              ?Colors.white54:Colors.white)))),
+                  ]);
+                }),
               ),
             ),
           ]);
@@ -3399,8 +3504,7 @@ class FeatureDesignPage extends StatelessWidget {
                   await SharedPreferencesAsync().setBool('windows_autostart_decided',true);
                 }
                 catch (e) {
-                  if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(
-                    SnackBar(content: Text('Windows startup error: $e')));
+                  if (c.mounted) FileShareTopNotice.show(c,'Windows startup error: $e');
                 }
               },
             ),
@@ -3853,9 +3957,7 @@ class _MyQrPageState extends State<MyQrPage> {
                   Switch.adaptive(value:pref.enabled,
                     onChanged:(value){
                       unawaited(pref.setEnabled(value).catchError((Object e){
-                        if(context.mounted)ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content:Text(
-                            'Could not save Cloud setting: $e')));
+                        if(context.mounted)FileShareTopNotice.show(context,'Could not save Cloud setting: $e');
                       }));
                     }),
                 ]);
