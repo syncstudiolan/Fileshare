@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -43,8 +44,7 @@ class _FileShareProfileAvatarState extends State<FileShareProfileAvatar>{
       await SharedPreferencesAsync().setString(_key,dest.path);
       if(mounted)setState(()=>_photo=dest);
     }catch(e){
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text('Profile picture could not be changed: $e')));
+      if(mounted)FileShareTopNotice.show(context,'Profile picture could not be changed: $e');
     }finally{if(mounted)setState(()=>_busy=false);}
   }
   Future<void> _remove()async{
