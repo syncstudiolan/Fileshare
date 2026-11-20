@@ -152,12 +152,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       if(data.length!=target*1024)throw StateError('Exact size check failed');
       final name='Signature_${DateTime.now().millisecondsSinceEpoch}_${target}KB.jpg';
       if(action=='cart'){
-        final root=await getApplicationSupportDirectory();
-        final folder=Directory('${root.path}${Platform.pathSeparator}signature_cart');
-        await folder.create(recursive:true);
-        final file=File('${folder.path}${Platform.pathSeparator}$name');
-        await file.writeAsBytes(data,flush:true);
-        ImageEditingCart.instance.add(file,name);
+        await ImageEditingCart.instance.addEditedBytes(data,name);
         if(mounted)returnToFileShareCart(context);
       }else if(action=='share'){
         final cache=await getTemporaryDirectory();
