@@ -391,6 +391,13 @@ class FileTheme {
             : const [Color(0xFFC5D9E5), Color(0xFFD6E6EE), Color(0xFFBED4E1)],
       );
 
+  static Gradient dashboardBackground(BuildContext context) => LinearGradient(
+    begin:Alignment.topCenter,end:Alignment.bottomCenter,
+    colors:dark(context)
+      ?const [Color(0xFF061A24),Color(0xFF123341),Color(0xFF071C29)]
+      :const [Color(0xFFDBF1F9),Color(0xFFCFEBF5),Color(0xFFD9F1F9)],
+  );
+
   static ThemeData build(Brightness brightness) {
     final dark = brightness == Brightness.dark;
     return ThemeData(
@@ -426,9 +433,11 @@ class AppearanceButton extends StatelessWidget {
     super.key,
     required this.mode,
     required this.onChange,
+    this.compact=false,
   });
   final ThemeMode mode;
   final ValueChanged<ThemeMode> onChange;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<ThemeMode>(
@@ -467,11 +476,12 @@ class AppearanceButton extends StatelessWidget {
           label: 'Change appearance',
           button: true,
           child: Container(
-            width: 46,
-            height: 46,
+            width: compact ? 36 : 46,
+            height: compact ? 38 : 46,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              color: FileTheme.surface(context).withValues(alpha: .9),
+              color: compact ? Colors.transparent
+                : FileTheme.surface(context).withValues(alpha: .9),
             ),
             child: Icon(
               FileTheme.dark(context)
@@ -1032,9 +1042,10 @@ const mockTransfers = <MockTransfer>[
 
 class DesignPanel extends StatelessWidget {
   const DesignPanel({super.key, required this.child,
-    this.padding = const EdgeInsets.all(16)});
+    this.padding = const EdgeInsets.all(16),this.dashboard=false});
   final Widget child;
   final EdgeInsets padding;
+  final bool dashboard;
 
   @override
   Widget build(BuildContext context) {
@@ -1046,7 +1057,9 @@ class DesignPanel extends StatelessWidget {
           begin:Alignment.topLeft,end:Alignment.bottomRight,
           colors:dark
             ? const [Color(0xFF1C4654),Color(0xFF113140),Color(0xFF092430)]
-            : const [Color(0xFFE9F5F9),Color(0xFFD3E7EF),Color(0xFFB9D4E1)],
+            : dashboard
+              ? const [Color(0xFFEAF8FC),Color(0xFFD8EFF7),Color(0xFFCDEAF5)]
+              : const [Color(0xFFE9F5F9),Color(0xFFD3E7EF),Color(0xFFB9D4E1)],
         ),
         border:Border.all(
           color:dark?const Color(0xFF468895):const Color(0xFFF6FDFF),
@@ -1475,88 +1488,91 @@ class SelectedFileToolsPage extends StatelessWidget {
 /* Compact, direction-aware transfer bubble used by LAN and Guest QR.
    Draw the side tail with the card itself so it scales on both platforms. */
 class TransferBubble extends StatelessWidget {
-  const TransferBubble({super.key,required this.incoming,required this.child});
+  const TransferBubble({super.key,required this.incoming,required this.child,
+    this.textOnly=false});
   final bool incoming;
   final Widget child;
+  final bool textOnly;
 
   @override
   Widget build(BuildContext context) {
-    final width=MediaQuery.sizeOf(context).width;
-    final compact=width<760;
-    // Received intentionally wider than Sent. Opposing gutters clearly
-    // distinguish direction even before reading the caption or color.
-    final cardWidth=compact
-        ? width*(incoming ? (width<360 ? .84 : .86) : (width<360 ? .73 : .75))
-        : (incoming?610.0:565.0);
     final dark=FileTheme.dark(context);
     final fill=dark
         ? (incoming?const Color(0xFF153D50):const Color(0xFF075052))
-        : (incoming?const Color(0xFFD0E4F0):const Color(0xFFBEE3E6));
+        : (incoming?const Color(0xFFD5EFF9):const Color(0xFFC9F1EC));
     final accent=incoming?FileTheme.violet:FileTheme.turquoise;
-    return Align(
-      alignment:incoming?Alignment.centerLeft:Alignment.centerRight,
-      child:SizedBox(
-        width:cardWidth,
-        child:Padding(
-          padding:const EdgeInsets.symmetric(vertical:7),
-          child:CustomPaint(
-            painter:_TransferBubblePainter(incoming,fill,accent),
-            child:Padding(
-              padding:EdgeInsets.fromLTRB(incoming?13:20,13,
-                incoming?20:13,13),
-              child:child),
+    return LayoutBuilder(builder:(context,constraints){
+      final width=constraints.hasBoundedWidth
+        ?constraints.maxWidth:MediaQuery.sizeOf(context).width;
+      final compact=width<760;
+      // The file cards use most of the content width, with opposite gutters.
+      final cardWidth=compact
+        ?width*(textOnly ? .85 : (incoming ? .91 : .895))
+        :(textOnly?490.0:(incoming?610.0:565.0));
+      return Align(
+        alignment:incoming?Alignment.centerLeft:Alignment.centerRight,
+        child:SizedBox(width:cardWidth,
+          child:Padding(padding:const EdgeInsets.symmetric(vertical:10),
+            child:CustomPaint(
+              painter:_TransferBubblePainter(incoming,fill,accent,dark),
+              child:Padding(
+                padding:EdgeInsets.fromLTRB(incoming?16:13,
+                  textOnly?8:12,incoming?13:16,textOnly?8:12),
+                child:child),
+            ),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 }
 
 class _TransferBubblePainter extends CustomPainter {
-  const _TransferBubblePainter(this.incoming,this.fill,this.accent);
+  const _TransferBubblePainter(this.incoming,this.fill,this.accent,this.dark);
   final bool incoming;
   final Color fill,accent;
+  final bool dark;
 
   @override
   void paint(Canvas canvas,Size size) {
-    // Like the approved reference: received notch on the right, sent on left.
-    final left=incoming?0.0:10.0;
-    final right=incoming?size.width-10.0:size.width;
+    // Received tail points left; sent tail points right.
+    final left=incoming?13.0:0.0;
+    final right=incoming?size.width:size.width-13.0;
     final rect=RRect.fromRectAndRadius(
-      Rect.fromLTRB(left,0,right,size.height),const Radius.circular(25));
+      Rect.fromLTRB(left,0,right,size.height),const Radius.circular(21));
     final path=Path()..addRRect(rect);
-    final mid=size.height>95?45.0:size.height*.35;
+    final mid=size.height>95?52.0:size.height*.35;
     if(incoming) {
-      path.moveTo(right-1,mid-12);
-      path.lineTo(size.width,mid);
-      path.lineTo(right-1,mid+12);
-    }else{
       path.moveTo(left+1,mid-12);
       path.lineTo(0,mid);
       path.lineTo(left+1,mid+12);
+    }else{
+      path.moveTo(right-1,mid-12);
+      path.lineTo(size.width,mid);
+      path.lineTo(right-1,mid+12);
     }
     path.close();
     // Raised 3D depth, subtle bevel and cool top-left highlight.
-    canvas.drawShadow(path,Colors.black.withValues(alpha:.42),13,false);
-    canvas.drawShadow(path,accent.withValues(alpha:.24),6,false);
+    canvas.drawShadow(path,Colors.black.withValues(alpha:dark ? .46 : .23),13,false);
+    canvas.drawShadow(path,accent.withValues(alpha:dark ? .18 : .19),6,false);
     final gradient=LinearGradient(
       begin:Alignment.topLeft,end:Alignment.bottomRight,
       colors:[
-        Color.lerp(fill,Colors.white,.20)!,
+        Color.lerp(fill,Colors.white,dark ? .08 : .37)!,
         fill,
-        Color.lerp(fill,Colors.black,.14)!,
+        Color.lerp(fill,Colors.black,dark ? .15 : .06)!,
       ]);
     canvas.drawPath(path,Paint()..shader=gradient.createShader(
       Rect.fromLTWH(0,0,size.width,size.height)));
     canvas.drawPath(path,Paint()
       ..style=PaintingStyle.stroke
       ..strokeWidth=1.5
-      ..color=accent.withValues(alpha:.72));
+      ..color=dark?const Color(0xFF71A8AE):const Color(0xFFF7FEFF));
     final glint=Path()
       ..moveTo(left+23,2.3)
       ..lineTo(right-24,2.3);
     canvas.drawPath(glint,Paint()
-      ..color=Colors.white.withValues(alpha:.66)
+      ..color=Colors.white.withValues(alpha:dark ? .35 : .80)
       ..strokeWidth=1.7
       ..strokeCap=StrokeCap.round
       ..style=PaintingStyle.stroke);
@@ -1564,40 +1580,46 @@ class _TransferBubblePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TransferBubblePainter old)=>
-    old.incoming!=incoming||old.fill!=fill||old.accent!=accent;
+    old.incoming!=incoming||old.fill!=fill||old.accent!=accent||old.dark!=dark;
 }
 
 class TransferCardActions extends StatelessWidget {
   const TransferCardActions({super.key,required this.actions});
   final List<Widget> actions;
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize:MainAxisSize.min,
-    mainAxisAlignment:MainAxisAlignment.end,
-    children:[
-      for(var i=0;i<actions.length;i++)...[
-        if(i>0)Container(
-          width:1,height:18,
-          margin:const EdgeInsets.symmetric(horizontal:2),
-          color:FileTheme.violet.withValues(alpha:.35)),
-        DecoratedBox(
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder:(context,constraints){
+      if(actions.isEmpty)return const SizedBox.shrink();
+      const gap=7.0;
+      final available=constraints.hasBoundedWidth
+        ?constraints.maxWidth:actions.length*44.0+gap*(actions.length-1);
+      final buttonWidth=((available-gap*(actions.length-1))/actions.length)
+        .clamp(30.0,44.0).toDouble();
+      return Row(mainAxisSize:MainAxisSize.min,
+        mainAxisAlignment:MainAxisAlignment.end,
+        children:[
+        for(var i=0;i<actions.length;i++)...[
+        if(i>0)const SizedBox(width:gap),
+        Container(
+          width:buttonWidth,height:40,
           decoration:BoxDecoration(
             gradient:LinearGradient(
               begin:Alignment.topLeft,end:Alignment.bottomRight,
               colors:FileTheme.dark(context)
                 ?const [Color(0xFF245768),Color(0xFF103A47)]
-                :const [Color(0xFFE4F3F8),Color(0xFFB7D3DE)]),
-            borderRadius:BorderRadius.circular(10),
+                :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
+            borderRadius:BorderRadius.circular(15),
             border:Border.all(
               color:FileTheme.dark(context)
-                ?const Color(0xFF367987):const Color(0xFFEDF9FC)),
+                ?const Color(0xFF367987):Colors.white,width:1.25),
             boxShadow:[BoxShadow(
-              color:Colors.black.withValues(alpha:.16),
-              offset:const Offset(0,3),blurRadius:5)],
+              color:Colors.black.withValues(alpha:.20),
+              offset:const Offset(0,5),blurRadius:7)],
           ),
-          child:actions[i]),
+          child:Center(child:actions[i])),
       ],
     ]);
+    });
 }
 
 class TransferCardTime extends StatelessWidget {
@@ -1607,13 +1629,16 @@ class TransferCardTime extends StatelessWidget {
   final Widget status;
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
     decoration: BoxDecoration(
-      color: FileTheme.violet.withValues(alpha: .15),
-      borderRadius: BorderRadius.circular(18)),
+      color: FileTheme.turquoise.withValues(alpha: .10),
+      border:Border.all(color:FileTheme.dark(context)
+        ?const Color(0xFF58939D):Colors.white,width:1.1),
+      borderRadius: BorderRadius.circular(22)),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Text(created.toLocal().toString().substring(11, 16),
-        style: TextStyle(fontSize: 10, color: FileTheme.muted(context))),
+        style: TextStyle(fontSize: 11,fontWeight:FontWeight.w700,
+          color: FileTheme.foreground(context))),
       const SizedBox(width: 4),
       status,
     ]),
@@ -1679,8 +1704,8 @@ class LiveTransferCard extends StatelessWidget {
     Widget action(String title, IconData icon, VoidCallback? onTap) =>
       IconButton(
         tooltip: title, onPressed: onTap,
-        iconSize: 19,
-        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        iconSize: 22,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 38),
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         icon: Icon(icon, color: onTap == null
@@ -1721,7 +1746,7 @@ class LiveTransferCard extends StatelessWidget {
     return Padding(padding:const EdgeInsets.only(top:8),
       child:LayoutBuilder(builder:(context,constraints){
         final compact=constraints.maxWidth<460;
-        final side=compact?74.0:88.0;
+        final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
         final preview=InkWell(
           borderRadius:BorderRadius.circular(12),
           onTap:()=>_preview(context,file),
@@ -1741,29 +1766,17 @@ class LiveTransferCard extends StatelessWidget {
             if(active)LinearProgressIndicator(value:file.progress,minHeight:2),
           ]
         ]);
-        if(compact) {
-          return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-            Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
-              preview,const SizedBox(width:10),
-              Expanded(child:details),
-            ]),
-            const SizedBox(height:4),
-            Align(alignment:Alignment.centerRight,
-              child:_buttons(context,file)),
-            const SizedBox(height:3),
-            Align(alignment:Alignment.centerRight,
-              child:TransferCardTime(created:file.created,status:_status(file))),
+        if(compact) return Row(
+          crossAxisAlignment:CrossAxisAlignment.start,children:[
+            preview,const SizedBox(width:10),
+            Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+              children:[details,const SizedBox(height:8),
+                _buttons(context,file)])),
           ]);
-        }
         return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
           preview,const SizedBox(width:10),
           Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-            details,const SizedBox(height:7),
-            Row(children:[
-              TransferCardTime(created:file.created,status:_status(file)),
-              const Spacer(),
-              Flexible(child:_buttons(context,file)),
-            ]),
+            details,const SizedBox(height:7),_buttons(context,file),
           ]))
         ]);
       }));
@@ -1775,25 +1788,26 @@ class LiveTransferCard extends StatelessWidget {
     final multiple = items.length > 1;
     final peer = first.peer.trim().isEmpty
       ? 'Unknown device' : first.peer.trim();
-    final origin = (incoming ? 'From ' : 'To ') + peer + ' · Offline LAN';
+    final origin = incoming ? 'From $peer · Received' : 'Sent · Offline LAN';
     final delivered = items.every((f) => f.state == TransferState.delivered);
     return TransferBubble(
       incoming: incoming,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 15,
-            backgroundColor: FileTheme.violet.withValues(alpha: .22),
-            child: Icon(incoming ? Icons.download_rounded : Icons.upload_rounded,
+            backgroundColor: const Color(0xFF89EEE5),
+            child: Icon(incoming ? Icons.download_rounded : Icons.send_rounded,
               size: 19, color: FileTheme.pink)),
           const SizedBox(width: 8),
           Expanded(child: Text(origin,
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: FileTheme.foreground(context),
-              fontWeight: FontWeight.w700, fontSize: 12))),
-          if(multiple) Text('${items.length} files',
-            style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
-
+              fontWeight: FontWeight.w700, fontSize: 13))),
+          TransferCardTime(created:first.created,
+            status:_status(first)),
         ]),
+        if(multiple) Text('${items.length} files',
+          style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
         for (final file in items.take(4)) _file(context, file),
         if (items.length > 4)
           Padding(padding: const EdgeInsets.only(top: 5),
@@ -1895,9 +1909,9 @@ class CloudInboxCard extends StatelessWidget {
     final sent = device && items.first.senderId == appLan.deviceId;
     Widget action(String name, IconData icon, VoidCallback onPressed) =>
       IconButton(
-        tooltip: name, onPressed: onPressed, iconSize: 19,
+        tooltip: name, onPressed: onPressed, iconSize: 22,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 38),
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: FileTheme.pink));
     return TransferBubble(
@@ -1905,23 +1919,26 @@ class CloudInboxCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 15,
-            backgroundColor: FileTheme.pink.withValues(alpha: .22),
-            child: const Icon(Icons.download_rounded,
-              size: 19, color: FileTheme.pink)),
+            backgroundColor: const Color(0xFF89EEE5),
+            child: Icon(sent?Icons.send_rounded:Icons.download_rounded,
+              size:19,color:FileTheme.pink)),
           const SizedBox(width: 8),
           Expanded(child: Text(device ? (sent ? 'Sent · Online / Cloud' : 'From '+items.first.senderName+' · Online / Cloud') : 'From Guest browser · Guest QR · Online',
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: FileTheme.foreground(context),
-              fontWeight: FontWeight.w700, fontSize: 12))),
-          if (grouped) Text('${items.length} files',
-            style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
-
+              fontWeight: FontWeight.w700, fontSize: 13))),
+          TransferCardTime(created:items.first.created,
+            status:Icon(device && items.first.receivedAt==null
+              ?Icons.done_rounded:Icons.done_all_rounded,
+              size:17,color:FileTheme.turquoise)),
         ]),
+        if(grouped)Text('${items.length} files',
+          style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
         for(final file in items.take(5))
           Padding(padding:const EdgeInsets.only(top:8),
             child:LayoutBuilder(builder:(context,constraints){
               final compact=constraints.maxWidth<460;
-              final side=compact?74.0:88.0;
+               final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
               final preview=SizedBox(width:side,height:side,
                 child:CloudImageThumbnail(
                   key:ValueKey('qr-thumb-'+file.id),
@@ -1951,30 +1968,17 @@ class CloudInboxCard extends StatelessWidget {
                 action('Open in Tools',Icons.auto_fix_high_rounded,
                   ()=>onTools(file)),
               ]);
-              final status=Icon(device&&file.receivedAt==null
-                  ?Icons.done_rounded:Icons.done_all_rounded,
-                size:15,color:FileTheme.pink);
-              if(compact)return Column(
-                crossAxisAlignment:CrossAxisAlignment.start,children:[
-                  Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
-                    preview,const SizedBox(width:10),Expanded(child:details),
-                  ]),
-                  const SizedBox(height:4),
-                  Align(alignment:Alignment.centerRight,child:actions),
-                  const SizedBox(height:3),
-                  Align(alignment:Alignment.centerRight,
-                    child:TransferCardTime(created:file.created,status:status)),
-                ]);
+               if(compact)return Row(
+                 crossAxisAlignment:CrossAxisAlignment.start,children:[
+                   preview,const SizedBox(width:10),
+                   Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+                     children:[details,const SizedBox(height:8),actions])),
+                 ]);
               return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
                 preview,const SizedBox(width:10),
                 Expanded(child:Column(
                   crossAxisAlignment:CrossAxisAlignment.start,children:[
-                    details,const SizedBox(height:7),
-                    Row(children:[
-                      TransferCardTime(created:file.created,status:status),
-                      const Spacer(),
-                      Flexible(child:actions),
-                    ]),
+                     details,const SizedBox(height:7),actions,
                   ])),
               ]);
             })),
@@ -2019,7 +2023,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   final TextEditingController _messageController=TextEditingController();
   String _filter = 'All';
   bool _choosing = false;
-  bool _showSamples = true;
   bool _refreshing = false;
   bool _sending = false;
   bool _desktopSidebarVisible = true;
@@ -2171,18 +2174,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final card=lanText
       ?TextTransferCard(
         key:ValueKey('text-lan-${g.lan!.first.id}'),
-        wrap:(content)=>TransferBubble(incoming:g.lan!.first.incoming,child:content),
+        wrap:(content)=>TransferBubble(incoming:g.lan!.first.incoming,
+          textOnly:true,child:content),
         readMessage:()async=>File(g.lan!.first.path),
         onDelete:()=>_delete(g.lan!.first),
         incoming:g.lan!.first.incoming,
-        source:(g.lan!.first.incoming?'From ':'To ')+g.lan!.first.peer+' · Offline LAN',
+        source:g.lan!.first.incoming
+          ?'From ${g.lan!.first.peer} · Received':'Sent · Offline LAN',
         created:g.lan!.first.created,
         status:Icon(g.lan!.first.state==TransferState.delivered
           ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,color:FileTheme.pink))
       :cloudText
       ?TextTransferCard(
         key:ValueKey('text-cloud-${g.cloud!.first.id}'),
-        wrap:(content)=>TransferBubble(incoming:g.cloud!.first.senderId!=appLan.deviceId,child:content),
+        wrap:(content)=>TransferBubble(
+          incoming:g.cloud!.first.senderId!=appLan.deviceId,
+          textOnly:true,child:content),
         readMessage:()=>PersonalCloud.instance.download(g.cloud!.first),
         onDelete:()=>_deleteCloud(g.cloud!.first),
         incoming:g.cloud!.first.senderId!=appLan.deviceId,
@@ -2355,7 +2362,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
     if(sources.isEmpty||!mounted)return;
     setState((){
-      _showSamples=false;
       _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
     });
     _snack('Edited file is ready in File Share Cart. Tap Send to transfer.');
@@ -2499,7 +2505,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       if(sources.isEmpty)return;
       setState((){
         _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
-        _showSamples=false;
       });
       _snack('Shared files are ready. Tap Send when you want to transmit.');
     }catch(e){_snack('Could not import shared files: '+e.toString());}
@@ -2562,7 +2567,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       if(length==0){await target.delete();throw StateError('Empty photo');}
       if(!mounted)return;
       setState(() {
-        _showSamples=false;
         _staged.add(PendingBatch(LanEngine.newId(),[target],[name],[length]));
       });
       _snack('Camera photo added to Cart. Tap Send to transfer.');
@@ -2593,7 +2597,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       }
       // IMPORTANT: Picking files MUST NOT call the transfer engine.
       setState((){
-        _showSamples=false;
         _staged.add(PendingBatch(LanEngine.newId(),sources,names,sizes));
       });
     }catch(e){_snack('File selection failed: '+e.toString());}
@@ -2629,7 +2632,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       if(!mounted)return;
       setState((){
         _staged.add(PendingBatch(id,[file],[file.uri.pathSegments.last],[size]));
-        _messageController.clear();_showSamples=false;
+        _messageController.clear();
       });
       if(!appLan.started){_snack('Text ready in Cart. Tap Send when LAN starts.');return;}
       await _send();
@@ -2968,16 +2971,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final wide = MediaQuery.sizeOf(context).width >= 730;
     final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
     final groups = _timeline();
-    final useDemo = _showSamples && groups.isEmpty && _staged.isEmpty;
-    final samples = mockTransfers.where((f) =>
-      _filter == 'All' || (_filter == 'Sent' && f.sent) ||
-      (_filter == 'Received' && !f.sent)).toList();
     return Column(children: [
             Padding(
-              padding: EdgeInsets.fromLTRB(wide ? 24 : 10, 10,
-                wide ? 24 : 10, 5),
+              padding: EdgeInsets.fromLTRB(wide ? 24 : 12,
+                wide ? 10 : 24,wide ? 24 : 12,9),
               child: DesignPanel(
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 5),
+                dashboard:true,
+                padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 5),
                 child: Row(children: [
                   IconButton(
                     visualDensity:VisualDensity.compact,
@@ -2994,7 +2994,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected', style: TextStyle(fontSize: wide ? 21 : 15,
+                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected',
+                        maxLines:1,overflow:TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: wide ? 21 : 15,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
                       Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN device' +
@@ -3024,12 +3026,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   ]else...[
                     IconButton(visualDensity:VisualDensity.compact,
                        constraints:const BoxConstraints(minWidth:32,minHeight:38),
-                       padding:EdgeInsets.zero,tooltip:'QR design preview',
+                       padding:EdgeInsets.zero,tooltip:'My QR',
                       onPressed:()=>_navigate('My QR'),
                       icon:const Icon(Icons.qr_code_2_rounded,
                         color:FileTheme.violet)),
                     _autoCloudTransferToggle(compact:true),
-                    AppearanceButton(mode:widget.mode,onChange:widget.onMode),
+                    AppearanceButton(mode:widget.mode,onChange:widget.onMode,
+                      compact:true),
                     IconButton(visualDensity:VisualDensity.compact,
                        constraints:const BoxConstraints(minWidth:34,minHeight:38),
                        padding:EdgeInsets.zero,tooltip:'Refresh nearby LAN devices',
@@ -3069,7 +3072,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                                     ? const [Color(0xFF12A9AC),Color(0xFF007580)]
                                     : FileTheme.dark(context)
                                       ?const [Color(0xFF1C4755),Color(0xFF102F3B)]
-                                      :const [Color(0xFFE3F0F6),Color(0xFFB9D2DE)]),
+                                      :const [Color(0xFFE6F7FD),Color(0xFFCBE9F3)]),
                                 border:Border.all(
                                   color:FileTheme.dark(context)
                                     ?const Color(0xFF3B7783):const Color(0xFFF6FCFE)),
@@ -3092,40 +3095,25 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     ]),
                   ),
                 ),
-                if (groups.isEmpty)
-                  TextButton(onPressed: () => setState(() =>
-                    _showSamples = !_showSamples),
-                    child: Text(_showSamples ? 'Hide demo' : 'View demo')),
               ]),
             ),
-            if (useDemo)
-              Padding(padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Row(children: [
-                  const DesignTag('SAMPLE DATA'),
-                  const SizedBox(width: 7),
-                  Expanded(child: Text('Example cards only — no real files',
-                    maxLines: 1, style: TextStyle(fontSize: 10,
-                      color: FileTheme.muted(context)))),
-                ])),
             Expanded(child: groups.isNotEmpty
               ? ListView.builder(
                   // Newest message stays at the bottom, like a chat.
                   reverse: true,
-                  padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
+                  padding: EdgeInsets.fromLTRB(wide ? 28 : 15,12,
+                    wide ? 28 : 15,10),
                   itemCount: groups.length,
                   itemBuilder: (_, i) => _multiSelectCard(groups[i]))
-              : useDemo
-                ? ListView.builder(
-                    padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 12),
-                    itemCount: samples.length,
-                    itemBuilder: (_, i) => DesignFileCard(transfer: samples[i]))
-                : Center(child: Text('No transfers yet. Choose files with +',
+              : Center(child: Text('No transfers yet. Choose files with +',
                     style: TextStyle(color: FileTheme.muted(context))))),
             if (_staged.isNotEmpty)
               Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 child: _drafts(context)),
-            Padding(padding:EdgeInsets.fromLTRB(wide?24:10,7,wide?24:10,10),
+            Padding(padding:EdgeInsets.fromLTRB(wide?24:10,7,
+              wide?24:10,wide?10:0),
               child:DesignPanel(
+                dashboard:true,
                 padding:const EdgeInsets.symmetric(horizontal:8,vertical:9),
                 child:LayoutBuilder(builder:(context,constraints){
                   final small=constraints.maxWidth<365;
@@ -3139,7 +3127,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                             gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
                               colors:FileTheme.dark(context)
                                 ?const [Color(0xFF245667),Color(0xFF103443)]
-                                :const [Color(0xFFE8F4F9),Color(0xFFB7D4E0)]),
+                                :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
                             borderRadius:BorderRadius.circular(12),
                             border:Border.all(color:FileTheme.dark(context)
                               ?const Color(0xFF438591):Colors.white),
@@ -3159,7 +3147,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                         gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
                           colors:FileTheme.dark(context)
                             ?const [Color(0xFF173F4D),Color(0xFF0D2D3C)]
-                            :const [Color(0xFFDDEBF2),Color(0xFFC0DAE5)]),
+                            :const [Color(0xFFE6F7FD),Color(0xFFCBE9F3)]),
                         borderRadius:BorderRadius.circular(15),
                         border:Border.all(color:FileTheme.dark(context)
                           ?const Color(0xFF468896):Colors.white),
@@ -3214,7 +3202,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       key: _scaffold,
       drawer: _drawer(),
       body: Container(
-        decoration: BoxDecoration(gradient: FileTheme.background(context)),
+        decoration: BoxDecoration(gradient: FileTheme.dashboardBackground(context)),
         child: SafeArea(child: Row(children: [
           if (desktop && _desktopSidebarVisible) _desktopSidebar(),
           Expanded(child: desktop
