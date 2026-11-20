@@ -121,19 +121,77 @@ class ImageEditingHistory extends ChangeNotifier {
 }
 
 class ImageEditingCartEntry {
-  const ImageEditingCartEntry(this.file,this.name);
+  const ImageEditingCartEntry(this.file,this.name,{required this.versionId});
   final File file;
-  final String name;
+  final String name,versionId;
 }
-/// Lightweight bridge into existing Send staging. Does not upload by itself.
+
+/// An edited output is a NEW transfer version, even when derived from a file
+/// already present in LAN history, Cloud history, or the unsent Cart.
+/// Never compare by source path, display name, or original transfer ID.
 class ImageEditingCart extends ChangeNotifier {
   ImageEditingCart._();
   static final instance=ImageEditingCart._();
   final List<ImageEditingCartEntry> _pending=[];
+  int _sequence=0;
+
+  String _newVersionId(){
+    final time=DateTime.now().microsecondsSinceEpoch;
+    return '${time}_${_sequence++}';
+  }
+
+  Future<File> _versionFile(String name,String version)async{
+    final root=await getApplicationSupportDirectory();
+    final folder=Directory('${root.path}${Platform.pathSeparator}editor_cart_versions');
+    await folder.create(recursive:true);
+    final safe=name.replaceAll(RegExp(r'[\\/\x00-\x1f]'),'_');
+    return File('${folder.path}${Platform.pathSeparator}${version}_${safe.isEmpty?'edited_file':safe}');
+  }
+
+  /// Persist fresh edited bytes before notifying the Dashboard listener.
+  /// The source image/draft and any previous Cart snapshot stay untouched.
+  Future<ImageEditingCartEntry> addEditedBytes(
+      List<int> bytes,String name)async{
+    if(bytes.isEmpty)throw StateError('Edited file is empty');
+    final version=_newVersionId();
+    final file=await _versionFile(name,version);
+    try{
+      await file.writeAsBytes(bytes,flush:true);
+      final item=ImageEditingCartEntry(file,name,versionId:version);
+      _pending.add(item);
+      notifyListeners();
+      return item;
+    }catch(_){
+      if(await file.exists())await file.delete();
+      rethrow;
+    }
+  }
+
+  /// History and other editors can re-add the SAME source any number of times.
+  Future<ImageEditingCartEntry> addEditedFile(
+      File source,String name)async{
+    if(!await source.exists())throw StateError('Edited file unavailable');
+    final version=_newVersionId();
+    final file=await _versionFile(name,version);
+    try{
+      await source.copy(file.path);
+      if(await file.length()==0)throw StateError('Edited file is empty');
+      final item=ImageEditingCartEntry(file,name,versionId:version);
+      _pending.add(item);
+      notifyListeners();
+      return item;
+    }catch(_){
+      if(await file.exists())await file.delete();
+      rethrow;
+    }
+  }
+
+  // Legacy callers keep their API; every call is a distinct version.
   void add(File file,String name) {
-    _pending.add(ImageEditingCartEntry(file,name));
+    _pending.add(ImageEditingCartEntry(file,name,versionId:_newVersionId()));
     notifyListeners();
   }
+
   List<ImageEditingCartEntry> takeAll() {
     final items=List<ImageEditingCartEntry>.from(_pending);
     _pending.clear();
