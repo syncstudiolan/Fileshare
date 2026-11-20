@@ -12,8 +12,10 @@ import 'account_directory.dart';
 /// initial provisioning. The OWNER_TOKEN secret belongs to the user's Worker.
 class CloudFile {
   const CloudFile({required this.id, required this.name, required this.size,
-    required this.session, required this.created});
-  final String id, name, session;
+    required this.session, required this.created,
+    this.deviceTransfer=false, this.senderId='', this.senderName=''});
+  final String id, name, session, senderId, senderName;
+  final bool deviceTransfer;
   final int size;
   final DateTime created;
 }
@@ -412,6 +414,26 @@ class PersonalCloud extends ChangeNotifier {
         if (rows.length < 100) break;
         offset += rows.length;
       }
+      // The owner inbox also lists transfers from other logged-in devices.
+      // Older Workers without this endpoint retain the existing QR inbox.
+      if(signedIn){
+        try{
+          final remote=await _call('GET','/v1/owner/transfers');
+          for(final entry in (remote['files'] as List? ?? [])){
+            if(entry is! Map)continue;
+            final id=entry['id'] as String;
+            fetched.add(CloudFile(
+              id:id,name:entry['name'] as String,
+              size:(entry['size'] as num).toInt(),
+              session:'device_'+id,
+              senderId:(entry['sender_id'] as String?)??'',
+              senderName:(entry['sender_name'] as String?)??'Device',
+              deviceTransfer:true,
+              created:DateTime.fromMillisecondsSinceEpoch(
+                (entry['created_at'] as num).toInt())));
+          }
+        }catch(e){debugPrint('Device inbox unavailable: '+e.toString());}
+      }
       files..clear()..addAll(fetched);
       error = null;
     } catch (e) { error = 'Cloud inbox refresh failed: ' + e.toString(); }
@@ -424,6 +446,60 @@ class PersonalCloud extends ChangeNotifier {
         _inboxRefreshPending=false;
         scheduleMicrotask(() => unawaited(_refreshAfterEvent()));
       }
+    }
+  }
+
+  /// 200MB cross-network sends are only invoked after the LAN-first gate.
+  /// Reuse the user's existing Cloudflare login and Worker; no second API key.
+  Future<void> uploadDeviceFile(File source,String name,String senderId,
+      {String senderName='File Share'})async{
+    if(!signedIn||_host==null)throw StateError('Log in to enable cloud transfer');
+    if(senderId.isEmpty)throw StateError('Device identity is not ready');
+    if(!await source.exists())throw StateError('Selected file is missing');
+    final size=await source.length();
+    if(size<1||size>200*1024*1024)throw StateError('Cloud limit is 200 MB per file');
+    final init=await _call('POST','/v1/owner/transfer',{
+      'name':name,'size':size,'senderId':senderId,'senderName':senderName,
+    });
+    final id=init['id'] as String;
+    const chunk=6*1024*1024;
+    if(size<=chunk){
+      await _uploadDevicePart(source,id,0,size,false);
+    }else{
+      var offset=0,part=1;
+      while(offset<size){
+        final end=(offset+chunk).clamp(0,size);
+        await _uploadDevicePart(source,id,offset,end,true,part:part);
+        offset=end;
+        part++;
+      }
+      await _call('POST','/v1/owner/transfer/'+id+'/complete');
+    }
+    await refreshFiles();
+  }
+
+  Future<void> _uploadDevicePart(File file,String id,int offset,int end,
+      bool multipart,{int part=1})async{
+    final uri=_host!.resolve('/v1/owner/transfer/'+id+
+      (multipart?'/part/'+part.toString():''));
+    for(var attempt=0;attempt<3;attempt++){
+      final client=HttpClient()..connectionTimeout=const Duration(seconds:15);
+      try{
+        final request=await client.putUrl(uri);
+        request.headers.set(HttpHeaders.authorizationHeader,'Bearer '+_sessionToken!);
+        request.headers.contentType=ContentType.binary;
+        request.contentLength=end-offset;
+        await request.addStream(file.openRead(offset,end));
+        final response=await request.close().timeout(const Duration(seconds:90));
+        final body=await utf8.decoder.bind(response).join();
+        if(response.statusCode<200||response.statusCode>=300){
+          throw StateError('Cloud upload HTTP '+response.statusCode.toString()+': '+body);
+        }
+        return;
+      }catch(_){
+        if(attempt==2)rethrow;
+        await Future<void>.delayed(Duration(seconds:attempt+1));
+      }finally{client.close(force:true);}
     }
   }
 
@@ -461,7 +537,8 @@ class PersonalCloud extends ChangeNotifier {
     final before = files.length;
     files.removeWhere((entry) {
       final created = entry.created.toUtc().millisecondsSinceEpoch;
-      final expiry = ((created + istOffset) ~/ day + 1) * day - istOffset;
+      final expiry = entry.deviceTransfer ? created+day :
+        ((created + istOffset) ~/ day + 1) * day - istOffset;
       return expiry <= now;
     });
     if (files.length != before) notifyListeners();
@@ -488,7 +565,9 @@ class PersonalCloud extends ChangeNotifier {
     final cache=await _cacheDir();
     final safe=item.name.replaceAll(RegExp(r'[/\\\x00-\x1f]'),'_');
     final target=File(cache.path+Platform.pathSeparator+'cloud_'+
-      nextMidnightIst().toString()+'_'+item.id+'_'+safe);
+      (item.deviceTransfer
+        ? item.created.millisecondsSinceEpoch+const Duration(hours:24).inMilliseconds
+        : nextMidnightIst()).toString()+'_'+item.id+'_'+safe);
     if(await target.exists()){
       if(await target.length()==item.size)return target;
       await target.delete();
@@ -497,7 +576,9 @@ class PersonalCloud extends ChangeNotifier {
     final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
     try{
       final request=await client.getUrl(
-        _host!.resolve('/v1/owner/file/'+item.id));
+        _host!.resolve(item.deviceTransfer
+          ? '/v1/owner/transfer/'+item.id
+          : '/v1/owner/file/'+item.id));
       request.headers.set(HttpHeaders.authorizationHeader,'Bearer '+
         (signedIn?_sessionToken!:_ownerToken!));
       final response=await request.close().timeout(const Duration(seconds:30));
@@ -514,7 +595,8 @@ class PersonalCloud extends ChangeNotifier {
   }
 
   Future<void> deleteRemote(CloudFile item) async {
-    await _call('DELETE', '/v1/owner/file/' + item.id);
+    await _call('DELETE',
+      (item.deviceTransfer?'/v1/owner/transfer/':'/v1/owner/file/')+item.id);
     files.removeWhere((f) => f.id == item.id);
     notifyListeners();
   }
