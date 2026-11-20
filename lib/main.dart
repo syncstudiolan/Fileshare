@@ -3684,17 +3684,6 @@ class _MyQrPageState extends State<MyQrPage> {
     finally{if(mounted)setState(()=>_busy=false);}
   }
 
-  Future<void> _revoke() async {
-    final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(
-      title:const Text('Revoke permanent QR?'),
-      content:const Text('Guests will no longer be able to use the old QR URL.'),
-      actions:[
-        TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),
-        FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Revoke')),
-      ],
-    ));
-    if(yes==true) await _run(() => PersonalCloud.instance.revokeQr());
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -3723,7 +3712,7 @@ class _MyQrPageState extends State<MyQrPage> {
                   color:FileTheme.foreground(context))),
               const SizedBox(height:10),
               Text(cloud.signedIn
-                  ? 'Your QR remains until you revoke or regenerate it.'
+                  ? 'Your Guest QR remains available in both Auto Cloud modes.'
                   : 'Connect your own Cloudflare Worker first.',
                 style:TextStyle(color:FileTheme.muted(context),fontSize:12),
                 textAlign:TextAlign.center),
@@ -3771,10 +3760,6 @@ class _MyQrPageState extends State<MyQrPage> {
                       onPressed:_busy?null:()=>_run(()=>cloud.regenerateQr()),
                       icon:const Icon(Icons.refresh_rounded),
                       label:const Text('Regenerate')),
-                    OutlinedButton.icon(
-                      onPressed:_busy?null:_revoke,
-                      icon:const Icon(Icons.delete_outline_rounded),
-                      label:const Text('Revoke')),
                   ]),
               ],
               if(_busy)const Padding(padding:EdgeInsets.all(14),
@@ -3783,6 +3768,38 @@ class _MyQrPageState extends State<MyQrPage> {
                 child:Text(_error!,style:const TextStyle(
                   color:Colors.deepOrange,fontSize:12))),
             ])),
+            const SizedBox(height:14),
+            DesignPanel(child:AnimatedBuilder(
+              animation:AutoCloudTransferPreference.instance,
+              builder:(context,_) {
+                final pref=AutoCloudTransferPreference.instance;
+                return Row(children:[
+                  const Icon(Icons.cloud_outlined,color:FileTheme.violet),
+                  const SizedBox(width:12),
+                  Expanded(child:Column(
+                    crossAxisAlignment:CrossAxisAlignment.start,children:[
+                      const Text('Auto Cloud Transfer',
+                        style:TextStyle(fontWeight:FontWeight.w700)),
+                      Text(pref.enabled
+                        ? 'ON: LAN first; Cloud if zero LAN devices and logged in'
+                        : 'OFF: LAN only; files wait for a LAN device',
+                        style:TextStyle(fontSize:11,
+                          color:FileTheme.muted(context))),
+                      const SizedBox(height:3),
+                      const Text('Guest QR always works in either mode.',
+                        style:TextStyle(fontSize:11,color:FileTheme.violet)),
+                    ])),
+                  Switch.adaptive(value:pref.enabled,
+                    onChanged:(value){
+                      unawaited(pref.setEnabled(value).catchError((Object e){
+                        if(context.mounted)ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content:Text(
+                            'Could not save Cloud setting: $e')));
+                      }));
+                    }),
+                ]);
+              },
+            )),
             const SizedBox(height:14),
             DesignPanel(child:Text(
               'Guest limit: 200 MB total and 4 upload sessions per IST day. '
