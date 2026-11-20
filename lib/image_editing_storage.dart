@@ -144,8 +144,15 @@ class ImageEditingCart extends ChangeNotifier {
     final folder=destinationDirectory??Directory(
       '${(await getApplicationSupportDirectory()).path}${Platform.pathSeparator}editor_cart_versions');
     await folder.create(recursive:true);
-    final safe=name.replaceAll(RegExp(r'[\\/\x00-\x1f]'),'_');
-    return File('${folder.path}${Platform.pathSeparator}${version}_${safe.isEmpty?'edited_file':safe}');
+    // Keep the extension so PDF/image recognition still works, while
+    // staying within common filesystem component-length limits.
+    final clean=name.replaceAll(RegExp(r'[\\/\x00-\x1f]'),'_');
+    final dot=clean.lastIndexOf('.');
+    final ext=dot>0 ? clean.substring(dot).substring(0,
+      clean.length-dot>12?12:clean.length-dot) : '';
+    final base=(dot>0?clean.substring(0,dot):clean);
+    final safe='${base.isEmpty?'edited_file':(base.length>130?base.substring(0,130):base)}$ext';
+    return File('${folder.path}${Platform.pathSeparator}${version}_$safe');
   }
 
   /// Persist fresh edited bytes before notifying the Dashboard listener.
