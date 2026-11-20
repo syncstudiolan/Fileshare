@@ -33,6 +33,26 @@ jobs:
           channel: stable
       - name: Generate Android runner for plugin analyzer
         run: flutter create --project-name file_share --platforms=android .
+      - name: Supply Maven Central fallback for Flutter Gradle included build
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/fileshare-maven-fallback.gradle" <<'GRADLE'
+          gradle.beforeSettings { settings ->
+            settings.pluginManagement.repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          gradle.beforeProject { project ->
+            project.buildscript.repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          GRADLE
       - name: Generate final Android launcher logo assets
         run: |
           python3 -m pip install --quiet Pillow
@@ -101,6 +121,26 @@ jobs:
         run: |
           python3 -m pip install --quiet Pillow
           python3 tool/generate_brand_assets.py
+      - name: Supply Maven Central fallback for Flutter Gradle included build
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/fileshare-maven-fallback.gradle" <<'GRADLE'
+          gradle.beforeSettings { settings ->
+            settings.pluginManagement.repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          gradle.beforeProject { project ->
+            project.buildscript.repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          GRADLE
       - name: Configure Android release ML Kit keep rules
         run: python3 tool/ensure_mlkit_proguard.py
       - name: Install packages
