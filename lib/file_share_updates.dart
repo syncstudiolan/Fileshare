@@ -216,13 +216,21 @@ class FileShareUpdates extends ChangeNotifier {
 \$oldPid = $currentPid
 \$setup = ${quote(installer.path)}
 \$app = ${quote(exe)}
-while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 350 }
+\$limit = (Get-Date).AddSeconds(45)
+while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
+  if ((Get-Date) -gt \$limit) { throw 'Previous File Share process did not exit.' }
+  Start-Sleep -Milliseconds 350
+}
 try {
-  \$process = Start-Process -FilePath \$setup -Verb RunAs -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -PassThru -Wait
+  # Show the real Inno Setup wizard, Install button, progress and Windows UAC.
+  \$process = Start-Process -FilePath \$setup -Verb RunAs -ArgumentList '/NORESTART','/CLOSEAPPLICATIONS','/LOG' -PassThru -Wait
   if (\$process.ExitCode -ne 0) { throw "Installer exited \$(\$process.ExitCode)" }
   Start-Process -FilePath \$app
 } catch {
-  Add-Content -Path (Join-Path \$env:TEMP 'fileshare-update-error.log') -Value \$_.ToString()
+  \$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
+  Add-Content -Path \$log -Value \$_.ToString()
+  Add-Type -AssemblyName PresentationFramework
+  [System.Windows.MessageBox]::Show('File Share installation failed: '+\$_.Exception.Message+[Environment]::NewLine+'Log: '+\$log,'File Share Update','OK','Error') | Out-Null
 }
 """;
     await script.writeAsString(code,flush:true);
