@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 512,
-    "notes": "fix(ios-ci): skip broadcast discovery in injected LAN unit tests",
-    "sha256": "5f9132b4bb1c85a65fe11b243867fdce240f4d786ab365e631045868638f83b9",
-    "size": 19245529,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-512/FileShare-Windows-Setup.exe",
+    "build": 516,
+    "notes": "Merge PR #13: visible Windows updates, AppleJR iOS checks and Cloud transfer repair",
+    "sha256": "459336d50cf331713bcb3ace6f94126bb0a6988b0a936e4f81a5e71e9b708c27",
+    "size": 19244656,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-516/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
