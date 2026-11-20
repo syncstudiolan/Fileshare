@@ -124,9 +124,10 @@ class PersonalCloud extends ChangeNotifier {
     } finally { client.close(force: true); }
   }
 
-  Future<Map<String, dynamic>> _call(String method, String path) {
+  Future<Map<String, dynamic>> _call(String method, String path,
+      [Map<String, dynamic>? payload]) {
     if (!connected) throw StateError('Please login. Your Cloudflare setup is retained.');
-    return _request(_host!, signedIn ? _sessionToken! : _ownerToken!, method, path);
+    return _request(_host!, signedIn ? _sessionToken! : _ownerToken!, method, path, payload);
   }
 
 
