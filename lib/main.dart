@@ -1210,7 +1210,7 @@ class DesignFileCard extends StatelessWidget {
               ? (sent ? const Color(0xFF3C315E) : const Color(0xFF4B294B))
               : (sent ? const Color(0xFFF0E7FF) : const Color(0xFFFFDDED)),
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(23), topRight: const Radius.circular(23),
+            topLeft: const Radius.circular(24), topRight: const Radius.circular(23),
             bottomLeft: Radius.circular(sent ? 23 : 6),
             bottomRight: Radius.circular(sent ? 6 : 23),
           ),
@@ -1466,10 +1466,10 @@ class TransferBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     // Unlike the old full-width cards, opposing sides stay visibly separated.
-    final maxWidth = width >= 760 ? 610.0 : width * .88;
+    final maxWidth = width >= 760 ? 610.0 : width * .91;
     final dark = FileTheme.dark(context);
     final fill = dark
-      ? (incoming ? const Color(0xFF4B294B) : const Color(0xFF3C315E))
+      ? (incoming ? const Color(0xFF542947) : const Color(0xFF39315D))
       : (incoming ? const Color(0xFFFFDDED) : const Color(0xFFF0E7FF));
     final accent = incoming ? FileTheme.pink : FileTheme.violet;
     return Align(
@@ -1477,12 +1477,12 @@ class TransferBubble extends StatelessWidget {
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 7),
+          padding: const EdgeInsets.symmetric(vertical: 5),
           child: CustomPaint(
             painter: _TransferBubblePainter(incoming, fill, accent),
             child: Padding(
               padding: EdgeInsets.fromLTRB(
-                incoming ? 16 : 10, 11, incoming ? 10 : 16, 11),
+                incoming ? 14 : 10, 10, incoming ? 10 : 14, 10),
               child: child),
           ),
         ),
@@ -1515,12 +1515,12 @@ class _TransferBubblePainter extends CustomPainter {
       path.lineTo(right - 1, mid + 12);
     }
     path.close();
-    canvas.drawShadow(path, accent.withValues(alpha: .25), 9, false);
+    canvas.drawShadow(path, accent.withValues(alpha: .29), 11, false);
     canvas.drawPath(path, Paint()..color = fill);
     canvas.drawPath(path, Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..color = accent.withValues(alpha: .65));
+      ..strokeWidth = 1.35
+      ..color = accent.withValues(alpha: .8));
   }
 
   @override
@@ -1669,7 +1669,7 @@ class LiveTransferCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: LayoutBuilder(builder: (context, constraints) {
-        final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
+        final side = constraints.maxWidth < 290 ? 66.0 : 78.0;
         return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           InkWell(
             borderRadius: BorderRadius.circular(12),
@@ -1698,10 +1698,6 @@ class LiveTransferCard extends StatelessWidget {
               // On narrow devices the actions wrap instead of causing overflow.
               Align(alignment: Alignment.centerRight,
                 child: _buttons(context, file)),
-              const SizedBox(height: 3),
-              Align(alignment: Alignment.centerRight,
-                child: TransferCardTime(created: file.created,
-                  status: _status(file))),
             ],
           )),
         ]);
@@ -1732,6 +1728,8 @@ class LiveTransferCard extends StatelessWidget {
               fontWeight: FontWeight.w700, fontSize: 12))),
           if(multiple) Text('${items.length} files',
             style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
+          const SizedBox(width:4),
+          TransferCardTime(created:first.created,status:_status(first)),
         ]),
         for (final file in items.take(4)) _file(context, file),
         if (items.length > 4)
@@ -1854,11 +1852,15 @@ class CloudInboxCard extends StatelessWidget {
               fontWeight: FontWeight.w700, fontSize: 12))),
           if (grouped) Text('${items.length} files',
             style: TextStyle(color: FileTheme.muted(context), fontSize: 10)),
+          const SizedBox(width:4),
+          TransferCardTime(created:items.first.created,
+            status:Icon(device&&items.first.receivedAt==null
+              ?Icons.done_rounded:Icons.done_all_rounded,size:15,color:FileTheme.pink)),
         ]),
         for (final file in items.take(5))
           Padding(padding: const EdgeInsets.only(top: 8),
             child: LayoutBuilder(builder: (context, constraints) {
-              final side = constraints.maxWidth < 290 ? 70.0 : 88.0;
+              final side = constraints.maxWidth < 290 ? 66.0 : 78.0;
               return Row(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(width: side, height: side,
@@ -1895,12 +1897,6 @@ class CloudInboxCard extends StatelessWidget {
                           action('Open in Tools', Icons.auto_fix_high_rounded,
                             () => onTools(file)),
                         ])),
-                      const SizedBox(height: 3),
-                      Align(alignment: Alignment.centerRight,
-                        child: TransferCardTime(created: file.created,
-                          status: Icon(device && file.receivedAt==null
-                              ?Icons.done_rounded:Icons.done_all_rounded,
-                            size:15,color:FileTheme.pink))),
                     ],
                   )),
                 ]);
