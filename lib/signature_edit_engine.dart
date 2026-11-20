@@ -145,6 +145,11 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   final filter=request['filter'] as String;
   final intensity=((request['intensity'] as num?)?.toDouble()??1)
     .clamp(0.0,1.0);
+  if(filter=='White Background') {
+    // Adaptive paper estimation preserves the original black/blue ink hue.
+    // Its strength slider controls how thoroughly the paper turns white.
+    _whitenSignaturePaper(cropped,intensity);
+  }else{
   // Flatten any transparency onto white, so ink remains a real signature.
   for(var py=0;py<cropped.height;py++) {
     for(var px=0;px<cropped.width;px++) {
@@ -201,6 +206,7 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
       cropped.setPixelRgb(px,py,red,green,blue);
     }
   }
+  }
   if(request['preview']==true) {
     final preview=math.max(cropped.width,cropped.height);
     if(preview>1100)cropped=img.copyResize(cropped,
@@ -233,6 +239,78 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   throw StateError(
     'Exact ${(target/1024).round()} KB is not achievable without '
     'making this signature unreadable. Increase the target or crop more.');
+}
+
+/// Estimate the brightest paper color within small local regions. This
+/// removes colored/shaded paper while respecting the ink's original channels:
+/// black strokes stay black and blue strokes stay blue (never colorized).
+/// A photo with virtually identical ink/background colors cannot be reliably
+/// separated, so the operation intentionally avoids inventing missing strokes.
+void _whitenSignaturePaper(img.Image source,double intensity) {
+  if(intensity<=0)return;
+  final w=source.width,h=source.height;
+  final tile=math.max(32,math.max(w,h)~/24);
+  final cols=(w+tile-1)~/tile,rows=(h+tile-1)~/tile;
+  final count=rows*cols;
+  final paperR=List<double>.filled(count,255);
+  final paperG=List<double>.filled(count,255);
+  final paperB=List<double>.filled(count,255);
+  final brightest=List<double>.filled(count,-1);
+  // Sampling all pixels is linear in photo size and runs in a compute isolate.
+  for(var y=0;y<h;y++){
+    for(var x=0;x<w;x++){
+      final p=source.getPixel(x,y);
+      final a=p.a.toDouble()/255;
+      final r=p.r.toDouble()*a+255*(1-a);
+      final g=p.g.toDouble()*a+255*(1-a);
+      final b=p.b.toDouble()*a+255*(1-a);
+      final luminance=.299*r+.587*g+.114*b;
+      final index=(y~/tile)*cols+x~/tile;
+      if(luminance>brightest[index]){
+        brightest[index]=luminance;
+        paperR[index]=r;paperG[index]=g;paperB[index]=b;
+      }
+    }
+  }
+  double interpolate(List<double> grid,int x,int y) {
+    final fx=(x+0.5)/tile-0.5,fy=(y+0.5)/tile-0.5;
+    final left=fx.floor().clamp(0,cols-1);
+    final right=(left+1).clamp(0,cols-1);
+    final top=fy.floor().clamp(0,rows-1);
+    final bottom=(top+1).clamp(0,rows-1);
+    final tx=(fx-left).clamp(0.0,1.0);
+    final ty=(fy-top).clamp(0.0,1.0);
+    final a=grid[top*cols+left];
+    final b=grid[top*cols+right];
+    final c=grid[bottom*cols+left];
+    final d=grid[bottom*cols+right];
+    return (a+(b-a)*tx)*(1-ty)+(c+(d-c)*tx)*ty;
+  }
+  for(var y=0;y<h;y++){
+    for(var x=0;x<w;x++){
+      final pixel=source.getPixel(x,y);
+      final a=pixel.a.toDouble()/255;
+      final r=pixel.r.toDouble()*a+255*(1-a);
+      final g=pixel.g.toDouble()*a+255*(1-a);
+      final b=pixel.b.toDouble()*a+255*(1-a);
+      final pr=interpolate(paperR,x,y);
+      final pg=interpolate(paperG,x,y);
+      final pb=interpolate(paperB,x,y);
+      final drop=.299*(pr-r)+.587*(pg-g)+.114*(pb-b);
+      // Color/grain close to local paper is cleaned away, while clear
+      // darker signatures retain their per-channel hue and stroke edges.
+      final ink=((drop-12)/22).clamp(0.0,1.0);
+      double channel(double original,double paper) {
+        final cleaned=(255-math.max(0,paper-original)*1.16*ink)
+          .clamp(0.0,255.0);
+        return original+(cleaned-original)*intensity;
+      }
+      source.setPixelRgb(x,y,
+        channel(r,pr).round().clamp(0,255),
+        channel(g,pg).round().clamp(0,255),
+        channel(b,pb).round().clamp(0,255));
+    }
+  }
 }
 
 /// Fast filter previews from exactly the same transform as real export.
