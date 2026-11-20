@@ -27,6 +27,8 @@ jobs:
         run: flutter create --project-name file_share --platforms=android .
       - name: Install packages
         run: flutter pub get
+      - name: Repair legacy WebView ProGuard for AGP 9
+        run: python3 tool/fix_legacy_inappwebview_gradle.py
       - name: Analyze sources
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Run tests
