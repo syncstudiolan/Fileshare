@@ -1,7 +1,7 @@
 name: iOS ONLY - Build unsigned iPhone IPA (macOS)
 
 # iOS-only build verification on the existing merged source branch.
-# macOS 14 was retired by GitHub Actions on 2026-11-02.
+# Use GitHub's supported hosted macOS alias; previous macos-15 job was cancelled before any step.
 on:
   workflow_dispatch:
   push:
@@ -15,7 +15,7 @@ permissions:
 jobs:
   ios_unsigned:
     name: iOS ONLY - macOS Xcode compile and IPA packaging
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 90
     steps:
       - name: Assert macOS and Xcode are available (never Windows)
