@@ -1590,16 +1590,16 @@ class TransferCardActions extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder:(context,constraints){
       if(actions.isEmpty)return const SizedBox.shrink();
-      const gap=7.0;
       final available=constraints.hasBoundedWidth
-        ?constraints.maxWidth:actions.length*44.0+gap*(actions.length-1);
+        ?constraints.maxWidth:actions.length*44.0+7*(actions.length-1);
+      final gap=available<175?3.0:7.0;
       final buttonWidth=((available-gap*(actions.length-1))/actions.length)
-        .clamp(30.0,44.0).toDouble();
-      return Row(mainAxisSize:MainAxisSize.min,
-        mainAxisAlignment:MainAxisAlignment.end,
+        .clamp(24.0,44.0).toDouble();
+      return Align(alignment:Alignment.center,
+        child:Row(mainAxisSize:MainAxisSize.min,
         children:[
         for(var i=0;i<actions.length;i++)...[
-        if(i>0)const SizedBox(width:gap),
+        if(i>0)SizedBox(width:gap),
         Container(
           width:buttonWidth,height:40,
           decoration:BoxDecoration(
@@ -1618,7 +1618,7 @@ class TransferCardActions extends StatelessWidget {
           ),
           child:Center(child:actions[i])),
       ],
-    ]);
+    ]));
     });
 }
 
@@ -1705,7 +1705,7 @@ class LiveTransferCard extends StatelessWidget {
       IconButton(
         tooltip: title, onPressed: onTap,
         iconSize: 22,
-        constraints: const BoxConstraints(minWidth: 30, minHeight: 38),
+        constraints: const BoxConstraints(minWidth: 24, minHeight: 38),
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         icon: Icon(icon, color: onTap == null
@@ -1766,6 +1766,13 @@ class LiveTransferCard extends StatelessWidget {
             if(active)LinearProgressIndicator(value:file.progress,minHeight:2),
           ]
         ]);
+        if(compact && constraints.maxWidth-side-10 < (incoming?110:85)){
+          return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              preview,const SizedBox(width:10),Expanded(child:details)]),
+            const SizedBox(height:8),_buttons(context,file),
+          ]);
+        }
         if(compact) return Row(
           crossAxisAlignment:CrossAxisAlignment.start,children:[
             preview,const SizedBox(width:10),
@@ -1911,7 +1918,7 @@ class CloudInboxCard extends StatelessWidget {
       IconButton(
         tooltip: name, onPressed: onPressed, iconSize: 22,
         visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints(minWidth: 30, minHeight: 38),
+        constraints: const BoxConstraints(minWidth: 24, minHeight: 38),
         padding: EdgeInsets.zero,
         icon: Icon(icon, color: FileTheme.pink));
     return TransferBubble(
@@ -1938,7 +1945,7 @@ class CloudInboxCard extends StatelessWidget {
           Padding(padding:const EdgeInsets.only(top:8),
             child:LayoutBuilder(builder:(context,constraints){
               final compact=constraints.maxWidth<460;
-               final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
+              final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
               final preview=SizedBox(width:side,height:side,
                 child:CloudImageThumbnail(
                   key:ValueKey('qr-thumb-'+file.id),
@@ -1968,6 +1975,14 @@ class CloudInboxCard extends StatelessWidget {
                 action('Open in Tools',Icons.auto_fix_high_rounded,
                   ()=>onTools(file)),
               ]);
+              if(compact && constraints.maxWidth-side-10 < (sent?85:110)){
+                return Column(crossAxisAlignment:CrossAxisAlignment.start,
+                  children:[
+                    Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                      preview,const SizedBox(width:10),Expanded(child:details)]),
+                    const SizedBox(height:8),actions,
+                  ]);
+              }
                if(compact)return Row(
                  crossAxisAlignment:CrossAxisAlignment.start,children:[
                    preview,const SizedBox(width:10),
