@@ -1,3 +1,4 @@
+import 'app_top_notice.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -25,11 +26,9 @@ class _TextTransferCardState extends State<TextTransferCard> {
     try{
       final message=await (await widget.readMessage()).readAsString();
       await Clipboard.setData(ClipboardData(text:message));
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content:Text('Text copied')));
+      if(mounted)FileShareTopNotice.show(context,'Text copied');
     }catch(e){
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text('Copy failed: $e')));
+      if(mounted)FileShareTopNotice.show(context,'Copy failed: $e');
     }
   }
   Future<void> _view()async{
@@ -43,8 +42,7 @@ class _TextTransferCardState extends State<TextTransferCard> {
         actions:[TextButton(onPressed:()=>Navigator.pop(dialog),
           child:const Text('Close'))]));
     }catch(e){
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content:Text('Could not open text: $e')));
+      if(mounted)FileShareTopNotice.show(context,'Could not open text: $e');
     }
   }
   @override Widget build(BuildContext context){
