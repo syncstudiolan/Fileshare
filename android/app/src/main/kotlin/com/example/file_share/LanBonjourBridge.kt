@@ -33,8 +33,8 @@ class LanBonjourBridge(context: Context, messenger: BinaryMessenger) {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "start" -> try {
-                    val id = call.argument<String>("id") ?: error("Missing device ID")
-                    val port = call.argument<Int>("port") ?: error("Missing LAN port")
+                    val id = call.argument<String>("id") ?: throw IllegalArgumentException("Missing device ID")
+                    val port = call.argument<Int>("port") ?: throw IllegalArgumentException("Missing LAN port")
                     require(port in 1..65535 && id.isNotEmpty()) { "Invalid LAN settings" }
                     start(id, call.argument<String>("name") ?: "Android", port)
                     result.success(null)
