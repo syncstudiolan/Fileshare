@@ -1841,7 +1841,7 @@ class CloudInboxCard extends StatelessWidget {
             child: const Icon(Icons.download_rounded,
               size: 19, color: FileTheme.pink)),
           const SizedBox(width: 8),
-          Expanded(child: Text('From Guest browser · Guest QR · Online',
+          Expanded(child: Text(device ? (sent ? 'Sent · Online / Cloud' : 'From '+items.first.senderName+' · Online / Cloud') : 'From Guest browser · Guest QR · Online',
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: FileTheme.foreground(context),
               fontWeight: FontWeight.w700, fontSize: 12))),
@@ -1875,15 +1875,15 @@ class CloudInboxCard extends StatelessWidget {
                       const SizedBox(height: 7),
                       Align(alignment: Alignment.centerRight,
                         child: TransferCardActions(actions: [
-                          Stack(clipBehavior: Clip.none, children: [
-                            action('Download received QR file', Icons.download_rounded,
+                          if(!sent) Stack(clipBehavior: Clip.none, children: [
+                            action('Download received cloud file', Icons.download_rounded,
                               () => onSave(file)),
                             Positioned(top: -8, right: -4,
                               child: NewDownloadBadge(id: 'cloud_${file.id}')),
                           ]),
-                          action('Delete QR file', Icons.delete_outline_rounded,
+                          action('Delete cloud file', Icons.delete_outline_rounded,
                             () => onDelete(file)),
-                          action('Share QR file externally', Icons.ios_share_rounded,
+                          action('Share cloud file externally', Icons.ios_share_rounded,
                             () => onShare(file)),
                           action('Open in Tools', Icons.auto_fix_high_rounded,
                             () => onTools(file)),
@@ -1901,7 +1901,7 @@ class CloudInboxCard extends StatelessWidget {
           Padding(padding: const EdgeInsets.only(top: 5),
             child: Text('+${items.length - 5} more files',
               style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
-        if (grouped)
+        if (grouped && !sent)
           Align(alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: () async {
