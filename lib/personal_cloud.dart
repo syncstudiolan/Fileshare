@@ -551,6 +551,14 @@ class PersonalCloud extends ChangeNotifier {
       job.uploading=false;
       job.failed=true;
       job.error=e.toString();
+      // A transfer from a previous IST day is no longer retryable on the
+      // server: midnight cleanup discards both incomplete R2 parts and D1.
+      if(DateTime.now().toUtc().millisecondsSinceEpoch>=midnightAfterIst(
+          job.created.toUtc().millisecondsSinceEpoch)){
+        outgoingUploads.remove(job);
+        try{await _deleteUploadedEditorSnapshot(job.file);}
+        catch(error){debugPrint('Expired Cloud snapshot cleanup: $error');}
+      }
       notifyListeners();
     }
   }
@@ -682,7 +690,19 @@ class PersonalCloud extends ChangeNotifier {
       final expiry = midnightAfterIst(created);
       return expiry <= now;
     });
-    if (files.length != before) notifyListeners();
+    // Clear stale outgoing Cloud progress/failed-retry cards at midnight too.
+    // Do not remove LAN Pending files; their separate 24h timer remains.
+    final oldJobs=outgoingUploads.where((job)=>
+      midnightAfterIst(job.created.toUtc().millisecondsSinceEpoch)<=now
+    ).toList();
+    outgoingUploads.removeWhere(oldJobs.contains);
+    for(final job in oldJobs){
+      if(!job.uploading){
+        unawaited(_deleteUploadedEditorSnapshot(job.file).catchError(
+          (Object e)=>debugPrint('Expired Cloud cart cleanup: $e')));
+      }
+    }
+    if (files.length != before || oldJobs.isNotEmpty) notifyListeners();
     unawaited(cleanupLocalCache());
   }
 
