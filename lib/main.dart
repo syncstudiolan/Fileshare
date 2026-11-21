@@ -305,6 +305,8 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     try { await desktop_tray.trayManager.destroy(); } catch (_) { }
     try { await windowManager.setPreventClose(false); } catch (_) { }
     await windowManager.destroy();
+    // Closing the last macOS window alone does not always quit the process.
+    exit(0);
   }
 
   /// Both platform tray icons originate from the approved bundled FS logo.
@@ -3815,13 +3817,13 @@ class FeatureDesignPage extends StatelessWidget {
         )),
       const SizedBox(height:14),
       _section(c, 'Windows Background Receiver',
-        'Closing the window hides File Share in the tray. The LAN engine keeps receiving while Windows is awake.',
+        'Login starts File Share silently in the tray. Close hides the window; View reopens and Exit stops the app.',
         Column(children: [
           ValueListenableBuilder<bool>(
             valueListenable: WindowsBackground.instance.autoStartEnabled,
             builder: (context, enabled, _) => SwitchListTile(
               title: const Text('Start with Windows'),
-              subtitle: const Text('Launch File Share when you sign in to Windows'),
+              subtitle: const Text('Start silently in the system tray (no dashboard popup)'),
               value: enabled,
               onChanged: (value) async {
                 try {
@@ -3847,6 +3849,35 @@ class FeatureDesignPage extends StatelessWidget {
       ),
       const SizedBox(height: 14),
     ],
+    if(Platform.isMacOS)...[
+      _section(c,'macOS Menu Bar and Login',
+        'Login starts File Share quietly in the menu bar. Closing the window '
+        'keeps LAN reception available; right-click the FS icon for View / Exit.',
+        Column(children:[
+          ValueListenableBuilder<bool>(
+            valueListenable:WindowsBackground.instance.autoStartEnabled,
+            builder:(context,enabled,_)=>SwitchListTile(
+              title:const Text('Start with macOS'),
+              subtitle:const Text('Start in the menu bar without opening a window'),
+              value:enabled,
+              onChanged:(value)async{
+                try{
+                  await WindowsBackground.instance.setAutoStart(value);
+                  await SharedPreferencesAsync().setBool(
+                    'macos_autostart_decided',true);
+                }catch(e){
+                  if(c.mounted)FileShareTopNotice.show(c,'macOS startup error: $e');
+                }
+              },
+            )),
+          OutlinedButton.icon(
+            onPressed:()=>WindowsBackground.instance.exitCompletely(),
+            icon:const Icon(Icons.power_settings_new_outlined),
+            label:const Text('Exit File Share Completely')),
+        ]),
+      ),
+      const SizedBox(height:14),
+    ],
     if (Platform.isAndroid) ...[
       _section(c, 'Android Background Receiver',
         'File Share can receive nearby LAN transfers while the screen is closed. '
@@ -3854,7 +3885,7 @@ class FeatureDesignPage extends StatelessWidget {
         const AndroidLanBackgroundSetting()),
       const SizedBox(height: 14),
     ],
-    _section(c, 'Appearance', 'Light, dark and follow-system for Android and Windows.',
+    _section(c, 'Appearance', 'Light, dark and follow-system for Android, Windows and macOS.',
       Column(children: [
         _line(c, Icons.color_lens_outlined, 'Appearance mode',
           'Use the active header toggle', trailing:
