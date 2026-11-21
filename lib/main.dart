@@ -346,6 +346,7 @@ class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver
   Widget build(BuildContext context) => MaterialApp(
         title: 'File Share',
         navigatorKey:fileShareNavigatorKey,
+        scrollBehavior:const FileShareSmoothScroll(),
         builder:(context,child)=>Stack(children:[
           child??const SizedBox.shrink(),
           const FileShareUpdateBanner(),
@@ -407,6 +408,13 @@ class FileTheme {
         brightness: brightness,
       ),
       scaffoldBackgroundColor: dark ? night : const Color(0xFFCBDDE7),
+      pageTransitionsTheme: const PageTransitionsTheme(builders:{
+        TargetPlatform.android:FileSharePageTransitions(),
+        TargetPlatform.iOS:FileSharePageTransitions(),
+        TargetPlatform.windows:FileSharePageTransitions(),
+        TargetPlatform.macOS:FileSharePageTransitions(),
+        TargetPlatform.linux:FileSharePageTransitions(),
+      }),
       appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -494,9 +502,46 @@ class AppearanceButton extends StatelessWidget {
       );
 }
 
+// Motion automatically advances at the device's available display refresh
+// rate. Keep the animated properties cheap to paint and respect user settings.
+class FileSharePageTransitions extends PageTransitionsBuilder {
+  const FileSharePageTransitions();
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route,BuildContext context,
+      Animation<double> animation,Animation<double> secondaryAnimation,
+      Widget child) {
+    if(MediaQuery.disableAnimationsOf(context))return child;
+    final progress=CurvedAnimation(parent:animation,curve:Curves.easeOutCubic,
+      reverseCurve:Curves.easeInCubic);
+    return FadeTransition(opacity:progress,child:SlideTransition(
+      position:Tween<Offset>(begin:const Offset(.025,.012),
+        end:Offset.zero).animate(progress),
+      child:RepaintBoundary(child:child)));
+  }
+}
+
+// Preserve each operating system's natural gesture physics and avoid costly
+// platform overscroll glow paints on every scroll update.
+class FileShareSmoothScroll extends MaterialScrollBehavior {
+  const FileShareSmoothScroll();
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    switch(getPlatform(context)) {
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        return const BouncingScrollPhysics(parent:AlwaysScrollableScrollPhysics());
+      default:
+        return const ClampingScrollPhysics(parent:AlwaysScrollableScrollPhysics());
+    }
+  }
+  @override
+  Widget buildOverscrollIndicator(BuildContext context,Widget child,
+      ScrollableDetails details)=>child;
+}
+
 Route<T> fadePage<T>(Widget child) => PageRouteBuilder<T>(
-      transitionDuration: const Duration(milliseconds: 310),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
+      transitionDuration: const Duration(milliseconds: 230),
+      reverseTransitionDuration: const Duration(milliseconds: 190),
       pageBuilder: (_, _, _) => child,
       transitionsBuilder: (_, animation, __, child) {
         final curved = CurvedAnimation(
@@ -507,7 +552,7 @@ Route<T> fadePage<T>(Widget child) => PageRouteBuilder<T>(
           opacity: curved,
           child: SlideTransition(
             position: Tween<Offset>(
-              begin: const Offset(.045, .02),
+              begin: const Offset(.025, .012),
               end: Offset.zero,
             ).animate(curved),
             child: child,
