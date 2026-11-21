@@ -2080,6 +2080,8 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller=AnimationController(
     vsync:this,duration:const Duration(milliseconds:290));
+  late final CurvedAnimation _curve=CurvedAnimation(
+    parent:_controller,curve:Curves.easeOutCubic);
   @override void initState(){
     super.initState();
     if(!widget.animate){
@@ -2095,15 +2097,18 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
       });
     }
   }
-  @override void dispose(){_controller.dispose();super.dispose();}
+  @override void dispose(){
+    _curve.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
   @override Widget build(BuildContext context) {
-    final curve=CurvedAnimation(parent:_controller,curve:Curves.easeOutCubic);
-    return RepaintBoundary(child:FadeTransition(opacity:curve,
+    return RepaintBoundary(child:FadeTransition(opacity:_curve,
       child:SlideTransition(position:Tween<Offset>(
         begin:Offset(widget.incoming?-.045:.045,.07),end:Offset.zero,
-      ).animate(curve),
+      ).animate(_curve),
         child:ScaleTransition(scale:Tween<double>(begin:.985,end:1)
-          .animate(curve),child:widget.child))));
+          .animate(_curve),child:widget.child))));
   }
 }
 
