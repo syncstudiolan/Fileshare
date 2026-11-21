@@ -104,7 +104,7 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
   android:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[ios-only]')
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -246,7 +246,7 @@ jobs:
   windows:
     # Still produce the Windows installer if Android signing secrets are missing.
     # The needs edge serializes Windows after Android; no parallel release builds.
-    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push'))
+    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[ios-only]'))))
 
     runs-on: windows-latest
     timeout-minutes: 50
@@ -524,6 +524,9 @@ jobs:
           cache: true
       - name: Generate iOS Runner from existing Flutter application
         run: |
+          # Use the plugin's supported CocoaPods integration to avoid the
+          # ONNX extensions SwiftPM binary host TLS failure. Never bypass TLS.
+          flutter config --no-enable-swift-package-manager
           flutter config --enable-ios
           flutter create --platforms=ios --project-name file_share .
           python3 -m venv .ios-build-venv
@@ -558,6 +561,10 @@ jobs:
                       "platform :ios, '16.0'",text,flags=re.M)
           if "platform :ios" not in text:
               text="platform :ios, '16.0'\n"+text
+          # ONNX Runtime iOS CocoaPods requires static framework linkage.
+          if "use_frameworks! :linkage => :static" not in text:
+              text=text.replace("target 'Runner' do", "target 'Runner' do\n  use_frameworks! :linkage => :static",1)
+          assert "use_frameworks! :linkage => :static" in text
           podfile.write_text(text)
           project=root/'Runner.xcodeproj/project.pbxproj'
           pbx=project.read_text()
@@ -585,6 +592,7 @@ jobs:
         run: |
           cd ios
           pod install --repo-update
+          grep -q 'onnxruntime-objc' Podfile.lock || { echo 'ONNX Runtime CocoaPods dependency missing'; exit 1; }
       - name: Build Release for real iPhone without developer certificate
         shell: bash
         run: |
