@@ -97,6 +97,31 @@ void main() {
 
   Future<void> noopCloud(CloudFile _) async {}
 
+  testWidgets('Restored transfer cards appear without replaying animations',
+      (tester)async{
+    await tester.pumpWidget(const MaterialApp(home:Scaffold(body:
+      FileShareCardArrival(animate:false,incoming:true,
+        child:Text('Existing transfer')))));
+    final fade=tester.widget<FadeTransition>(find.byType(FadeTransition).first);
+    expect(fade.opacity.value,1);
+    expect(find.text('Existing transfer'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('New incoming cards ease into view once', (tester)async{
+    await tester.pumpWidget(const MaterialApp(home:Scaffold(body:
+      FileShareCardArrival(animate:true,incoming:true,
+        child:Text('New received transfer')))));
+    await tester.pump(const Duration(milliseconds:140));
+    final fade=tester.widget<FadeTransition>(find.byType(FadeTransition).first);
+    expect(fade.opacity.value,greaterThan(0));
+    expect(fade.opacity.value,lessThan(1));
+    await tester.pump(const Duration(milliseconds:350));
+    expect(fade.opacity.value,1);
+    expect(find.text('New received transfer'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
   testWidgets('Guest QR card shows filename once and four real actions',
       (tester) async {
     final file=CloudFile(id:'demo-cloud-1',session:'guest-test',
