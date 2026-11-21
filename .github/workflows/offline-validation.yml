@@ -83,7 +83,7 @@ jobs:
       - name: Analyze all Dart sources
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Run Toolbox UI and image processing regression tests
-        run: flutter test
+        run: flutter test --reporter expanded --timeout 2m
       - name: Compile upstream native Android PDF Tools and scanner
         working-directory: android
         run: ./gradlew :app:compileDebugKotlin --no-daemon --console=plain
@@ -151,7 +151,7 @@ jobs:
       - name: Flutter analyzer
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Widget and LAN model tests
-        run: flutter test
+        run: flutter test --reporter expanded --timeout 2m
       - name: Central Directory contract tests
         run: node --test directory/worker.test.mjs
       - name: Live Cloudflare auth route smoke checks (no real credentials)
@@ -266,7 +266,7 @@ jobs:
           python tool/fix_windows_taskbar.py
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
-      - run: flutter test
+      - run: flutter test --reporter expanded --timeout 2m
       - name: Supply ONNX Runtime native Windows files from official NuGet package
         shell: pwsh
         run: |
