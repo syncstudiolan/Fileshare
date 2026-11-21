@@ -73,14 +73,14 @@ class _IdCardA4EditorPageState extends State<IdCardA4EditorPage> {
     }else{
       double l=c.rect.left,t=c.rect.top,r=c.rect.right,b=c.rect.bottom;
       switch(_handle){
-        case 0: l=(l+dx).clamp(0.0,r-.06);t=(t+dy).clamp(0.0,b-.06);
-        case 1: r=(r+dx).clamp(l+.06,1.0);t=(t+dy).clamp(0.0,b-.06);
-        case 2: r=(r+dx).clamp(l+.06,1.0);b=(b+dy).clamp(t+.06,1.0);
-        case 3: l=(l+dx).clamp(0.0,r-.06);b=(b+dy).clamp(t+.06,1.0);
-        case 4: l=(l+dx).clamp(0.0,r-.06);
-        case 5: t=(t+dy).clamp(0.0,b-.06);
-        case 6: r=(r+dx).clamp(l+.06,1.0);
-        case 7: b=(b+dy).clamp(t+.06,1.0);
+        case 0: l=(l+dx).clamp(0.0,r-.06).toDouble();t=(t+dy).clamp(0.0,b-.06).toDouble();
+        case 1: r=(r+dx).clamp(l+.06,1.0).toDouble();t=(t+dy).clamp(0.0,b-.06).toDouble();
+        case 2: r=(r+dx).clamp(l+.06,1.0).toDouble();b=(b+dy).clamp(t+.06,1.0).toDouble();
+        case 3: l=(l+dx).clamp(0.0,r-.06).toDouble();b=(b+dy).clamp(t+.06,1.0).toDouble();
+        case 4: l=(l+dx).clamp(0.0,r-.06).toDouble();
+        case 5: t=(t+dy).clamp(0.0,b-.06).toDouble();
+        case 6: r=(r+dx).clamp(l+.06,1.0).toDouble();
+        case 7: b=(b+dy).clamp(t+.06,1.0).toDouble();
         case 8:
           final shiftX=dx.clamp(-l,1-r).toDouble();
           final shiftY=dy.clamp(-t,1-b).toDouble();
