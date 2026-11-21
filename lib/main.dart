@@ -2642,7 +2642,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     } else {
       screen = FeatureDesignPage(title: title, mode: widget.mode, onMode: widget.onMode);
     }
-    if (Platform.isWindows && MediaQuery.sizeOf(context).width >= 820) {
+    if ((Platform.isWindows || Platform.isMacOS) && MediaQuery.sizeOf(context).width >= 820) {
       final nav = _desktopNavigator.currentState;
       if (nav != null) {
         nav.popUntil((route) => route.isFirst);
@@ -3022,7 +3022,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _openFileTools(LanFile file) async {
-    final navigator = Platform.isWindows && _desktopNavigator.currentState != null
+    final navigator = (Platform.isWindows || Platform.isMacOS) && _desktopNavigator.currentState != null
       ? _desktopNavigator.currentState! : Navigator.of(context);
     await navigator.push(MaterialPageRoute<void>(
       builder: (_) => SelectedFileToolsPage(file: file)));
@@ -3245,7 +3245,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   Widget _dashboardColumn(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 730;
-    final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
+    final desktop = (Platform.isWindows || Platform.isMacOS) && MediaQuery.sizeOf(context).width >= 820;
     final groups = _timeline();
     final currentKeys={for(final group in groups)_keyOf(group)};
     if(!_timelineSeeded){
@@ -3500,7 +3500,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
-    final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
+    final desktop = (Platform.isWindows || Platform.isMacOS) && MediaQuery.sizeOf(context).width >= 820;
     return RootBackGuard(child: Scaffold(
       key: _scaffold,
       drawer: _drawer(),
