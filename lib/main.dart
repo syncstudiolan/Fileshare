@@ -194,10 +194,15 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
       if(Platform.isWindows){
         final result=await Process.run('reg',[
           'query',_windowsRunKey,'/v','FileShare']);
-        autoStartEnabled.value=result.exitCode==0 &&
+        final registered=result.exitCode==0 &&
           result.stdout.toString().toLowerCase()
-            .contains(Platform.resolvedExecutable.toLowerCase()) &&
-          result.stdout.toString().contains('--background');
+            .contains(Platform.resolvedExecutable.toLowerCase());
+        if(registered && !result.stdout.toString().contains('--background')){
+          // Migrate an old foreground startup entry without changing a user's
+          // explicit opt-out; only existing enabled entries are updated.
+          await setAutoStart(true);
+        }
+        autoStartEnabled.value=registered;
       }else{
         final agent=await _macLoginAgent();
         autoStartEnabled.value=await agent.exists();
