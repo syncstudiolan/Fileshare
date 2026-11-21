@@ -112,6 +112,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home:Scaffold(body:
       FileShareCardArrival(animate:true,incoming:true,
         child:Text('New received transfer')))));
+    await tester.pump(); // Start the ticker on the first scheduled frame.
     await tester.pump(const Duration(milliseconds:140));
     final fade=tester.widget<FadeTransition>(find.byType(FadeTransition).first);
     expect(fade.opacity.value,greaterThan(0));
