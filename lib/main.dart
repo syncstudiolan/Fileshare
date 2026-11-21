@@ -2082,14 +2082,18 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
     vsync:this,duration:const Duration(milliseconds:290));
   @override void initState(){
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_){
-      if(!mounted)return;
-      if(!widget.animate || MediaQuery.disableAnimationsOf(context)){
-        _controller.value=1;
-      }else{
-        _controller.forward();
-      }
-    });
+    if(!widget.animate){
+      _controller.value=1;
+    }else{
+      WidgetsBinding.instance.addPostFrameCallback((_){
+        if(!mounted)return;
+        if(MediaQuery.disableAnimationsOf(context)){
+          _controller.value=1;
+        }else{
+          _controller.forward();
+        }
+      });
+    }
   }
   @override void dispose(){_controller.dispose();super.dispose();}
   @override Widget build(BuildContext context) {
@@ -2730,28 +2734,58 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   /// peers means NO Cloudflare upload, regardless of how many are remote.
   /// Only a completed discovery window with zero peers permits cloud.
   Future<void> _sendTypedText() async {
+    if(_preparingText||_sending)return;
     final message=_messageController.text;
     if(message.trim().isEmpty){await _send();return;}
+    // Immediate local feedback: disk write and network transport remain async.
+    setState((){
+      _preparingText=true;
+      _sendingPreview=message;
+      _messageController.clear();
+    });
+    if(Platform.isAndroid||Platform.isIOS){
+      unawaited(HapticFeedback.selectionClick());
+    }
     try{
       final id=LanEngine.newId();
       final file=await FileShareText.create(message,id);
       final size=await file.length();
       if(!mounted)return;
-      setState((){
-        _staged.add(PendingBatch(id,[file],[file.uri.pathSegments.last],[size]));
-        _messageController.clear();
-      });
-      if(!appLan.started){_snack('Text ready in Cart. Tap Send when LAN starts.');return;}
+      setState(()=>_staged.add(
+        PendingBatch(id,[file],[file.uri.pathSegments.last],[size])));
+      if(!appLan.started){
+        _snack('Text queued in Cart. Send when LAN starts.');
+        return;
+      }
       await _send();
-    }catch(e){_snack('Text send failed: $e');}
+    }catch(e){
+      if(mounted){
+        setState(()=>_messageController.text=message);
+        _snack('Text send failed: $e');
+      }
+    }finally{
+      if(mounted)setState((){
+        _preparingText=false;
+        _sendingPreview=null;
+      });
+    }
   }
   Future<void> _send() async {
     if(_sending || _staged.isEmpty || !appLan.started)return;
-    setState(()=>_sending=true);
+    setState((){
+      _sending=true;
+      // Optimistic presentation only; keep the original files in Cart until
+      // a real backend queue accepts them. Never fake a delivery tick.
+      _sendingPreview??=_staged.first.labels.isNotEmpty
+        ?_staged.first.labels.first:'Preparing transfer…';
+    });
+    if(Platform.isAndroid||Platform.isIOS){
+      unawaited(HapticFeedback.selectionClick());
+    }
     try {
-      // Refresh iOS Bonjour, Android NSD/UDP, or Windows mDNS/UDP.
+      // LAN discovery runs continuously. A refresh must not impose a fixed
+      // three-second wait before sending. Latest peers still have priority.
       appLan.refresh();
-      await Future<void>.delayed(const Duration(seconds:3));
       if(!mounted)return;
       final cloud=PersonalCloud.instance;
       final route=chooseTransferRoute(
@@ -2812,7 +2846,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           'No nearby devices: $successful file(s) uploading to Cloudflare.');
       }
     }finally{
-      if(mounted)setState(()=>_sending=false);
+      if(mounted)setState((){
+        _sending=false;
+        if(!_preparingText)_sendingPreview=null;
+      });
     }
   }
 
@@ -3303,7 +3340,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     Tooltip(message:'Send message or selected files',
                       child:InkWell(
                         onTap:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
-                            ||_sending?null:()=>unawaited(_sendTypedText()),
+                            ||_sending||_preparingText?null:()=>unawaited(_sendTypedText()),
                         borderRadius:BorderRadius.circular(15),
                         child:Container(
                           width:small?39:45,height:53,
