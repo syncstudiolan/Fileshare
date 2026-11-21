@@ -50,6 +50,22 @@ class IdCardPdfEngine {
     });
   }
 
+  /// Standard multi-page PDF: each selected image goes on its own A4 page.
+  /// Unlike the ID layout, images are never forced into card-size slots.
+  static Future<Uint8List> normalPdf(List<Uint8List> images)async{
+    if(images.isEmpty)throw ArgumentError('No images selected');
+    final document=pw.Document(compress:true);
+    for(final bytes in images){
+      final decoded=img.decodeImage(bytes);
+      if(decoded==null)throw const FormatException('Unreadable image');
+      document.addPage(pw.Page(
+        pageFormat:PdfPageFormat.a4,margin:const pw.EdgeInsets.all(24),
+        build:(_)=>pw.Center(child:pw.Image(pw.MemoryImage(bytes),
+          fit:pw.BoxFit.contain))));
+    }
+    return document.save();
+  }
+
   static Future<Uint8List> a4Pdf(List<Uint8List> images,
       List<IdCardPlacement> locations)async {
     if(images.isEmpty||images.length!=locations.length) {
