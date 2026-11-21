@@ -19,8 +19,8 @@ permissions:
 jobs:
   preview_validation:
     # Before merging PR #6, run actual analyzer/tests/Android compilation.
-    # PR 16 is source-only until its owner explicitly authorizes a build.
-    if: github.event_name == 'pull_request' && github.event.pull_request.number != 16
+    # Release-authorized PR 16: validate once before merging to avoid failed releases.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -246,7 +246,7 @@ jobs:
   windows:
     # Still produce the Windows installer if Android signing secrets are missing.
     # The needs edge serializes Windows after Android; no parallel release builds.
-    if: (github.event_name == 'pull_request' && github.event.pull_request.number != 16) || (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push'))
+    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push'))
 
     runs-on: windows-latest
     timeout-minutes: 50
