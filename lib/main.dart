@@ -2266,6 +2266,53 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if(_bulkBusy)return;
     setState((){for(final g in groups)_selectedCards[_keyOf(g)]=g;});
   }
+
+  Future<void> _openSelectedImagesInTools()async{
+    if(_bulkBusy||_selectedCards.isEmpty)return;
+    final groups=List<TimelineGroup>.of(_selectedCards.values);
+    final paths=<String>[],names=<String>[];
+    setState(()=>_bulkBusy=true);
+    try{
+      for(final group in groups){
+        if(group.upload!=null){
+          throw StateError('Wait for upload to finish before editing');
+        }
+        for(final file in group.lan??<LanFile>[]){
+          if(!EditingFileRouter.acceptsImageTool(file.name)){
+            throw StateError('Select image files only');
+          }
+          if(file.incoming&&file.state!=TransferState.delivered){
+            throw StateError('Selected received image is not downloaded');
+          }
+          if(!await File(file.path).exists()){
+            throw StateError('An image is missing from local storage');
+          }
+          paths.add(file.path);
+          names.add(file.name);
+        }
+        for(final file in group.cloud??<CloudFile>[]){
+          if(!EditingFileRouter.acceptsImageTool(file.name)){
+            throw StateError('Select image files only');
+          }
+          final local=await PersonalCloud.instance.download(file);
+          paths.add(local.path);
+          names.add(file.name);
+        }
+      }
+      if(paths.isEmpty)throw StateError('Select at least one image');
+      if(!mounted)return;
+      setState(()=>_selectedCards.clear());
+      final navigator=(Platform.isWindows||Platform.isMacOS)&&
+        _desktopNavigator.currentState!=null
+        ?_desktopNavigator.currentState!:Navigator.of(context);
+      await navigator.push(MaterialPageRoute<void>(
+        builder:(_)=>FileShareToolboxPage(
+          sourcePaths:paths,sourceNames:names,
+          sourcePath:paths.length==1?paths.first:null,
+          sourceName:names.length==1?names.first:null)));
+    }catch(e){_snack('Open selected images: '+e.toString());}
+    finally{if(mounted)setState(()=>_bulkBusy=false);}
+  }
   Future<void> _downloadCards()async{
     if(_selectedCards.isEmpty||_bulkBusy)return;
     final cards=List<TimelineGroup>.of(_selectedCards.values);
@@ -3292,6 +3339,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           color: FileTheme.muted(context))),
                     ])),
                   if(_selectedCards.isNotEmpty)...[
+                    IconButton(tooltip:'Open selected images in Tools',
+                      onPressed:_bulkBusy?null:_openSelectedImagesInTools,
+                      icon:const Icon(Icons.handyman_outlined,
+                        color:FileTheme.violet)),
+
                     IconButton(tooltip:'Select all visible cards',
                       onPressed:_bulkBusy?null:()=>_selectAllCards(groups),
                       icon:const Icon(Icons.select_all_rounded,
