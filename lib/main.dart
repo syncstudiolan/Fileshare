@@ -2447,7 +2447,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           success++;
         }catch(_){failed++;}
       }
-      if(mounted)_snack('$'+'$'+'success downloaded · $'+'$'+'skipped skipped · $'+'$'+'failed failed');
+      if(mounted)_snack('${success} downloaded · ${skipped} skipped · ${failed} failed');
     }finally{
       if(mounted)setState((){
         _bulkBusy=false;_clearSelection();
@@ -2472,13 +2472,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           if(!await source.exists())throw StateError('Source not available');
           final clean=name.replaceAll(RegExp(r'[^a-zA-Z0-9._ -]'),'_');
           final safe=clean.isEmpty?'image':clean;
-          var destination=File('${folder.path}${Platform.pathSeparator}$'+'$'+'safe');
+          var destination=File('${folder.path}${Platform.pathSeparator}${safe}');
           var index=1;
           final dot=safe.lastIndexOf('.');
           final base=dot>0?safe.substring(0,dot):safe;
           final ext=dot>0?safe.substring(dot):'';
           while(await destination.exists()){
-            destination=File('${folder.path}${Platform.pathSeparator}$'+'$'+'base ($'+'$'+'index)$'+'$'+'ext');
+            destination=File('${folder.path}${Platform.pathSeparator}${base} (${index})${ext}');
             index++;
           }
           await source.copy(destination.path);
@@ -2492,8 +2492,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           await copy(source,file.name);
         }catch(_){failed++;}
       }
-      if(mounted)_snack('Copied $'+'$'+'success files · $'+'$'+'failed failed');
-    }catch(e){_snack('Folder copy failed: '+'$'+'e');}
+      if(mounted)_snack('Copied ${success} files · ${failed} failed');
+    }catch(e){_snack('Folder copy failed: $e');}
     finally{if(mounted)setState((){
       _bulkBusy=false;_clearSelection();
     });}
@@ -2507,7 +2507,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final confirm=await showDialog<bool>(context:context,builder:(dialog)=>
       AlertDialog(
         title:const Text('Delete selected files?'),
-        content:Text('$'+'$'+'count selected file(s) will be deleted. '
+        content:Text('${count} selected file(s) will be deleted. '
           'Guest QR files will be removed from cloud storage if selected. '
           'Unselected images in the same card will remain. This cannot be undone.'),
         actions:[
@@ -2528,7 +2528,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         try{await PersonalCloud.instance.deleteRemote(file);deleted++;}
         catch(_){failed++;}
       }
-      if(mounted)_snack('Deleted $'+'$'+'deleted files · $'+'$'+'failed failed');
+      if(mounted)_snack('Deleted ${deleted} files · ${failed} failed');
     }finally{
       if(mounted)setState((){
         _bulkBusy=false;_clearSelection();
