@@ -105,6 +105,63 @@ void main(){
     expect(neutral, isNot(equals(full)));
   });
 
+  Uint8List coloredSignature(){
+    final paper=img.Image(width:160,height:112);
+    for(var y=0;y<paper.height;y++){
+      for(var x=0;x<paper.width;x++){
+        final shade=(x~/26+y~/28)%3;
+        paper.setPixelRgb(x,y,187+shade*5,199+shade*4,180+shade*5);
+      }
+    }
+    for(var x=19;x<143;x++){
+      for(var dy=-2;dy<=2;dy++){
+        paper.setPixelRgb(x,35+dy,18,20,25);
+        paper.setPixelRgb(x,76+dy,24,55,147);
+      }
+    }
+    return Uint8List.fromList(img.encodePng(paper));
+  }
+
+  test('White Background removes tinted paper and preserves black and blue ink',()async{
+    final bytes=coloredSignature();
+    final result=img.decodeJpg(await SignatureEditEngine.preview(
+      bytes,SignatureCrop.full,'White Background',intensity:1))!;
+    final clean=result.getPixel(10,12);
+    expect(clean.r,greaterThan(243));
+    expect(clean.g,greaterThan(243));
+    expect(clean.b,greaterThan(243));
+    final black=result.getPixel(80,35);
+    expect(black.r,lessThan(100));
+    expect(black.g,lessThan(100));
+    final blue=result.getPixel(80,76);
+    expect(blue.b,greaterThan(blue.r+65));
+    expect(blue.b,greaterThan(blue.g+40));
+  });
+
+  test('White Background intensity zero is original and half is intermediate',()async{
+    final bytes=coloredSignature();
+    final zero=img.decodeJpg(await SignatureEditEngine.preview(
+      bytes,SignatureCrop.full,'White Background',intensity:0))!;
+    final half=img.decodeJpg(await SignatureEditEngine.preview(
+      bytes,SignatureCrop.full,'White Background',intensity:.5))!;
+    final full=img.decodeJpg(await SignatureEditEngine.preview(
+      bytes,SignatureCrop.full,'White Background',intensity:1))!;
+    expect(zero.getPixel(8,8).r,lessThan(215));
+    expect(half.getPixel(8,8).r,greaterThan(zero.getPixel(8,8).r));
+    expect(half.getPixel(8,8).r,lessThan(full.getPixel(8,8).r));
+  });
+
+  test('White Background works in thumbnails and exact-size JPEG export',()async{
+    final source=coloredSignature();
+    final thumbs=await SignatureEditEngine.thumbnails(source,
+      ['Original','White Background']);
+    expect(img.decodeJpg(thumbs['White Background']!),isNotNull);
+    final exported=await SignatureEditEngine.exactJpeg(
+      source,SignatureCrop.full,'White Background',20,intensity:.85);
+    expect(exported.length,20*1024);
+    expect(img.decodeJpg(exported),isNotNull);
+  });
+
   test('Rendered signature filter previews are real images',()async{
     const labels=['Original','Black & White','Blue Ink','Red Ink',
       'Sepia','High Contrast'];

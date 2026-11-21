@@ -46,59 +46,70 @@ class _TextTransferCardState extends State<TextTransferCard> {
     }
   }
   @override Widget build(BuildContext context){
+    final dark=Theme.of(context).brightness==Brightness.dark;
+    final ink=dark?const Color(0xFFEAF9FC):const Color(0xFF0A5262);
+    Widget action(String title,IconData icon,VoidCallback tap)=>
+      Expanded(child:Container(
+        height:34,
+        decoration:BoxDecoration(
+          gradient:LinearGradient(begin:Alignment.topLeft,
+            end:Alignment.bottomRight,
+            colors:dark
+              ?const [Color(0xFF245768),Color(0xFF103A47)]
+              :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
+          borderRadius:BorderRadius.circular(17),
+          border:Border.all(color:dark
+            ?const Color(0xFF58939D):Colors.white,width:1.2),
+          boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.17),
+            blurRadius:6,offset:const Offset(0,4))]),
+        child:TextButton.icon(onPressed:tap,
+          style:TextButton.styleFrom(
+            padding:const EdgeInsets.symmetric(horizontal:4),
+            foregroundColor:ink,
+            shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(17))),
+          icon:Icon(icon,size:17),
+          label:FittedBox(fit:BoxFit.scaleDown,
+            child:Text(title,style:const TextStyle(
+              fontSize:12,fontWeight:FontWeight.w700))))));
     return widget.wrap(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
               Row(children:[
-                const Icon(Icons.chat_bubble_outline,size:19),
+                CircleAvatar(radius:15,
+                  backgroundColor:const Color(0xFF89EEE5),
+                  child:Icon(widget.incoming?Icons.download_rounded
+                    :Icons.send_rounded,color:const Color(0xFF087F87),size:19)),
                 const SizedBox(width:8),
                 Expanded(child:Text(widget.source,maxLines:1,
                   overflow:TextOverflow.ellipsis,
-                  style:const TextStyle(fontSize:12,fontWeight:FontWeight.bold))),
+                  style:const TextStyle(fontSize:13,fontWeight:FontWeight.w700))),
+                Container(
+                  padding:const EdgeInsets.symmetric(horizontal:9,vertical:5),
+                  decoration:BoxDecoration(
+                    color:const Color(0xFF009A9C).withValues(alpha:.10),
+                    border:Border.all(color:dark
+                      ?const Color(0xFF58939D):Colors.white,width:1.1),
+                    borderRadius:BorderRadius.circular(22)),
+                  child:Row(mainAxisSize:MainAxisSize.min,children:[
+                    Text('${widget.created.toLocal().hour.toString().padLeft(2,'0')}:'
+                         '${widget.created.toLocal().minute.toString().padLeft(2,'0')}',
+                      style:const TextStyle(fontSize:11,fontWeight:FontWeight.w700)),
+                    if(widget.status!=null)...[
+                      const SizedBox(width:4),widget.status!,
+                    ],
+                  ])),
               ]),
               const SizedBox(height:10),
               FutureBuilder<String>(future:_preview,builder:(context,snapshot)=>
                 snapshot.hasError?const Text('Text not available yet')
                 :!snapshot.hasData?const LinearProgressIndicator()
                 :InkWell(onTap:_view,child:Text(snapshot.data!,
-                    style:const TextStyle(fontSize:14)))),
+                    style:const TextStyle(fontSize:16)))),
               const SizedBox(height:8),
-              Row(mainAxisAlignment:MainAxisAlignment.end,children:[
-                Flexible(child:TextButton.icon(
-                  style:TextButton.styleFrom(
-                    visualDensity:VisualDensity.compact,
-                    elevation:3,
-                    padding:const EdgeInsets.symmetric(horizontal:6,vertical:7),
-                    backgroundColor:Theme.of(context).brightness==Brightness.dark
-                      ?const Color(0xFF205464):const Color(0xFFD7EBF3),
-                    foregroundColor:Theme.of(context).brightness==Brightness.dark
-                      ?const Color(0xFFEAF9FC):const Color(0xFF0A5262),
-                    textStyle:const TextStyle(fontSize:11,fontWeight:FontWeight.w600)),
-                  onPressed:()=>unawaited(_copy()),
-                  icon:const Icon(Icons.copy,size:15),
-                  label:const FittedBox(child:Text('Copy Text')))),
-                const SizedBox(width:8),
-                Flexible(child:TextButton.icon(
-                  style:TextButton.styleFrom(
-                    visualDensity:VisualDensity.compact,
-                    elevation:3,
-                    padding:const EdgeInsets.symmetric(horizontal:6,vertical:7),
-                    backgroundColor:Theme.of(context).brightness==Brightness.dark
-                      ?const Color(0xFF205464):const Color(0xFFD7EBF3),
-                    foregroundColor:Theme.of(context).brightness==Brightness.dark
-                      ?const Color(0xFFEAF9FC):const Color(0xFF0A5262),
-                    textStyle:const TextStyle(fontSize:11,fontWeight:FontWeight.w600)),
-                  onPressed:()=>unawaited(widget.onDelete()),
-                  icon:const Icon(Icons.delete_outline,size:15),
-                  label:const FittedBox(child:Text('Delete Text')))),
+              Row(children:[
+                action('Copy Text',Icons.copy_rounded,()=>unawaited(_copy())),
+                const SizedBox(width:16),
+                action('Delete Text',Icons.delete_outline_rounded,
+                  ()=>unawaited(widget.onDelete())),
               ]),
-              Align(alignment:Alignment.centerRight,
-                child:Row(mainAxisSize:MainAxisSize.min,children:[
-                  Text('${widget.created.toLocal().hour.toString().padLeft(2,'0')}:'+
-                       widget.created.toLocal().minute.toString().padLeft(2,'0'),
-                    style:const TextStyle(fontSize:10)),
-                  if(widget.status!=null)...[
-                    const SizedBox(width:4),widget.status!,
-                  ]
-                ])),
             ]));
   }
 }

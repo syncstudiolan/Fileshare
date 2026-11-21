@@ -33,6 +33,14 @@ def main()->None:
             "\n  // Match the Start-menu / desktop shortcut ID for Windows taskbar.\n"
             "  "+directive+"\n"
         )+source[open_brace+1:]
+    # Some Flutter Windows runners also explicitly show the outer window.
+    # Only a user-initiated launch may show it; login startup remains hidden.
+    manual_show='window.Show();'
+    silent_show='if (wcsstr(GetCommandLineW(), L"--background") == nullptr) window.Show();'
+    if manual_show in source and silent_show not in source:
+        source=source.replace(manual_show,silent_show,1)
+    if "#include <cwchar>" not in source:
+        source="#include <cwchar>"+chr(10)+source
     MAIN.write_text(source,encoding="utf-8")
 
     # The Windows taskbar uses the HWND's small/big icons, not the tray icon
@@ -43,6 +51,17 @@ def main()->None:
     if not flutter_window.is_file():
         raise SystemExit("Generated FlutterWindow C++ source is missing")
     window_code=flutter_window.read_text(encoding="utf-8")
+    # Flutter's generated OnCreate normally calls Show() on the first frame.
+    # The --background startup shortcut must not flash that window.
+    old_show='this->Show();'
+    conditional_show='if (wcsstr(GetCommandLineW(), L"--background") == nullptr) this->Show();'
+    if conditional_show not in window_code:
+        if old_show not in window_code:
+            raise SystemExit("Unexpected FlutterWindow::OnCreate Show() implementation")
+        window_code=window_code.replace(old_show,conditional_show,1)
+    if "#include <cwchar>" not in window_code:
+        window_code="#include <cwchar>"+chr(10)+window_code
+
     if '#include "resource.h"' not in window_code:
         window_code='#include "resource.h"\n'+window_code
     on_create='bool FlutterWindow::OnCreate() {'

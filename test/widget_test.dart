@@ -97,6 +97,34 @@ void main() {
 
   Future<void> noopCloud(CloudFile _) async {}
 
+  testWidgets('Restored transfer cards appear without replaying animations',
+      (tester)async{
+    await tester.pumpWidget(const MaterialApp(home:Scaffold(body:
+      FileShareCardArrival(animate:false,incoming:true,
+        child:Text('Existing transfer')))));
+    final fade=tester.widget<FadeTransition>(find.byType(FadeTransition).first);
+    expect(fade.opacity.value,1);
+    expect(find.text('Existing transfer'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('New incoming cards ease into view once', (tester)async{
+    await tester.pumpWidget(const MaterialApp(home:Scaffold(body:
+      FileShareCardArrival(animate:true,incoming:true,
+        child:Text('New received transfer')))));
+    await tester.pump(); // Start the ticker on the first scheduled frame.
+    await tester.pump(const Duration(milliseconds:140));
+    final fade=tester.widget<FadeTransition>(find.byType(FadeTransition).first);
+    expect(fade.opacity.value,greaterThan(0));
+    // In CI the platform may request reduced motion, so an immediate
+    // completed animation is valid as well.
+    expect(fade.opacity.value,inInclusiveRange(0,1));
+    await tester.pump(const Duration(milliseconds:350));
+    expect(fade.opacity.value,1);
+    expect(find.text('New received transfer'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
   testWidgets('Guest QR card shows filename once and four real actions',
       (tester) async {
     final file=CloudFile(id:'demo-cloud-1',session:'guest-test',
@@ -169,7 +197,7 @@ void main() {
     ])));
     await tester.pumpWidget(card());
     expect(find.text('image.jpg'),findsOneWidget);
-    expect(find.text('To Office Desktop · Offline LAN'),findsOneWidget);
+    expect(find.text('Sent · Offline LAN'),findsOneWidget);
     expect(find.byIcon(Icons.schedule_rounded),findsOneWidget);
     expect(find.byIcon(Icons.done_all_rounded),findsNothing);
     file.state=TransferState.delivered;
@@ -318,9 +346,9 @@ void main() {
       enableBackends: false,
     ));
     expect(find.text('File Transfer'), findsOneWidget);
-    expect(find.text('4 Photos (Group)'), findsOneWidget);
-    expect(find.text('SAMPLE DATA'), findsOneWidget);
-    expect(find.text('Example cards only — no real files'), findsOneWidget);
+    // The production feed intentionally contains no invented demo transfers.
+    expect(find.text('4 Photos (Group)'),findsNothing);
+    expect(find.text('No transfers yet. Choose files with +'),findsOneWidget);
     expect(find.byTooltip('Refresh nearby LAN devices'),
         findsOneWidget);
   });
@@ -360,7 +388,7 @@ void main() {
       offlineDefault: true,
       enableBackends: false,
     ));
-    await tester.tap(find.byTooltip('QR design preview'));
+    await tester.tap(find.byTooltip('My QR'));
     await tester.pumpAndSettle();
     expect(find.text('My Permanent QR'), findsOneWidget);
     expect(find.text('No active QR yet'), findsOneWidget);
@@ -393,7 +421,7 @@ void main() {
     expect(find.text('1 selected'),findsOneWidget);
     expect(find.byTooltip('Delete selected cards'),findsOneWidget);
     expect(find.byTooltip('Download selected files'),findsOneWidget);
-    expect(find.byTooltip('QR design preview'),findsNothing);
+    expect(find.byTooltip('My QR'),findsNothing);
     expect(find.byTooltip('Select all visible cards'),findsOneWidget);
     await tester.tap(find.byTooltip('Select all visible cards'));
     await tester.pump();
@@ -401,7 +429,7 @@ void main() {
     await tester.tap(find.byTooltip('Exit selection mode'));
     await tester.pump();
     expect(find.text('File Transfer'),findsOneWidget);
-    expect(find.byTooltip('QR design preview'),findsOneWidget);
+    expect(find.byTooltip('My QR'),findsOneWidget);
     expect(tester.takeException(),isNull);
   });
 
@@ -441,8 +469,9 @@ void main() {
       enableBackends: false,
     ));
     await tester.pumpAndSettle();
-    expect(find.text('4 Photos (Group)'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.text('No transfers yet. Choose files with +'),findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-All')),findsOneWidget);
+    expect(tester.takeException(),isNull);
   });
 }
 

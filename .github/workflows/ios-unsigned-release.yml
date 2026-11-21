@@ -4,9 +4,7 @@ name: iOS ONLY - Build unsigned iPhone IPA (macOS)
 # Use GitHub's supported hosted macOS alias; previous macos-15 job was cancelled before any step.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+  # Main branch releases are handled by offline-validation.yml in one run.
 
 permissions:
   contents: read
