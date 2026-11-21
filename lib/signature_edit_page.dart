@@ -462,7 +462,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
                   gaplessPlayback:true,filterQuality:FilterQuality.medium))
             else Image.memory(image,fit:BoxFit.fill,gaplessPlayback:true,
               filterQuality:FilterQuality.medium),
-            if(_appliedJpeg==null)CustomPaint(painter:_SignatureCropPainter(
+            if(_appliedJpeg==null && _tool=='Crop')CustomPaint(painter:_SignatureCropPainter(
               _selection,showQuad:_cropMode=='Perspective')),
           ]),
         ),
