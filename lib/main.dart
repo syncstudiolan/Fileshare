@@ -2360,6 +2360,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Timer? _midnight;
   bool _dashboardForeground=true;
   bool _previousSignedIn=false;
+  bool _frameRefreshQueued=false;
 
   void _resumeCloudInbox() {
     if(!mounted || !widget.enableBackends || !_dashboardForeground)return;
@@ -2457,7 +2458,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         PersonalCloud.instance.stopLiveInbox();
       }
     }
-    setState(() {});
+    // Incoming socket/progress events can burst many times per rendered
+    // frame. Coalesce them so scrolling is not interrupted by rebuild storms.
+    if(_frameRefreshQueued)return;
+    _frameRefreshQueued=true;
+    WidgetsBinding.instance.scheduleFrameCallback((_){
+      _frameRefreshQueued=false;
+      if(mounted)setState((){});
+    });
   }
 
   Future<void> _importEditedCart() async {
@@ -2736,6 +2744,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _sendTypedText() async {
     if(_preparingText||_sending)return;
     final message=_messageController.text;
+    String? preparedId;
     if(message.trim().isEmpty){await _send();return;}
     // Immediate local feedback: disk write and network transport remain async.
     setState((){
@@ -2748,6 +2757,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
     try{
       final id=LanEngine.newId();
+      preparedId=id;
       final file=await FileShareText.create(message,id);
       final size=await file.length();
       if(!mounted)return;
@@ -2760,8 +2770,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       await _send();
     }catch(e){
       if(mounted){
-        setState(()=>_messageController.text=message);
-        _snack('Text send failed: $e');
+        // Never duplicate an already staged message when disk succeeded
+        // but routing failed. The file remains in Cart for an explicit retry.
+        final retained=_staged.any((batch)=>batch.id==preparedId);
+        if(!retained)setState(()=>_messageController.text=message);
+        _snack(retained
+          ?'Send failed; your text remains in Cart: $e'
+          :'Text send failed: $e');
       }
     }finally{
       if(mounted)setState((){
