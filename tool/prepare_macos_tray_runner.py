@@ -79,6 +79,24 @@ def patch_delegate() -> None:
     return false
   }
 """,1)
+    if "applicationShouldHandleReopen" not in text:
+        marker="class AppDelegate: FlutterAppDelegate {"
+        if marker not in text:
+            raise SystemExit("macOS AppDelegate open/activate anchor missing")
+        text=text.replace(marker,marker+"""
+  // Clicking the installed app in Finder or Dock should reopen a hidden
+  // menu-bar window instead of doing nothing when the process is running.
+  override func applicationShouldHandleReopen(
+      _ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    if !flag {
+      if let window = sender.windows.first(where: { $0 is MainFlutterWindow }) {
+        window.makeKeyAndOrderFront(nil)
+        sender.activate(ignoringOtherApps: true)
+      }
+    }
+    return true
+  }
+""",1)
     DELEGATE.write_text(text,encoding="utf-8")
 
 def brand_icons() -> None:
