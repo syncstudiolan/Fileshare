@@ -3350,9 +3350,13 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           filled:false,
                           contentPadding:const EdgeInsets.symmetric(
                             horizontal:12,vertical:16)),
-                        onChanged:(_)=>setState((){})))),
+                        onChanged:null)))),
                     const SizedBox(width:7),
-                    Tooltip(message:'Send message or selected files',
+                    // Rebuild only the Send control for each keystroke, not
+                    // the whole chat feed (important for long pasted text).
+                    AnimatedBuilder(animation:_messageController,
+                      builder:(context,_)=>Tooltip(
+                      message:'Send message or selected files',
                       child:InkWell(
                         onTap:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
                             ||_sending||_preparingText?null:()=>unawaited(_sendTypedText()),
@@ -3369,7 +3373,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                               offset:const Offset(0,5),blurRadius:8)]),
                           child:Icon(Icons.send_rounded,size:23,
                             color:(_messageController.text.trim().isEmpty&&_staged.isEmpty)
-                              ?Colors.white54:Colors.white)))),
+                              ?Colors.white54:Colors.white))))),
                   ]);
                 }),
               ),
