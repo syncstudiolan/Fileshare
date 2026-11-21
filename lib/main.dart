@@ -2067,6 +2067,42 @@ class TimelineGroup {
   DateTime get created =>
     upload?.created ?? lan?.first.created ?? cloud!.first.created;
 }
+// A one-shot GPU-composited entrance for genuinely new transfer messages.
+// Existing messages are not replayed by scrolling or by upload progress.
+class FileShareCardArrival extends StatefulWidget {
+  const FileShareCardArrival({super.key,required this.child,
+    required this.animate,required this.incoming});
+  final Widget child;
+  final bool animate,incoming;
+  @override State<FileShareCardArrival> createState()=>_FileShareCardArrivalState();
+}
+class _FileShareCardArrivalState extends State<FileShareCardArrival>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller=AnimationController(
+    vsync:this,duration:const Duration(milliseconds:290));
+  @override void initState(){
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_){
+      if(!mounted)return;
+      if(!widget.animate || MediaQuery.disableAnimationsOf(context)){
+        _controller.value=1;
+      }else{
+        _controller.forward();
+      }
+    });
+  }
+  @override void dispose(){_controller.dispose();super.dispose();}
+  @override Widget build(BuildContext context) {
+    final curve=CurvedAnimation(parent:_controller,curve:Curves.easeOutCubic);
+    return RepaintBoundary(child:FadeTransition(opacity:curve,
+      child:SlideTransition(position:Tween<Offset>(
+        begin:Offset(widget.incoming?-.045:.045,.07),end:Offset.zero,
+      ).animate(curve),
+        child:ScaleTransition(scale:Tween<double>(begin:.985,end:1)
+          .animate(curve),child:widget.child))));
+  }
+}
+
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
     this.enableBackends = true});
@@ -2086,6 +2122,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _refreshing = false;
   bool _sending = false;
   bool _desktopSidebarVisible = true;
+  bool _preparingText=false;
+  String? _sendingPreview;
+  bool _timelineSeeded=false;
+  final Set<String> _knownTimelineKeys=<String>{};
+  final Set<String> _pendingArrivalKeys=<String>{};
 
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
@@ -2266,10 +2307,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
         onDelete:_deleteCloud,onShare:_shareCloud,
         onPreview:_previewCloud,onTools:_openCloudTools);
-    return Padding(
-      key:ValueKey(_keyOf(g)),
-      padding:const EdgeInsets.symmetric(vertical:3),
-      child:GestureDetector(
+    final key=_keyOf(g);
+    final arriving=_pendingArrivalKeys.remove(key);
+    final incoming=g.lan?.first.incoming ??
+      (g.cloud!=null && g.cloud!.first.senderId!=appLan.deviceId);
+    return FileShareCardArrival(
+      key:ValueKey('arrival:$key'),animate:arriving,incoming:incoming,
+      child:Padding(
+        padding:const EdgeInsets.symmetric(vertical:3),
+        child:GestureDetector(
         behavior:HitTestBehavior.opaque,
         onLongPress:()=>_toggleCard(g),
         onTap:active?()=>_toggleCard(g):null,
@@ -2295,6 +2341,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               child:Icon(selected?Icons.check_rounded:Icons.circle_outlined,
                 size:18,color:selected?Colors.white:FileTheme.violet))),
         ]),
+      ),
       ),
     );
   }
@@ -3031,6 +3078,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final wide = MediaQuery.sizeOf(context).width >= 730;
     final desktop = Platform.isWindows && MediaQuery.sizeOf(context).width >= 820;
     final groups = _timeline();
+    final currentKeys={for(final group in groups)_keyOf(group)};
+    if(!_timelineSeeded){
+      // Restored history must never animate on initial dashboard load.
+      _knownTimelineKeys.addAll(currentKeys);
+      _timelineSeeded=true;
+    }else{
+      for(final key in currentKeys){
+        if(_knownTimelineKeys.add(key))_pendingArrivalKeys.add(key);
+      }
+    }
     return Column(children: [
             Padding(
               padding: EdgeInsets.fromLTRB(wide ? 24 : 12,
@@ -3167,7 +3224,20 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                   itemBuilder: (_, i) => _multiSelectCard(groups[i]))
               : Center(child: Text('No transfers yet. Choose files with +',
                     style: TextStyle(color: FileTheme.muted(context))))),
-            if (_staged.isNotEmpty)
+            if(_sendingPreview!=null)
+              Padding(padding:const EdgeInsets.fromLTRB(14,1,14,5),
+                child:TransferBubble(incoming:false,child:Row(children:[
+                  const SizedBox(width:19,height:19,
+                    child:CircularProgressIndicator(strokeWidth:2)),
+                  const SizedBox(width:10),
+                  Expanded(child:Text(_sendingPreview!.length>110
+                    ?'${_sendingPreview!.substring(0,110)}…':_sendingPreview!,
+                    maxLines:2,overflow:TextOverflow.ellipsis,
+                    style:const TextStyle(fontSize:12,fontWeight:FontWeight.w600))),
+                  const SizedBox(width:7),
+                  const Text('Sending…',style:TextStyle(fontSize:10)),
+                ]))),
+            if (_staged.isNotEmpty && !_sending && !_preparingText)
               Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 child: _drafts(context)),
             Padding(padding:EdgeInsets.fromLTRB(wide?24:10,7,
