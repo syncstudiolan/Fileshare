@@ -421,7 +421,7 @@ void main() {
     expect(find.text('1 selected'),findsOneWidget);
     expect(find.byTooltip('Delete selected cards'),findsOneWidget);
     expect(find.byTooltip('Download selected files'),findsOneWidget);
-    expect(find.byTooltip('QR design preview'),findsNothing);
+    expect(find.byTooltip('My QR'),findsNothing);
     expect(find.byTooltip('Select all visible cards'),findsOneWidget);
     await tester.tap(find.byTooltip('Select all visible cards'));
     await tester.pump();
@@ -429,7 +429,7 @@ void main() {
     await tester.tap(find.byTooltip('Exit selection mode'));
     await tester.pump();
     expect(find.text('File Transfer'),findsOneWidget);
-    expect(find.byTooltip('QR design preview'),findsOneWidget);
+    expect(find.byTooltip('My QR'),findsOneWidget);
     expect(tester.takeException(),isNull);
   });
 
