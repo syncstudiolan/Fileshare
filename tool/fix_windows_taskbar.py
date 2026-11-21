@@ -40,7 +40,7 @@ def main()->None:
     if manual_show in source and silent_show not in source:
         source=source.replace(manual_show,silent_show,1)
     if "#include <cwchar>" not in source:
-        source="#include <cwchar>\\n"+source
+        source="#include <cwchar>"+chr(10)+source
     MAIN.write_text(source,encoding="utf-8")
 
     # The Windows taskbar uses the HWND's small/big icons, not the tray icon
@@ -60,7 +60,7 @@ def main()->None:
             raise SystemExit("Unexpected FlutterWindow::OnCreate Show() implementation")
         window_code=window_code.replace(old_show,conditional_show,1)
     if "#include <cwchar>" not in window_code:
-        window_code="#include <cwchar>\\n"+window_code
+        window_code="#include <cwchar>"+chr(10)+window_code
 
     if '#include "resource.h"' not in window_code:
         window_code='#include "resource.h"\n'+window_code
