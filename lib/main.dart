@@ -3,6 +3,8 @@ import 'file_share_text.dart';
 import 'text_transfer_card.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:image/image.dart' as desktop_image;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -53,11 +55,13 @@ Future<void> main([List<String> args = const []]) async {
   const ciLanTest = bool.fromEnvironment('FILE_SHARE_BACKGROUND_VALIDATION');
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
   final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
+  final desktop = Platform.isWindows || Platform.isMacOS;
+  final backgroundLaunch = desktop && args.contains('--background');
   final androidBackgroundEnabled = Platform.isAndroid &&
     (await prefs.getBool('android_receive_background') ?? true);
   // Receiver availability is independent from the first-run login screen.
   final offline = ciLanTest || previousOffline || windowsSmoke ||
-    Platform.isWindows;
+    desktop;
   // Restore the encrypted session before drawing Profile/Login, without a
   // network call. The dashboard may re-check the restored session later.
   try { await PersonalCloud.instance.restore(); }
@@ -65,31 +69,30 @@ Future<void> main([List<String> args = const []]) async {
   appLan.onReceived = (file) => Platform.isAndroid
       ? const MethodChannel('file_share.native').invokeMethod<void>(
           'notifyReceived', {'name': file.name, 'sender': file.peer})
-      : Platform.isWindows
-          ? WindowsBackground.instance.notifyReceived(file)
+      : desktop ? WindowsBackground.instance.notifyReceived(file)
           : Future<void>.value();
-  if (Platform.isWindows) {
-    // Exit a second Windows process before it can bind the same LAN port.
+  if (desktop) {
+    // No second process may steal the LAN listener. Only an explicit open
+    // should focus a running app; login launches must remain silent.
     if (!await WindowsBackground.instance.acquireSingleInstance(
-        showExisting:!args.contains('--background'))) {
+        showExisting:!backgroundLaunch)) {
       exit(0);
     }
     try {
-      await WindowsBackground.instance.initialize(
-        launchHidden:args.contains('--background'));
+      await WindowsBackground.instance.initialize(launchHidden:backgroundLaunch);
       await WindowsBackground.instance.enableDefaultStart(prefs);
-    }catch (e) { debugPrint('Windows tray/startup unavailable: $e'); }
+    }catch (e) { debugPrint('Desktop tray/startup unavailable: $e'); }
   }
   // iPhone LAN receiver/discovery must start even before sign-in; local
   // file transfer is independent of the cloud account and login flow.
   if (Platform.isIOS ||
       ((offline || androidBackgroundEnabled) &&
-       (Platform.isAndroid || Platform.isWindows))) {
+       (Platform.isAndroid || desktop))) {
     unawaited(appLan.start().catchError((Object e) {
       debugPrint('Background LAN start failed: $e');
     }));
   }
-  if (Platform.isWindows && args.contains('--background')) {
+  if (backgroundLaunch) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(windowManager.hide());
     });
@@ -105,7 +108,7 @@ Future<void> main([List<String> args = const []]) async {
 }
 
 
-/// Windows: one live Flutter process, even when its window is hidden.
+/// Windows and macOS: one live Flutter process with background LAN receiving.
 class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   WindowsBackground._();
   static final instance = WindowsBackground._();
@@ -118,7 +121,7 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   /// owning the fixed LAN TCP listener. If a copy is already active, ask it
   /// to open its tray window rather than showing a second broken dashboard.
   Future<bool> acquireSingleInstance({bool showExisting=true}) async {
-    if (!Platform.isWindows) return true;
+    if (!Platform.isWindows && !Platform.isMacOS) return true;
     final folder = await getApplicationSupportDirectory();
     final lockFile = File(folder.path + Platform.pathSeparator +
       'file_share_process.lock');
@@ -158,34 +161,38 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   }
 
   Future<void> initialize({bool launchHidden=false}) async {
-    if (!Platform.isWindows) return;
+    if (!Platform.isWindows && !Platform.isMacOS) return;
     await windowManager.ensureInitialized();
-    // Startup uses the tray only; avoid maximizing a window behind the user.
+    // Window remains hidden on login; manual launch opens normally.
     if(launchHidden){
-      try { await windowManager.hide(); } catch (_) {}
+      await windowManager.hide();
     }else{
       await windowManager.maximize();
     }
-    final icon = await _writeTrayIcon();
-    await desktop_tray.trayManager.setIcon(icon.path);
+    final icon=await _writeTrayIcon();
+    await desktop_tray.trayManager.setIcon(icon.path,isTemplate:false);
     await desktop_tray.trayManager.setToolTip('File Share — LAN receiver');
     await desktop_tray.trayManager.setContextMenu(desktop_tray.Menu(items: [
-      desktop_tray.MenuItem(key: 'show', label: 'Open File Share'),
-      desktop_tray.MenuItem.separator(),
-      desktop_tray.MenuItem(key: 'exit', label: 'Exit Completely'),
+      desktop_tray.MenuItem(key: 'show', label: 'View'),
+      desktop_tray.MenuItem(key: 'exit', label: 'Exit'),
     ]));
     desktop_tray.trayManager.addListener(this);
     windowManager.addListener(this);
     await windowManager.setPreventClose(true);
     _trayReady = true;
     try {
-      final result = await Process.run('reg', [
-        'query', _windowsRunKey, '/v', 'FileShare',
-      ]);
-      autoStartEnabled.value = result.exitCode == 0 &&
-        result.stdout.toString().toLowerCase()
-          .contains(Platform.resolvedExecutable.toLowerCase());
-    } catch (e) { debugPrint('Startup preference error: $e'); }
+      if(Platform.isWindows){
+        final result=await Process.run('reg',[
+          'query',_windowsRunKey,'/v','FileShare']);
+        autoStartEnabled.value=result.exitCode==0 &&
+          result.stdout.toString().toLowerCase()
+            .contains(Platform.resolvedExecutable.toLowerCase()) &&
+          result.stdout.toString().contains('--background');
+      }else{
+        final agent=await _macLoginAgent();
+        autoStartEnabled.value=await agent.exists();
+      }
+    }catch(e){debugPrint('Startup preference error: $e');}
     try {
       await localNotifier.setup(appName: 'File Share',
         shortcutPolicy: ShortcutPolicy.requireCreate);
@@ -197,7 +204,27 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
 
   Future<void> setAutoStart(bool value) async {
-    if (!Platform.isWindows) return;
+    if(Platform.isMacOS){
+      final agent=await _macLoginAgent();
+      if(value){
+        final executable=Platform.resolvedExecutable;
+        final normalized=executable.replaceAll('\\','/');
+        final marker='/Contents/MacOS/';
+        final index=normalized.lastIndexOf(marker);
+        if(index<0 || !normalized.substring(0,index).endsWith('.app')){
+          throw StateError('Install File Share as a macOS .app before enabling login startup.');
+        }
+        final app=normalized.substring(0,index);
+        final plist=_macLoginPlist(app);
+        await agent.parent.create(recursive:true);
+        await agent.writeAsString(plist,flush:true);
+      }else if(await agent.exists()){
+        await agent.delete();
+      }
+      autoStartEnabled.value=value;
+      return;
+    }
+    if(!Platform.isWindows)return;
     final args = value
       ? ['add', _windowsRunKey, '/v', 'FileShare', '/t', 'REG_SZ',
           '/d', '"' + Platform.resolvedExecutable + '" --background', '/f']
@@ -209,11 +236,13 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     autoStartEnabled.value = value;
   }
 
-  /// Configure Windows HKCU Run on first installed launch. Respect any
-  /// later explicit user choice, including opt-out. No elevation is needed.
+  /// Configure login startup once and respect subsequent explicit opt-outs.
+  /// macOS uses a per-user LaunchAgent; Windows uses the HKCU Run key.
   Future<void> enableDefaultStart(SharedPreferencesAsync prefs) async {
-    if(!Platform.isWindows)return;
-    if(await prefs.getBool('windows_autostart_decided')==true)return;
+    if(!Platform.isWindows && !Platform.isMacOS)return;
+    final preferenceKey=Platform.isMacOS
+      ?'macos_autostart_decided':'windows_autostart_decided';
+    if(await prefs.getBool(preferenceKey)==true)return;
     final executable=Platform.resolvedExecutable.toLowerCase();
     // Avoid registering Flutter debug/test binaries or an uninstalled EXE.
     final normalized=executable.replaceAll(String.fromCharCode(92),'/');
@@ -222,7 +251,7 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
        normalized.contains('/debug/'))return;
     try {
       await setAutoStart(true);
-      await prefs.setBool('windows_autostart_decided',true);
+      await prefs.setBool(preferenceKey,true);
     }catch(e){
       debugPrint('Windows autorun could not be registered: $e');
     }
@@ -239,8 +268,9 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   }
 
   Future<void> showWindow() async {
-    if (!Platform.isWindows) return;
+    if(!Platform.isWindows && !Platform.isMacOS)return;
     await windowManager.show();
+    await windowManager.maximize();
     await windowManager.focus();
   }
 
@@ -251,6 +281,11 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
 
   @override
   void onTrayIconMouseDown() { unawaited(showWindow()); }
+
+  @override
+  void onTrayIconRightMouseDown(){
+    unawaited(desktop_tray.trayManager.popUpContextMenu());
+  }
 
   @override
   void onTrayMenuItemClick(desktop_tray.MenuItem item) {
@@ -272,14 +307,67 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
     await windowManager.destroy();
   }
 
-  /// Exact final FS logo: platform icon derived during the build.
+  /// Both platform tray icons originate from the approved bundled FS logo.
+  /// No missing file_share_tray.ico asset or default Flutter icon is used.
   Future<File> _writeTrayIcon() async {
-    final bytes=await rootBundle.load('assets/branding/file_share_tray.ico');
+    final bytes=await rootBundle.load('assets/branding/file_share_icon.webp');
+    final source=desktop_image.decodeImage(bytes.buffer.asUint8List(
+      bytes.offsetInBytes,bytes.lengthInBytes));
+    if(source==null)throw StateError('File Share logo could not be decoded');
+    final resized=desktop_image.copyResize(source,width:64,height:64);
+    final png=Uint8List.fromList(desktop_image.encodePng(resized));
     final folder=await getApplicationSupportDirectory();
+    if(Platform.isMacOS){
+      final file=File('${folder.path}${Platform.pathSeparator}file-share-tray.png');
+      await file.writeAsBytes(png,flush:true);
+      return file;
+    }
+    // Windows ICO containing an embedded PNG (supported since Vista).
+    final header=ByteData(22);
+    header.setUint16(0,0,Endian.little);
+    header.setUint16(2,1,Endian.little);
+    header.setUint16(4,1,Endian.little);
+    header.setUint8(6,64);
+    header.setUint8(7,64);
+    header.setUint8(8,0);
+    header.setUint8(9,0);
+    header.setUint16(10,1,Endian.little);
+    header.setUint16(12,32,Endian.little);
+    header.setUint32(14,png.length,Endian.little);
+    header.setUint32(18,22,Endian.little);
     final file=File('${folder.path}${Platform.pathSeparator}file-share-tray.ico');
-    await file.writeAsBytes(bytes.buffer.asUint8List(
-      bytes.offsetInBytes,bytes.lengthInBytes),flush:true);
+    await file.writeAsBytes([...header.buffer.asUint8List(),...png],flush:true);
     return file;
+  }
+
+  Future<File> _macLoginAgent() async {
+    final home=Platform.environment['HOME'];
+    if(home==null||home.isEmpty)throw StateError('macOS HOME is unavailable');
+    return File('$home/Library/LaunchAgents/com.fileshare.desktop.plist');
+  }
+
+  String _macLoginPlist(String appPath) {
+    // XML escaping is required: an app path can contain & or quotes.
+    final path=const HtmlEscape(HtmlEscapeMode.element).convert(appPath);
+    return '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fileshare.desktop</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string>
+    <string>-gj</string>
+    <string>-a</string>
+    <string>$path</string>
+    <string>--args</string>
+    <string>--background</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>''';
   }
 }
 
