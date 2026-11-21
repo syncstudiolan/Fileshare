@@ -661,67 +661,66 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     }
   }
 
+  // Build an independent snapshot of everything visible. In-flight AI
+  // processing must never lock Cart, Share, or Save.
+  Future<Uint8List> _visibleExportBytes()async{
+    final source=_bytes;
+    if(source==null)throw StateError('No image selected');
+    final background=_pendingBackgroundColor,cutout=_cutoutBytes;
+    final filter=_pendingFilter,angle=_fineAngle,autoCrop=_straightenAutoCrop;
+    final cropDirty=_cropDirty,cropMode=_cropMode,crop=_crop;
+    final corners=List<Offset>.of(_cropCorners);
+    final brightness=_brightness,contrast=_contrast;
+    final saturation=_saturation,exposure=_exposure;
+    var data=source;
+    if(background!=null){
+      if(cutout==null)throw StateError('Background preview is not ready');
+      data=background==Colors.transparent?cutout:
+        await ImageEditingEngine.edit(cutout,'flatten',{'color':background.toARGB32()});
+    }
+    if(filter!=null&&filter!='Normal'){
+      data=await ImageEditingEngine.edit(data,'filter',{'name':filter});
+    }
+    if(angle.abs()>=.001){
+      data=await ImageEditingEngine.edit(data,'straighten',{
+        'degrees':angle,'autoCrop':autoCrop});
+    }
+    if(cropDirty){
+      if(cropMode=='Normal Crop'){
+        data=await ImageEditingEngine.edit(data,'crop',{
+          'x':crop.left,'y':crop.top,'w':crop.width,'h':crop.height});
+      }else{
+        data=await ImageEditingEngine.edit(data,'perspective',{
+          'tlx':corners[0].dx,'tly':corners[0].dy,
+          'trx':corners[1].dx,'try':corners[1].dy,
+          'brx':corners[2].dx,'bry':corners[2].dy,
+          'blx':corners[3].dx,'bly':corners[3].dy});
+      }
+    }
+    if(brightness!=1||contrast!=1||saturation!=1||exposure!=0){
+      data=await ImageEditingEngine.edit(data,'adjust',{
+        'brightness':brightness,'contrast':contrast,
+        'saturation':saturation,'exposure':exposure});
+    }
+    return data;
+  }
+
   Future<void> _export(String action)async {
-    final cart=action=='cart';
     if(_bytes==null||_exporting)return;
     _exporting=true;
     try{
-      // The cart remains tappable during AI processing. Wait for the edit
-      // to commit rather than accidentally exporting the pre-edit original.
-      if(_busy){
-        final deadline=DateTime.now().add(const Duration(seconds:90));
-        while(_busy && mounted && DateTime.now().isBefore(deadline)){
-          await Future<void>.delayed(const Duration(milliseconds:80));
-        }
-        if(!mounted)return;
-        if(_busy){
-          _message('Editing is still running. Please retry after it completes.');
-          return;
-        }
-      }
-      // Do not lose a live brush stroke if Send is pressed mid-edit.
+      // Do not poll _busy or call Apply; previously a stale background flag
+      // could block export indefinitely. Preserve a genuine active brush.
       if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
-      await _eraseQueue;
-      if(!_busy){
-        if(_pendingFilter!=null)await _finalizeFilter();
-        if(_pendingFilter!=null){
-          _message('Filter still pending. Retry Apply before exporting.');return;
-        }
-        if(_fineAngle.abs()>=.001)await _commitStraighten();
-        if(_fineAngle.abs()>=.001){
-          _message('Rotation not finished. Retry Apply before exporting.');return;
-        }
-        if(_pendingBackgroundColor!=null)await _finalizeBackgroundPreview();
-        if(_pendingBackgroundColor!=null){
-          _message('Background change still pending. Retry before exporting.');return;
-        }
-        if(_cropDirty)await _commitCrop();
-        if(_cropDirty){
-          _message('Crop not finished. Retry Apply before exporting.');return;
-        }
-        if(_brightness!=1||_contrast!=1||
-            _saturation!=1||_exposure!=0){
-          await _commitAdjust();
-        }
-        if(_brightness!=1||_contrast!=1||
-            _saturation!=1||_exposure!=0){
-          _message('Adjustments not finished. Retry before exporting.');return;
-        }
+      if(_tool=='Erase')await _eraseQueue;
+      final data=await _visibleExportBytes();
+      if(action=='cart'){
+        unawaited(_saveDraft().catchError((Object _) {}));
+        unawaited(_saveSession().catchError((Object _) {}));
       }
-      if(cart){
-        await _saveDraft();
-        await _saveSession();
-      }
-      // Every outgoing action must use the LAST COMMITTED EDITED snapshot.
-      // The original is preserved separately only for Restore Original.
-      // If a processing operation is underway, use the most recent finished
-      // snapshot rather than selecting the untouched import.
-      final data=_bytes;
-      if(data==null)return;
-      final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8
-        ?'jpg':'png';
+      final type=data.length>=2&&data[0]==0xff&&data[1]==0xd8?'jpg':'png';
       final name='edited_${DateTime.now().microsecondsSinceEpoch}.$type';
-      if(cart){
+      if(action=='cart'){
         await ImageEditingCart.instance.addEditedBytes(data,name);
         if(mounted)returnToFileShareCart(context);
       }else if(action=='share'){
@@ -730,12 +729,11 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         await file.writeAsBytes(data);
         await SharePlus.instance.share(ShareParams(files:[XFile(file.path)]));
       }else{
-        final saved=await FilePicker.saveFile(
-          fileName:name,bytes:data,
+        final saved=await FilePicker.saveFile(fileName:name,bytes:data,
           mimeType:type=='jpg'?'image/jpeg':'image/png');
         if(saved!=null)_message('Image saved successfully');
       }
-    }catch(e){_message('Export failed: $e');}
+    }catch(e){_message('Could not export the current edit: $e');}
     finally{_exporting=false;}
   }
 
