@@ -3260,7 +3260,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     return Column(children: [
             Padding(
               padding: EdgeInsets.fromLTRB(wide ? 24 : 12,
-                wide ? 10 : 24,wide ? 24 : 12,9),
+                wide ? 10 : 2,wide ? 24 : 12,5),
               child: DesignPanel(
                 dashboard:true,
                 padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 5),
