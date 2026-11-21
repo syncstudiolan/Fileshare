@@ -2237,38 +2237,40 @@ class FileShareScrollDepth extends StatelessWidget {
 
   @override
   Widget build(BuildContext context){
-    final reducedMotion=MediaQuery.disableAnimationsOf(context);
-    if(reducedMotion)return RepaintBoundary(child:child);
+    if(MediaQuery.disableAnimationsOf(context)){
+      return RepaintBoundary(child:child);
+    }
     final viewportHeight=MediaQuery.sizeOf(context).height;
-    return AnimatedBuilder(
-      animation:position,
-      child:RepaintBoundary(child:child),
-      builder:(context,painted){
-        // The card is already laid out by the sliver. Read its position,
-        // without performing layout or changing the surrounding list.
-        final render=context.findRenderObject();
-        if(!position.hasClients || render is! RenderBox ||
-            !render.hasSize || viewportHeight<=0){
-          return painted!;
-        }
-        final y=render.localToGlobal(
-          Offset(0,render.size.height/2)).dy;
-        final progress=((y-viewportHeight/2)/
-          (viewportHeight*.60)).clamp(-1.0,1.0).toDouble();
-        // Maximum ~1.5 degrees. A strong 3D rotation would cause text
-        // shimmer and expensive raster resampling during fast flings.
-        final angle=progress*.026;
-        final lift=progress.abs()*.008;
-        final matrix=Matrix4.identity()
-          ..setEntry(3,2,.00065)
-          ..translateByDouble(0.0,-progress*2.4,0.0,1.0)
-          ..rotateX(angle)
-          ..scaleByDouble(1-lift,1-lift,1.0,1.0);
-        return Transform(
-          transform:matrix,alignment:Alignment.center,
-          transformHitTests:true,child:painted);
-      },
-    );
+    // SizedBox supplies a stable RenderBox. Using the AnimatedBuilder's own
+    // context would sometimes find its ancestor RenderSliver instead.
+    return SizedBox(child:Builder(builder:(cardContext){
+      return AnimatedBuilder(
+        animation:position,
+        child:RepaintBoundary(child:child),
+        builder:(context,painted){
+          final render=cardContext.findRenderObject();
+          if(!position.hasClients || render is! RenderBox ||
+              !render.hasSize || viewportHeight<=0){
+            return painted!;
+          }
+          final y=render.localToGlobal(
+            Offset(0,render.size.height/2)).dy;
+          final progress=((y-viewportHeight/2)/
+            (viewportHeight*.60)).clamp(-1.0,1.0).toDouble();
+          // Maximum ~1.5°: a gentle depth impression without text shimmer.
+          final angle=progress*.026;
+          final lift=progress.abs()*.008;
+          final matrix=Matrix4.identity()
+            ..setEntry(3,2,.00065)
+            ..translateByDouble(0.0,-progress*2.4,0.0,1.0)
+            ..rotateX(angle)
+            ..scaleByDouble(1-lift,1-lift,1.0,1.0);
+          return Transform(
+            transform:matrix,alignment:Alignment.center,
+            transformHitTests:true,child:painted);
+        },
+      );
+    }));
   }
 }
 
