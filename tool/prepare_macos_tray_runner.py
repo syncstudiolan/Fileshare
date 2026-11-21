@@ -46,10 +46,10 @@ def patch_delegate() -> None:
         raise SystemExit("Generated macOS AppDelegate.swift is missing")
     text=DELEGATE.read_text(encoding="utf-8")
     if "applicationShouldTerminateAfterLastWindowClosed" in text:
-        import re
-        text=re.sub(
-          r"(override\\s+func\\s+applicationShouldTerminateAfterLastWindowClosed\\([^)]*\\)\\s*->\\s*Bool\\s*\\{)\\s*return\\s+(?:true|false)",
-          r"\\1\n    return false",text,count=1)
+        # Flutter's generated AppDelegate normally contains exactly this
+        # return; a macOS tray app must not quit on its final window close.
+        if "return true" in text:
+            text=text.replace("return true","return false",1)
     else:
         marker="class AppDelegate: FlutterAppDelegate {"
         if marker not in text:
