@@ -9,7 +9,8 @@ import 'package:share_plus/share_plus.dart';
 import 'app_top_notice.dart';
 import 'image_editing_storage.dart';
 import 'id_card_pdf_engine.dart';
-import 'main.dart' show FileTheme,returnToFileShareCart;
+import 'main.dart' show FileTheme;
+import 'editor_transfer_session.dart' show returnToFileShareCart;
 
 /// Android Advanced PDF Pro: crop each selected ID image first, then lay out
 /// movable/resizable cards on one A4 page. Original files are never modified.
@@ -70,7 +71,7 @@ class _IdCardA4EditorPageState extends State<IdCardA4EditorPage> {
       points[k+1]=(points[k+1]+dy).clamp(0.0,1.0);
       _setSelection(c.rect,points);
     }else{
-      var l=c.rect.left,t=c.rect.top,r=c.rect.right,b=c.rect.bottom;
+      double l=c.rect.left,t=c.rect.top,r=c.rect.right,b=c.rect.bottom;
       switch(_handle){
         case 0: l=(l+dx).clamp(0.0,r-.06);t=(t+dy).clamp(0.0,b-.06);
         case 1: r=(r+dx).clamp(l+.06,1.0);t=(t+dy).clamp(0.0,b-.06);
