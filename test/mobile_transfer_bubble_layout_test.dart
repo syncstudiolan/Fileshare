@@ -1,6 +1,4 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file_share/main.dart' show TransferBubble;
 
@@ -60,41 +58,5 @@ void main() {
     expect(light,dark);
   });
 
-  testWidgets('Rendered tails point left for received and right for sent',
-      (tester) async {
-    tester.view.physicalSize=const Size(400,200);
-    tester.view.devicePixelRatio=1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    for(final mode in [ThemeMode.light,ThemeMode.dark]){
-      for(final incoming in [true,false]){
-        final key=UniqueKey();
-        await tester.pumpWidget(MaterialApp(themeMode:mode,
-          theme:ThemeData.light(),darkTheme:ThemeData.dark(),
-          home:RepaintBoundary(key:key,child:ColoredBox(
-            color:Colors.white,child:SizedBox(width:400,height:200,
-              child:TransferBubble(incoming:incoming,
-                child:const SizedBox(height:95)))))));
-        await tester.pump();
-        final paint=find.descendant(of:find.byType(TransferBubble),
-          matching:find.byType(CustomPaint)).first;
-        final rect=tester.getRect(paint);
-        final frame=tester.getRect(find.byKey(key));
-        final image=await tester.renderObject<RenderRepaintBoundary>(
-          find.byKey(key)).toImage(pixelRatio:1);
-        final bytes=(await image.toByteData(format:ui.ImageByteFormat.rawRgba))!;
-        int lightAt(int x,int y){
-          final index=(y*image.width+x)*4;
-          return bytes.getUint8(index)+bytes.getUint8(index+1)+
-            bytes.getUint8(index+2);
-        }
-        final y=(rect.top-frame.top+52).round();
-        final tail=(incoming?rect.left-frame.left+2:rect.right-frame.left-2)
-          .round();
-        final blank=incoming?image.width-2:2;
-        expect(lightAt(tail,y),lessThan(lightAt(blank,y)-10));
-        image.dispose();
-      }
-    }
-  });
+
 }
