@@ -39,6 +39,25 @@ def patch_window() -> None:
   }
 """
         text=text.replace(marker,marker+code,1)
+    if 'file_share.desktop' not in text:
+        registration="RegisterGeneratedPlugins(registry: flutterViewController)"
+        if registration not in text:
+            raise SystemExit("macOS Flutter plugin registration anchor missing")
+        channel = """
+    // Preserve the --background login flag for the Dart entrypoint.
+    // FlutterViewController's default project need not forward shell args.
+    let startupChannel = FlutterMethodChannel(
+      name: "file_share.desktop",
+      binaryMessenger: flutterViewController.engine.binaryMessenger)
+    startupChannel.setMethodCallHandler { call, result in
+      if call.method == "isBackgroundLaunch" {
+        result(ProcessInfo.processInfo.arguments.contains("--background"))
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+"""
+        text=text.replace(registration,registration+channel,1)
     WINDOW.write_text(text,encoding="utf-8")
 
 def patch_delegate() -> None:
