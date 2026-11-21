@@ -1,9 +1,12 @@
 import 'app_top_notice.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
 import 'signature_edit_page.dart';
 import 'id_card_a4_editor_page.dart';
+import 'id_card_pdf_engine.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'lan_folder_share_page.dart';
 import 'file_share_doc_page.dart';
@@ -92,7 +95,24 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
           IdCardA4EditorPage(paths:images)));
         return;
       }
-      // Normal native editor keeps its standard import/home workflow.
+      // One image per A4 page for the Normal PDF editor; keep originals.
+      try{
+        final bytes=<Uint8List>[];
+        for(final path in images){bytes.add(await File(path).readAsBytes());}
+        final pdf=await IdCardPdfEngine.normalPdf(bytes);
+        final cache=await getTemporaryDirectory();
+        final file=File(cache.path+Platform.pathSeparator+
+          'file_share_normal_images_'+
+          DateTime.now().microsecondsSinceEpoch.toString()+'.pdf');
+        await file.writeAsBytes(pdf,flush:true);
+        selected
+          ..clear()
+          ..add(file.path);
+      }catch(e){
+        if(mounted)FileShareTopNotice.show(context,
+          'Could not prepare images for Normal PDF: '+e.toString());
+        return;
+      }
     }
     try{
       await const MethodChannel('file_share.native').invokeMethod<void>(
