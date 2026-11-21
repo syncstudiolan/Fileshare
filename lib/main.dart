@@ -56,7 +56,17 @@ Future<void> main([List<String> args = const []]) async {
   // Explicit CI Windows smoke only; never changes ordinary first-run behavior.
   final windowsSmoke = Platform.isWindows && args.contains('--lan-smoke');
   final desktop = Platform.isWindows || Platform.isMacOS;
-  final backgroundLaunch = desktop && args.contains('--background');
+  // The default macOS Flutter runner does not reliably forward NSProcessInfo
+  // command-line arguments to Dart. Read the native login flag directly.
+  var macBackgroundLaunch=false;
+  if(Platform.isMacOS){
+    try{
+      macBackgroundLaunch=await const MethodChannel('file_share.desktop')
+        .invokeMethod<bool>('isBackgroundLaunch')??false;
+    }catch(e){debugPrint('macOS startup argument unavailable: $e');}
+  }
+  final backgroundLaunch=desktop &&
+    (args.contains('--background') || macBackgroundLaunch);
   final androidBackgroundEnabled = Platform.isAndroid &&
     (await prefs.getBool('android_receive_background') ?? true);
   // Receiver availability is independent from the first-run login screen.
