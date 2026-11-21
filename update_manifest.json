@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 538,
-    "notes": "Merge PR #15: teal 3D reference dashboard, compact filters and directional cards",
-    "sha256": "636f2506fed4da86e75fffd8f4369a6dfab6a9446087194525f3ca8d4cbc4961",
-    "size": 114482873,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-538/FileShare-Android-ARM64-Release.apk",
+    "build": 549,
+    "notes": "Merge pull request #16 from syncstudiolan/feat/signature-white-paper-intensity-20261120",
+    "sha256": "eb208c6c5524fd6193e9e43975ab84ab2bee51801980f9fc59cc185480aa522e",
+    "size": 114417085,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-549/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
