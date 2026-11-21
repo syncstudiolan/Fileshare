@@ -104,7 +104,7 @@ Uint8List _cropIdCard(Map<String,Object?> options){
     double distance(img.Point a,img.Point b)=>math.sqrt(
       math.pow(a.x-b.x,2)+math.pow(a.y-b.y,2));
     final width=math.max(distance(points[0],points[1]),
-      distance(points[3],points[2])).round().clamp(1,8192);
+      distance(points[3],points[2])).round().clamp(1,8192).toInt();
     final height=math.max(distance(points[0],points[3]),
       distance(points[1],points[2])).round().clamp(1,8192);
     cropped=img.copyRectify(decoded,topLeft:points[0],
@@ -114,13 +114,13 @@ Uint8List _cropIdCard(Map<String,Object?> options){
   }else{
     final rect=(options['rect'] as List).cast<double>();
     final x=(rect[0].clamp(0.0,1.0)*decoded.width).floor()
-      .clamp(0,decoded.width-1);
+      .clamp(0,decoded.width-1).toInt();
     final y=(rect[1].clamp(0.0,1.0)*decoded.height).floor()
-      .clamp(0,decoded.height-1);
+      .clamp(0,decoded.height-1).toInt();
     final width=((rect[2]-rect[0])*decoded.width).round()
-      .clamp(1,decoded.width-x);
+      .clamp(1,decoded.width-x).toInt();
     final height=((rect[3]-rect[1])*decoded.height).round()
-      .clamp(1,decoded.height-y);
+      .clamp(1,decoded.height-y).toInt();
     cropped=img.copyCrop(decoded,x:x,y:y,width:width,height:height);
   }
   return Uint8List.fromList(img.encodePng(cropped,level:1));
