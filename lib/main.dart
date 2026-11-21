@@ -2794,9 +2794,31 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               leading: const Icon(Icons.logout_rounded, color: FileTheme.violet),
               title: const Text('Logout'),
               onTap: () async {
-                if (!pinned) Navigator.pop(context);
+                // A mistaken tap must never terminate the saved session.
+                // Keep the drawer open until the user explicitly confirms.
+                final confirmed=await showDialog<bool>(
+                  context:context,
+                  builder:(dialog)=>AlertDialog(
+                    title:const Text('Are you sure you want to logout?'),
+                    content:const Text(
+                      'You will be signed out of your cloud account. '
+                      'Offline LAN sharing will remain available.'),
+                    actions:[
+                      TextButton(
+                        onPressed:()=>Navigator.of(dialog).pop(false),
+                        child:const Text('No')),
+                      FilledButton(
+                        onPressed:()=>Navigator.of(dialog).pop(true),
+                        child:const Text('Yes')),
+                    ],
+                  ),
+                );
+                // Back, outside tap, No, or a disposed route all cancel.
+                if(confirmed!=true||!mounted)return;
+                if(!pinned)Navigator.pop(context);
                 await PersonalCloud.instance.signOutLocal();
-                _snack('Cloud signed out. Offline LAN stays available.');
+                if(mounted)_snack(
+                  'Cloud signed out. Offline LAN stays available.');
               })
           : _nav('Login', Icons.login_rounded, pinned: pinned),
       ),
