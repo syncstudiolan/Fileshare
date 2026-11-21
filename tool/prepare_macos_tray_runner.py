@@ -29,6 +29,10 @@ def patch_window() -> None:
   private var fileShareSuppressInitialLoginShow =
       ProcessInfo.processInfo.arguments.contains("--background")
 
+  func allowFileShareShow() {
+    fileShareSuppressInitialLoginShow = false
+  }
+
   override public func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
     if fileShareSuppressInitialLoginShow && place != .out {
       fileShareSuppressInitialLoginShow = false
@@ -52,6 +56,9 @@ def patch_window() -> None:
     startupChannel.setMethodCallHandler { call, result in
       if call.method == "isBackgroundLaunch" {
         result(ProcessInfo.processInfo.arguments.contains("--background"))
+      } else if call.method == "allowShow" {
+        self.allowFileShareShow()
+        result(nil)
       } else {
         result(FlutterMethodNotImplemented)
       }
@@ -89,7 +96,8 @@ def patch_delegate() -> None:
   override func applicationShouldHandleReopen(
       _ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     if !flag {
-      if let window = sender.windows.first(where: { $0 is MainFlutterWindow }) {
+      if let window = sender.windows.first(where: { $0 is MainFlutterWindow }) as? MainFlutterWindow {
+        window.allowFileShareShow()
         window.makeKeyAndOrderFront(nil)
         sender.activate(ignoringOtherApps: true)
       }
