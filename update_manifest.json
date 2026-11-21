@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 538,
-    "notes": "Merge PR #15: teal 3D reference dashboard, compact filters and directional cards",
-    "sha256": "99df3f3a55c3b3bd2782b8107b6b2c8285feaeb1707a1a65c6fe84395229aa58",
-    "size": 19238814,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-538/FileShare-Windows-Setup.exe",
+    "build": 549,
+    "notes": "Merge pull request #16 from syncstudiolan/feat/signature-white-paper-intensity-20261120",
+    "sha256": "02057fccf7636f3bf7e43fe1536373f05f9a32766c3538d5ae96ed2ad05489e5",
+    "size": 19232206,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-549/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
