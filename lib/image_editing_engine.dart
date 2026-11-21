@@ -296,37 +296,37 @@ class ImageEditingEngine {
       img.compositeImage(white,source);
       source=white;
     }
-    Uint8List encode(int quality)=>
-      Uint8List.fromList(img.encodeJpg(source,quality:quality));
-    Uint8List search(){
-      var low=35,high=preferred;
+    // Search the best JPEG quality at each scale, with a deliberate
+    // legibility floor. Low JPEG quality destroys faces and letters before
+    // downsampling with a good resampler does.
+    Uint8List? findAtSize(int minQuality){
+      var low=minQuality,high=preferred;
       Uint8List? best;
-      // Favor a useful quality floor; shrink resolution if the target cannot
-      // hold 35+ quality, instead of rendering faces at JPEG quality 5.
-      if(preferred<35){low=preferred;high=preferred;}
       for(var iteration=0;iteration<8 && low<=high;iteration++){
         final mid=(low+high)~/2;
-        final sample=encode(mid);
-        if(sample.length<=target){best=sample;low=mid+1;}
-        else {high=mid-1;}
+        final encoded=Uint8List.fromList(img.encodeJpg(source,quality:mid));
+        if(encoded.length<=target){best=encoded;low=mid+1;}
+        else{high=mid-1;}
       }
-      return best??Uint8List(0);
+      return best;
     }
-    var result=search();
-    if(result.isNotEmpty)return result;
-    // Estimate the next dimensions using the actual measured compressed
-    // size, not a constant 18% repeated blind shrink. This retains more
-    // face detail for extremely small size targets.
-    for(var step=0;step<18;step++){
-      final trial=encode(math.min(preferred,50));
-      final factor=math.sqrt(target/trial.length).clamp(.65,.90);
+    // A readable picture at 20 KB may need fewer pixels; no encoder can
+    // guarantee full-resolution portrait detail at every requested size.
+    // Keep JPEG quality >= 68 by default instead of allowing blocky Q35.
+    final minQuality=math.min(68,preferred);
+    for(var pass=0;pass<24;pass++){
+      final fitting=findAtSize(minQuality);
+      if(fitting!=null)return fitting;
+      if(source.width<=32 && source.height<=32)break;
+      // Use measured bytes rather than blind repeated shrinking, and limit
+      // each step to retain as much useful edge detail as possible.
+      final measured=img.encodeJpg(source,quality:minQuality).length;
+      final factor=math.sqrt(target/measured).clamp(.72,.94).toDouble();
       final width=math.max(1,(source.width*factor).floor());
       final height=math.max(1,(source.height*factor).floor());
       if(width==source.width&&height==source.height)break;
       source=img.copyResize(source,width:width,height:height,
         interpolation:img.Interpolation.average);
-      result=search();
-      if(result.isNotEmpty)return result;
     }
     throw StateError('Cannot meet this size without losing all detail. '
       'Try a slightly larger target.');

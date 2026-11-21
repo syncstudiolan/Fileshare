@@ -28,6 +28,7 @@ import 'file_share_doc_engine.dart';
 import 'profile_avatar.dart';
 import 'android_lan_background_setting.dart';
 import 'image_editing_storage.dart';
+import 'editor_transfer_session.dart';
 import 'personal_cloud.dart';
 import 'cloudflare_provisioning.dart';
 import 'cloud_connect_guide_page.dart';
@@ -1806,7 +1807,11 @@ class LiveTransferCard extends StatelessWidget {
   const LiveTransferCard({
     super.key, required this.items, required this.onSave,
     required this.onDelete, required this.onShare, required this.onTools,
+    this.isFileSelected, this.fileSelectionActive=false, this.onFileSelect,
   });
+  final bool Function(LanFile)? isFileSelected;
+  final bool fileSelectionActive;
+  final void Function(LanFile)? onFileSelect;
   final List<LanFile> items;
   final Future<void> Function(LanFile) onSave;
   final Future<void> Function(LanFile) onDelete;
@@ -1904,10 +1909,18 @@ class LiveTransferCard extends StatelessWidget {
       child:LayoutBuilder(builder:(context,constraints){
         final compact=constraints.maxWidth<460;
         final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
-        final preview=InkWell(
-          borderRadius:BorderRadius.circular(12),
-          onTap:()=>_preview(context,file),
-          child:SizedBox(width:side,height:side,child:_visual(file)));
+        final selected=isFileSelected?.call(file)??false;
+        final preview=GestureDetector(
+          onLongPress:onFileSelect==null?null:()=>onFileSelect!(file),
+          onTap:fileSelectionActive&&onFileSelect!=null
+            ?()=>onFileSelect!(file):()=>_preview(context,file),
+          child:Stack(children:[
+            SizedBox(width:side,height:side,child:_visual(file)),
+            if(fileSelectionActive)Positioned(right:2,top:2,
+              child:Icon(selected?Icons.check_circle_rounded:
+                Icons.radio_button_unchecked_rounded,
+                color:selected?FileTheme.turquoise:FileTheme.violet)),
+          ]));
         final details=Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           InkWell(onTap:()=>_preview(context,file),
             child:Text(file.name,maxLines:2,overflow:TextOverflow.ellipsis,
@@ -1972,11 +1985,7 @@ class LiveTransferCard extends StatelessWidget {
         ]),
         if(multiple) Text('${items.length} files',
           style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
-        for (final file in items.take(4)) _file(context, file),
-        if (items.length > 4)
-          Padding(padding: const EdgeInsets.only(top: 5),
-            child: Text('+${items.length - 4} more files',
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
+        for (final file in items) _file(context, file),
         if (incoming && multiple)
           Align(alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -2061,7 +2070,11 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
 class CloudInboxCard extends StatelessWidget {
   const CloudInboxCard({super.key, required this.items,
     required this.onSave, required this.onDelete, required this.onShare,
-    required this.onPreview, required this.onTools});
+    required this.onPreview, required this.onTools,
+    this.isFileSelected,this.fileSelectionActive=false,this.onFileSelect});
+  final bool Function(CloudFile)? isFileSelected;
+  final bool fileSelectionActive;
+  final void Function(CloudFile)? onFileSelect;
   final List<CloudFile> items;
   final Future<void> Function(CloudFile) onSave, onDelete, onShare,
     onPreview, onTools;
@@ -2098,15 +2111,25 @@ class CloudInboxCard extends StatelessWidget {
         ]),
         if(grouped)Text('${items.length} files',
           style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
-        for(final file in items.take(5))
+        for(final file in items)
           Padding(padding:const EdgeInsets.only(top:8),
             child:LayoutBuilder(builder:(context,constraints){
               final compact=constraints.maxWidth<460;
               final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
-              final preview=SizedBox(width:side,height:side,
-                child:CloudImageThumbnail(
-                  key:ValueKey('qr-thumb-'+file.id),
-                  file:file,onOpen:()=>onPreview(file)));
+              final selected=isFileSelected?.call(file)??false;
+              final preview=GestureDetector(
+                onLongPress:onFileSelect==null?null:()=>onFileSelect!(file),
+                child:Stack(children:[
+                  SizedBox(width:side,height:side,
+                    child:CloudImageThumbnail(
+                      key:ValueKey('qr-thumb-'+file.id),
+                      file:file,onOpen:()=>fileSelectionActive&&onFileSelect!=null
+                        ?onFileSelect!(file):onPreview(file))),
+                  if(fileSelectionActive)Positioned(right:2,top:2,
+                    child:Icon(selected?Icons.check_circle_rounded:
+                      Icons.radio_button_unchecked_rounded,
+                      color:selected?FileTheme.turquoise:FileTheme.violet)),
+                ]));
               final details=Column(crossAxisAlignment:CrossAxisAlignment.start,
                 children:[
                   InkWell(onTap:()=>onPreview(file),
@@ -2154,10 +2177,6 @@ class CloudInboxCard extends StatelessWidget {
                   ])),
               ]);
             })),
-        if (items.length > 5)
-          Padding(padding: const EdgeInsets.only(top: 5),
-            child: Text('+${items.length - 5} more files',
-              style: TextStyle(color: FileTheme.muted(context), fontSize: 11))),
         if (grouped && !sent)
           Align(alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -2224,6 +2243,55 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
   }
 }
 
+
+//// Compositor-friendly scroll depth: visible cards receive a tiny perspective
+//// tilt and parallax, while their contents remain isolated repaint layers.
+//// Never calls setState on Dashboard as the scroll offset changes.
+class FileShareScrollDepth extends StatelessWidget {
+  const FileShareScrollDepth({super.key,required this.position,
+    required this.child});
+  final ScrollController position;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context){
+    if(MediaQuery.disableAnimationsOf(context)){
+      return RepaintBoundary(child:child);
+    }
+    final viewportHeight=MediaQuery.sizeOf(context).height;
+    // SizedBox supplies a stable RenderBox. Using the AnimatedBuilder's own
+    // context would sometimes find its ancestor RenderSliver instead.
+    return SizedBox(child:Builder(builder:(cardContext){
+      return AnimatedBuilder(
+        animation:position,
+        child:RepaintBoundary(child:child),
+        builder:(context,painted){
+          final render=cardContext.findRenderObject();
+          if(!position.hasClients || render is! RenderBox ||
+              !render.hasSize || viewportHeight<=0){
+            return painted!;
+          }
+          final y=render.localToGlobal(
+            Offset(0,render.size.height/2)).dy;
+          final progress=((y-viewportHeight/2)/
+            (viewportHeight*.60)).clamp(-1.0,1.0).toDouble();
+          // Maximum ~1.5°: a gentle depth impression without text shimmer.
+          final angle=progress*.026;
+          final lift=progress.abs()*.008;
+          final matrix=Matrix4.identity()
+            ..setEntry(3,2,.00065)
+            ..translateByDouble(0.0,-progress*2.4,0.0,1.0)
+            ..rotateX(angle)
+            ..scaleByDouble(1-lift,1-lift,1.0,1.0);
+          return Transform(
+            transform:matrix,alignment:Alignment.center,
+            transformHitTests:true,child:painted);
+        },
+      );
+    }));
+  }
+}
+
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
     this.enableBackends = true});
@@ -2249,7 +2317,52 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   final Set<String> _knownTimelineKeys=<String>{};
   final Set<String> _pendingArrivalKeys=<String>{};
 
+  final ScrollController _dashboardScroll=ScrollController();
   final Map<String,TimelineGroup> _selectedCards={};
+  final Set<String> _selectedFiles=<String>{};
+  bool get _selectionActive=>_selectedCards.isNotEmpty||_selectedFiles.isNotEmpty;
+  String _lanFileKey(LanFile file)=>'lan:${file.id}';
+  String _cloudFileKey(CloudFile file)=>'cloud:${file.id}';
+  void _selectLanFile(LanFile file){
+    if(_bulkBusy)return;
+    setState((){
+      final key=_lanFileKey(file);
+      if(!_selectedFiles.add(key))_selectedFiles.remove(key);
+    });
+  }
+  void _selectCloudFile(CloudFile file){
+    if(_bulkBusy)return;
+    setState((){
+      final key=_cloudFileKey(file);
+      if(!_selectedFiles.add(key))_selectedFiles.remove(key);
+    });
+  }
+  void _clearSelection(){
+    _selectedCards.clear();
+    _selectedFiles.clear();
+  }
+  Iterable<LanFile> get _chosenLan sync*{
+    final ids=<String>{};
+    for(final g in _selectedCards.values){
+      for(final f in g.lan??<LanFile>[]) {
+        if(ids.add(f.id))yield f;
+      }
+    }
+    for(final f in appLan.files){
+      if(_selectedFiles.contains(_lanFileKey(f))&&ids.add(f.id))yield f;
+    }
+  }
+  Iterable<CloudFile> get _chosenCloud sync*{
+    final ids=<String>{};
+    for(final g in _selectedCards.values){
+      for(final f in g.cloud??<CloudFile>[]) {
+        if(ids.add(f.id))yield f;
+      }
+    }
+    for(final f in PersonalCloud.instance.files){
+      if(_selectedFiles.contains(_cloudFileKey(f))&&ids.add(f.id))yield f;
+    }
+  }
   bool _bulkBusy=false;
   String _keyOf(TimelineGroup g)=>g.upload!=null
     ?'upload:${g.upload!.localId}'
@@ -2266,80 +2379,159 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if(_bulkBusy)return;
     setState((){for(final g in groups)_selectedCards[_keyOf(g)]=g;});
   }
+
+
+  Future<void> _openSelectedImagesInTools()async{
+    if(_bulkBusy||!_selectionActive)return;
+    final lan=List<LanFile>.of(_chosenLan);
+    final cloud=List<CloudFile>.of(_chosenCloud);
+    final paths=<String>[],names=<String>[];
+    setState(()=>_bulkBusy=true);
+    try{
+      for(final file in lan){
+        if(!EditingFileRouter.acceptsImageTool(file.name)){
+          throw StateError('Select image files only');
+        }
+        if(file.incoming&&file.state!=TransferState.delivered){
+          throw StateError('Selected received image is not downloaded');
+        }
+        if(!await File(file.path).exists()){
+          throw StateError('An image is missing from local storage');
+        }
+        paths.add(file.path);names.add(file.name);
+      }
+      for(final file in cloud){
+        if(!EditingFileRouter.acceptsImageTool(file.name)){
+          throw StateError('Select image files only');
+        }
+        final local=await PersonalCloud.instance.download(file);
+        paths.add(local.path);names.add(file.name);
+      }
+      if(paths.isEmpty)throw StateError('Select at least one image');
+      if(!mounted)return;
+      setState(_clearSelection);
+      final navigator=(Platform.isWindows||Platform.isMacOS)&&
+        _desktopNavigator.currentState!=null
+        ?_desktopNavigator.currentState!:Navigator.of(context);
+      await navigator.push(MaterialPageRoute<void>(
+        builder:(_)=>FileShareToolboxPage(
+          sourcePaths:paths,sourceNames:names,
+          sourcePath:paths.length==1?paths.first:null,
+          sourceName:names.length==1?names.first:null)));
+    }catch(e){_snack('Open selected images: '+e.toString());}
+    finally{if(mounted)setState(()=>_bulkBusy=false);}
+  }
+
   Future<void> _downloadCards()async{
-    if(_selectedCards.isEmpty||_bulkBusy)return;
-    final cards=List<TimelineGroup>.of(_selectedCards.values);
+    if(!_selectionActive||_bulkBusy)return;
+    final lan=List<LanFile>.of(_chosenLan),cloud=List<CloudFile>.of(_chosenCloud);
     setState(()=>_bulkBusy=true);
     var success=0,failed=0,skipped=0;
     try{
-      for(final g in cards){
-        for(final f in g.lan??<LanFile>[]){
-          if((f.incoming&&f.state!=TransferState.delivered)||
-             !await File(f.path).exists()){skipped++;continue;}
-          try{
-            final saved=await TransferDownloads.instance.export(File(f.path),f.name);
-            if(saved==null){skipped++;continue;}
-            await TransferDownloads.instance.markSaved('lan_${f.id}');
-            success++;
-          }catch(_){failed++;}
-        }
-        for(final f in g.cloud??<CloudFile>[]){
-          try{
-            final file=await PersonalCloud.instance.download(f);
-            final saved=await TransferDownloads.instance.export(file,f.name);
-            if(saved==null){skipped++;continue;}
-            await TransferDownloads.instance.markSaved('cloud_${f.id}');
-            success++;
-          }catch(_){failed++;}
-        }
+      for(final f in lan){
+        if((f.incoming&&f.state!=TransferState.delivered)||
+           !await File(f.path).exists()){skipped++;continue;}
+        try{
+          final saved=await TransferDownloads.instance.export(File(f.path),f.name);
+          if(saved==null){skipped++;continue;}
+          await TransferDownloads.instance.markSaved('lan_${f.id}');
+          success++;
+        }catch(_){failed++;}
       }
-      if(mounted)_snack('$success downloaded · $skipped skipped · $failed failed');
+      for(final f in cloud){
+        try{
+          final file=await PersonalCloud.instance.download(f);
+          final saved=await TransferDownloads.instance.export(file,f.name);
+          if(saved==null){skipped++;continue;}
+          await TransferDownloads.instance.markSaved('cloud_${f.id}');
+          success++;
+        }catch(_){failed++;}
+      }
+      if(mounted)_snack('${success} downloaded · ${skipped} skipped · ${failed} failed');
     }finally{
       if(mounted)setState((){
-        _bulkBusy=false;_selectedCards.clear();
+        _bulkBusy=false;_clearSelection();
       });
     }
   }
+
+  /// Copy only selected files to an explicitly chosen local directory.
+  /// Never move or delete originals, including guest uploads.
+  Future<void> _copySelectedToFolder()async{
+    if(!_selectionActive||_bulkBusy)return;
+    final lan=List<LanFile>.of(_chosenLan),cloud=List<CloudFile>.of(_chosenCloud);
+    final target=await FilePicker.getDirectoryPath(dialogTitle:'Choose destination folder');
+    if(target==null||!mounted)return;
+    setState(()=>_bulkBusy=true);
+    var success=0,failed=0;
+    try{
+      final folder=Directory(target);
+      if(!await folder.exists())throw StateError('Folder is not accessible');
+      Future<void> copy(File source,String name)async{
+        try{
+          if(!await source.exists())throw StateError('Source not available');
+          final clean=name.replaceAll(RegExp(r'[^a-zA-Z0-9._ -]'),'_');
+          final safe=clean.isEmpty?'image':clean;
+          var destination=File('${folder.path}${Platform.pathSeparator}${safe}');
+          var index=1;
+          final dot=safe.lastIndexOf('.');
+          final base=dot>0?safe.substring(0,dot):safe;
+          final ext=dot>0?safe.substring(dot):'';
+          while(await destination.exists()){
+            destination=File('${folder.path}${Platform.pathSeparator}${base} (${index})${ext}');
+            index++;
+          }
+          await source.copy(destination.path);
+          success++;
+        }catch(_){failed++;}
+      }
+      for(final file in lan){await copy(File(file.path),file.name);}
+      for(final file in cloud){
+        try{
+          final source=await PersonalCloud.instance.download(file);
+          await copy(source,file.name);
+        }catch(_){failed++;}
+      }
+      if(mounted)_snack('Copied ${success} files · ${failed} failed');
+    }catch(e){_snack('Folder copy failed: $e');}
+    finally{if(mounted)setState((){
+      _bulkBusy=false;_clearSelection();
+    });}
+  }
+
   Future<void> _deleteCards()async{
-    if(_selectedCards.isEmpty||_bulkBusy)return;
-    final lanIds=<String>{},cloudIds=<String>{};
-    for(final g in _selectedCards.values){
-      for(final f in g.lan??<LanFile>[])lanIds.add(f.id);
-      for(final f in g.cloud??<CloudFile>[])cloudIds.add(f.id);
-    }
-    final count=lanIds.length+cloudIds.length;
+    if(!_selectionActive||_bulkBusy)return;
+    final lan=List<LanFile>.of(_chosenLan),cloud=List<CloudFile>.of(_chosenCloud);
+    final count=lan.length+cloud.length;
+    if(count==0)return;
     final confirm=await showDialog<bool>(context:context,builder:(dialog)=>
       AlertDialog(
-        title:const Text('Delete selected cards?'),
-        content:Text('$count file(s) will be deleted. '
-          '${cloudIds.isEmpty?'':'Guest QR files will also be deleted from cloud storage. '}'
-          'This action cannot be undone.'),
+        title:const Text('Delete selected files?'),
+        content:Text('${count} selected file(s) will be deleted. '
+          'Guest QR files will be removed from cloud storage if selected. '
+          'Unselected images in the same card will remain. This cannot be undone.'),
         actions:[
           TextButton(onPressed:()=>Navigator.pop(dialog,false),
             child:const Text('Cancel')),
           FilledButton.icon(onPressed:()=>Navigator.pop(dialog,true),
             icon:const Icon(Icons.delete_outline_rounded),
             label:const Text('Delete')),
-        ],
-      ));
+        ]));
     if(confirm!=true||!mounted)return;
     setState(()=>_bulkBusy=true);
     var deleted=0,failed=0;
     try{
-      for(final id in lanIds){
-        if(!appLan.files.any((f)=>f.id==id))continue;
-        try{await appLan.remove(id);deleted++;}catch(_){failed++;}
+      for(final file in lan){
+        try{await appLan.remove(file.id);deleted++;}catch(_){failed++;}
       }
-      for(final id in cloudIds){
-        final matches=PersonalCloud.instance.files.where((f)=>f.id==id);
-        if(matches.isEmpty)continue;
-        try{await PersonalCloud.instance.deleteRemote(matches.first);deleted++;}
+      for(final file in cloud){
+        try{await PersonalCloud.instance.deleteRemote(file);deleted++;}
         catch(_){failed++;}
       }
-      if(mounted)_snack('$deleted deleted${failed==0?'':' · $failed failed'}');
+      if(mounted)_snack('Deleted ${deleted} files · ${failed} failed');
     }finally{
       if(mounted)setState((){
-        _bulkBusy=false;_selectedCards.clear();
+        _bulkBusy=false;_clearSelection();
       });
     }
   }
@@ -2388,7 +2580,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   Widget _multiSelectCard(TimelineGroup g){
     final selected=_selectedCards.containsKey(_keyOf(g));
-    final active=_selectedCards.isNotEmpty;
+    final active=_selectionActive;
     final lanText=g.lan!=null && g.lan!.length==1 &&
       FileShareText.isText(g.lan!.first.name);
     final cloudText=g.cloud!=null && g.cloud!.length==1 &&
@@ -2424,10 +2616,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       :g.upload!=null ? _cloudUploadCard(g.upload!)
       :g.lan!=null
       ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
-        onDelete:_delete,onShare:_share,onTools:_openFileTools)
+        onDelete:_delete,onShare:_share,onTools:_openFileTools,
+        isFileSelected:(f)=>_selectedFiles.contains(_lanFileKey(f)),
+        fileSelectionActive:active,onFileSelect:_selectLanFile)
       :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
         onDelete:_deleteCloud,onShare:_shareCloud,
-        onPreview:_previewCloud,onTools:_openCloudTools);
+        onPreview:_previewCloud,onTools:_openCloudTools,
+        isFileSelected:(f)=>_selectedFiles.contains(_cloudFileKey(f)),
+        fileSelectionActive:active,onFileSelect:_selectCloudFile);
     final key=_keyOf(g);
     final arriving=_pendingArrivalKeys.remove(key);
     final incoming=g.lan?.first.incoming ??
@@ -2441,7 +2637,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         onLongPress:()=>_toggleCard(g),
         onTap:active?()=>_toggleCard(g):null,
         child:Stack(children:[
-          AbsorbPointer(absorbing:active,
+          AbsorbPointer(absorbing:active && _selectedFiles.isEmpty,
             child:AnimatedContainer(
               duration:const Duration(milliseconds:160),
               decoration:BoxDecoration(
@@ -2607,6 +2803,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void dispose() {
     _midnight?.cancel();
     PersonalCloud.instance.stopLiveInbox();
+    _dashboardScroll.dispose();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -2695,9 +2892,31 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               leading: const Icon(Icons.logout_rounded, color: FileTheme.violet),
               title: const Text('Logout'),
               onTap: () async {
-                if (!pinned) Navigator.pop(context);
+                // A mistaken tap must never terminate the saved session.
+                // Keep the drawer open until the user explicitly confirms.
+                final confirmed=await showDialog<bool>(
+                  context:context,
+                  builder:(dialog)=>AlertDialog(
+                    title:const Text('Are you sure you want to logout?'),
+                    content:const Text(
+                      'You will be signed out of your cloud account. '
+                      'Offline LAN sharing will remain available.'),
+                    actions:[
+                      TextButton(
+                        onPressed:()=>Navigator.of(dialog).pop(false),
+                        child:const Text('No')),
+                      FilledButton(
+                        onPressed:()=>Navigator.of(dialog).pop(true),
+                        child:const Text('Yes')),
+                    ],
+                  ),
+                );
+                // Back, outside tap, No, or a disposed route all cancel.
+                if(confirmed!=true||!mounted)return;
+                if(!pinned)Navigator.pop(context);
                 await PersonalCloud.instance.signOutLocal();
-                _snack('Cloud signed out. Offline LAN stays available.');
+                if(mounted)_snack(
+                  'Cloud signed out. Offline LAN stays available.');
               })
           : _nav('Login', Icons.login_rounded, pinned: pinned),
       ),
@@ -3260,7 +3479,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     return Column(children: [
             Padding(
               padding: EdgeInsets.fromLTRB(wide ? 24 : 12,
-                wide ? 10 : 24,wide ? 24 : 12,9),
+                wide ? 10 : 2,wide ? 24 : 12,5),
               child: DesignPanel(
                 dashboard:true,
                 padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 5),
@@ -3280,18 +3499,27 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       color: FileTheme.violet)),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_selectedCards.isEmpty?'File Transfer':'${_selectedCards.length} selected',
+                      Text(!_selectionActive?'File Transfer':'${_chosenLan.length+_chosenCloud.length} selected',
                         maxLines:1,overflow:TextOverflow.ellipsis,
                         style: TextStyle(fontSize: wide ? 21 : 15,
                         fontWeight: FontWeight.w800,
                         color: FileTheme.foreground(context))),
-                      Text(_selectedCards.isNotEmpty?'Tap cards to select or deselect':appLan.peers.length.toString() + ' nearby LAN device' +
+                      Text(_selectionActive?'Tap images to select or deselect':appLan.peers.length.toString() + ' nearby LAN device' +
                         (appLan.peers.length==1?'':'s'),
                         maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10,
                           color: FileTheme.muted(context))),
                     ])),
-                  if(_selectedCards.isNotEmpty)...[
+                  if(_selectionActive)...[
+                    IconButton(tooltip:'Open selected images in Tools',
+                      onPressed:_bulkBusy?null:_openSelectedImagesInTools,
+                      icon:const Icon(Icons.handyman_outlined,
+                        color:FileTheme.violet)),
+
+                    IconButton(tooltip:'Copy selected to folder',
+                      onPressed:_bulkBusy?null:_copySelectedToFolder,
+                      icon:const Icon(Icons.folder_copy_outlined,
+                        color:FileTheme.violet)),
                     IconButton(tooltip:'Select all visible cards',
                       onPressed:_bulkBusy?null:()=>_selectAllCards(groups),
                       icon:const Icon(Icons.select_all_rounded,
@@ -3305,7 +3533,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       icon:const Icon(Icons.delete_outline_rounded,
                         color:FileTheme.pink)),
                     IconButton(tooltip:'Exit selection mode',
-                      onPressed:_bulkBusy?null:()=>setState(()=>_selectedCards.clear()),
+                      onPressed:_bulkBusy?null:()=>setState(_clearSelection),
                       icon:const Icon(Icons.close_rounded)),
                     if(_bulkBusy)const SizedBox(width:17,height:17,
                       child:CircularProgressIndicator(strokeWidth:2)),
@@ -3385,12 +3613,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             ),
             Expanded(child: groups.isNotEmpty
               ? ListView.builder(
-                  // Newest message stays at the bottom, like a chat.
-                  reverse: true,
-                  padding: EdgeInsets.fromLTRB(wide ? 28 : 15,12,
-                    wide ? 28 : 15,10),
-                  itemCount: groups.length,
-                  itemBuilder: (_, i) => _multiSelectCard(groups[i]))
+                  // Lazy sliver: keep only a small surrounding cache and
+                  // reuse GPU repaint layers rather than repainting the feed.
+                  controller:_dashboardScroll,
+                  reverse:true,
+                  cacheExtent:260,
+                  addAutomaticKeepAlives:false,
+                  addRepaintBoundaries:false,
+                  padding:EdgeInsets.fromLTRB(wide?28:15,12,wide?28:15,10),
+                  itemCount:groups.length,
+                  itemBuilder:(_,i){
+                    final group=groups[i];
+                    return FileShareScrollDepth(
+                      key:ValueKey('scroll-depth:${_keyOf(group)}'),
+                      position:_dashboardScroll,
+                      child:_multiSelectCard(group));
+                  })
               : Center(child: Text('No transfers yet. Choose files with +',
                     style: TextStyle(color: FileTheme.muted(context))))),
             if(_sendingPreview!=null)

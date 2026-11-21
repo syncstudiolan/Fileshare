@@ -1,8 +1,13 @@
 import 'app_top_notice.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'image_editing_page.dart';
 import 'signature_edit_page.dart';
+import 'id_card_a4_editor_page.dart';
+import 'id_card_pdf_engine.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'lan_folder_share_page.dart';
 import 'file_share_doc_page.dart';
 import 'package:flutter/services.dart';
@@ -12,8 +17,10 @@ import 'main.dart' show FileTheme,fadePage;
 /// File Share's extensible Toolbox landing page. Future tool names remain
 /// discoverable without pretending that their processing engines exist yet.
 class FileShareToolboxPage extends StatefulWidget {
-  const FileShareToolboxPage({super.key,this.sourcePath,this.sourceName});
+  const FileShareToolboxPage({super.key,this.sourcePath,this.sourceName,
+    this.sourcePaths=const [],this.sourceNames=const []});
   final String? sourcePath,sourceName;
+  final List<String> sourcePaths,sourceNames;
   @override State<FileShareToolboxPage> createState()=>_FileShareToolboxPageState();
 }
 
@@ -44,6 +51,83 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
   void _rebuild(){if(mounted)setState((){});}
   @override void dispose(){_search.removeListener(_rebuild);_search.dispose();super.dispose();}
 
+
+  bool _isImage(String path)=>const ['jpg','jpeg','png','webp','bmp']
+    .contains(path.toLowerCase().split('.').last);
+
+  Future<void> _openAdvancedPdf()async{
+    if(!Platform.isAndroid){
+      FileShareTopNotice.show(context,
+        'Advanced PDF Pro ID Card Editor is currently Android only.');
+      return;
+    }
+    final selected=widget.sourcePaths.isNotEmpty
+      ?List<String>.of(widget.sourcePaths)
+      :widget.sourcePath==null?<String>[]:[widget.sourcePath!];
+    if(selected.isEmpty){
+      final picked=await FilePicker.pickFiles(type:FileType.image,
+        allowMultiple:true);
+      if(picked.isNotEmpty){
+        selected.addAll(picked.where((e)=>e.path!=null).map((e)=>e.path!));
+      }
+    }
+    if(!mounted)return;
+    final images=selected.where(_isImage).toList();
+    if(images.isNotEmpty && images.length!=selected.length){
+      _unsupported('mixed image/document selection','Advanced PDF Pro');
+      return;
+    }
+    if(images.isNotEmpty){
+      final mode=await showDialog<String>(context:context,
+        builder:(dialog)=>AlertDialog(
+          title:const Text('Open with Advanced PDF Pro'),
+          content:Text(images.length.toString()+' image(s) selected. '
+            'Choose Normal Editor or ID Card A4 Editor.'),
+          actions:[
+            TextButton(onPressed:()=>Navigator.pop(dialog,'normal'),
+              child:const Text('Normal Editor')),
+            FilledButton(onPressed:()=>Navigator.pop(dialog,'id'),
+              child:const Text('ID Card Editor')),
+          ]));
+      if(!mounted||mode==null)return;
+      if(mode=='id'){
+        await Navigator.of(context).push(fadePage<void>(
+          IdCardA4EditorPage(paths:images)));
+        return;
+      }
+      // One image per A4 page for the Normal PDF editor; keep originals.
+      try{
+        final bytes=<Uint8List>[];
+        for(final path in images){bytes.add(await File(path).readAsBytes());}
+        final pdf=await IdCardPdfEngine.normalPdf(bytes);
+        final cache=await getTemporaryDirectory();
+        final file=File(cache.path+Platform.pathSeparator+
+          'file_share_normal_images_'+
+          DateTime.now().microsecondsSinceEpoch.toString()+'.pdf');
+        await file.writeAsBytes(pdf,flush:true);
+        selected
+          ..clear()
+          ..add(file.path);
+      }catch(e){
+        if(mounted)FileShareTopNotice.show(context,
+          'Could not prepare images for Normal PDF: '+e.toString());
+        return;
+      }
+    }
+    try{
+      await const MethodChannel('file_share.native').invokeMethod<void>(
+        'openUpstreamPdfTools',{
+          'path':selected.length==1 && !_isImage(selected.first)
+            ?selected.first:null,
+          'theme':Theme.of(context).brightness==Brightness.dark
+            ?'dark':'light',
+        });
+    }on PlatformException catch(e){
+      if(mounted)FileShareTopNotice.show(context,
+        'PDF tools could not open: '+(e.message??e.code));
+    }
+  }
+
   Future<void> _open(_ToolEntry entry) async {
     final name=widget.sourceName??widget.sourcePath??'';
     final hasSource=widget.sourcePath!=null;
@@ -58,43 +142,7 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
       return;
     }
     if(entry.name=='Advanced PDF Editing Tools'){
-      if(Platform.isIOS){
-        if(hasSource&&!EditingFileRouter.acceptsPdfTool(name)){
-          _unsupported(name,'iPhone PDF Tools');
-          return;
-        }
-        try {
-          await const MethodChannel('file_share.ios_pdf').invokeMethod<void>(
-            'open',{'path':hasSource &&
-              EditingFileRouter.classify(name)==EditingFileKind.pdf
-                ?widget.sourcePath:null});
-        }on PlatformException catch(error){
-          if(mounted)FileShareTopNotice.show(context,'iPhone PDF tools error: ${error.message ?? error.code}');
-        }
-        return;
-      }
-      if(!Platform.isAndroid){
-        showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
-          title:const Text('Not available on Windows'),
-          content:const Text('PDF editing is available on Android and iPhone.'),
-          actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
-            child:const Text('OK'))]));
-        return;
-      }
-      if(hasSource&&!EditingFileRouter.acceptsPdfTool(name)){
-        _unsupported(name,'Advanced PDF Editing Tools');
-        return;
-      }
-      try {
-        await const MethodChannel('file_share.native').invokeMethod<void>(
-          'openUpstreamPdfTools', {'path': hasSource &&
-                EditingFileRouter.classify(name)==EditingFileKind.pdf
-                  ? widget.sourcePath : null,
-            'theme': Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light'});
-      } on PlatformException catch (error) {
-        if (!mounted) return;
-        FileShareTopNotice.show(context,'PDF tools could not open: ${error.message ?? error.code}');
-      }
+      await _openAdvancedPdf();
       return;
     }
     if(entry.name=='Signature Edit'){
