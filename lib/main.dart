@@ -2225,6 +2225,53 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
   }
 }
 
+
+//// Compositor-friendly scroll depth: visible cards receive a tiny perspective
+//// tilt and parallax, while their contents remain isolated repaint layers.
+//// Never calls setState on Dashboard as the scroll offset changes.
+class FileShareScrollDepth extends StatelessWidget {
+  const FileShareScrollDepth({super.key,required this.position,
+    required this.child});
+  final ScrollController position;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context){
+    final reducedMotion=MediaQuery.disableAnimationsOf(context);
+    if(reducedMotion)return RepaintBoundary(child:child);
+    final viewportHeight=MediaQuery.sizeOf(context).height;
+    return AnimatedBuilder(
+      animation:position,
+      child:RepaintBoundary(child:child),
+      builder:(context,painted){
+        // The card is already laid out by the sliver. Read its position,
+        // without performing layout or changing the surrounding list.
+        final render=context.findRenderObject();
+        if(!position.hasClients || render is! RenderBox ||
+            !render.hasSize || viewportHeight<=0){
+          return painted!;
+        }
+        final y=render.localToGlobal(
+          Offset(0,render.size.height/2)).dy;
+        final progress=((y-viewportHeight/2)/
+          (viewportHeight*.60)).clamp(-1.0,1.0).toDouble();
+        // Maximum ~1.5 degrees. A strong 3D rotation would cause text
+        // shimmer and expensive raster resampling during fast flings.
+        final angle=progress*.026;
+        final lift=progress.abs()*.008;
+        final matrix=Matrix4.identity()
+          ..setEntry(3,2,.00065)
+          ..translateByDouble(0.0,-progress*2.4,0.0,1.0)
+          ..rotateX(angle)
+          ..scaleByDouble(1-lift,1-lift,1.0,1.0);
+        return Transform(
+          transform:matrix,alignment:Alignment.center,
+          transformHitTests:true,child:painted);
+      },
+    );
+  }
+}
+
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
     this.enableBackends = true});
@@ -2250,6 +2297,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   final Set<String> _knownTimelineKeys=<String>{};
   final Set<String> _pendingArrivalKeys=<String>{};
 
+  final ScrollController _dashboardScroll=ScrollController();
   final Map<String,TimelineGroup> _selectedCards={};
   bool _bulkBusy=false;
   String _keyOf(TimelineGroup g)=>g.upload!=null
@@ -2655,6 +2703,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void dispose() {
     _midnight?.cancel();
     PersonalCloud.instance.stopLiveInbox();
+    _dashboardScroll.dispose();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -3438,12 +3487,22 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
             ),
             Expanded(child: groups.isNotEmpty
               ? ListView.builder(
-                  // Newest message stays at the bottom, like a chat.
-                  reverse: true,
-                  padding: EdgeInsets.fromLTRB(wide ? 28 : 15,12,
-                    wide ? 28 : 15,10),
-                  itemCount: groups.length,
-                  itemBuilder: (_, i) => _multiSelectCard(groups[i]))
+                  // Lazy sliver: keep only a small surrounding cache and
+                  // reuse GPU repaint layers rather than repainting the feed.
+                  controller:_dashboardScroll,
+                  reverse:true,
+                  cacheExtent:260,
+                  addAutomaticKeepAlives:false,
+                  addRepaintBoundaries:false,
+                  padding:EdgeInsets.fromLTRB(wide?28:15,12,wide?28:15,10),
+                  itemCount:groups.length,
+                  itemBuilder:(_,i){
+                    final group=groups[i];
+                    return FileShareScrollDepth(
+                      key:ValueKey('scroll-depth:${_keyOf(group)}'),
+                      position:_dashboardScroll,
+                      child:_multiSelectCard(group));
+                  })
               : Center(child: Text('No transfers yet. Choose files with +',
                     style: TextStyle(color: FileTheme.muted(context))))),
             if(_sendingPreview!=null)
