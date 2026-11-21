@@ -67,8 +67,8 @@ class _IdCardA4EditorPageState extends State<IdCardA4EditorPage> {
         c.rect.left,c.rect.top,c.rect.right,c.rect.top,
         c.rect.right,c.rect.bottom,c.rect.left,c.rect.bottom]);
       final k=_handle.clamp(0,3)*2;
-      points[k]=(points[k]+dx).clamp(0.0,1.0);
-      points[k+1]=(points[k+1]+dy).clamp(0.0,1.0);
+      points[k]=(points[k]+dx).clamp(0.0,1.0).toDouble();
+      points[k+1]=(points[k+1]+dy).clamp(0.0,1.0).toDouble();
       _setSelection(c.rect,points);
     }else{
       double l=c.rect.left,t=c.rect.top,r=c.rect.right,b=c.rect.bottom;
@@ -82,7 +82,8 @@ class _IdCardA4EditorPageState extends State<IdCardA4EditorPage> {
         case 6: r=(r+dx).clamp(l+.06,1.0);
         case 7: b=(b+dy).clamp(t+.06,1.0);
         case 8:
-          final shiftX=dx.clamp(-l,1-r),shiftY=dy.clamp(-t,1-b);
+          final shiftX=dx.clamp(-l,1-r).toDouble();
+          final shiftY=dy.clamp(-t,1-b).toDouble();
           l+=shiftX;r+=shiftX;t+=shiftY;b+=shiftY;
       }
       _setSelection(RectValues(l,t,r,b),null);
@@ -91,7 +92,8 @@ class _IdCardA4EditorPageState extends State<IdCardA4EditorPage> {
 
   void _startCrop(DragStartDetails details,Size size){
     final c=_selection[_active];
-    final q=c.quad??[c.rect.left,c.rect.top,c.rect.right,c.rect.top,
+    final q=_perspective && c.quad!=null ? c.quad! :
+      [c.rect.left,c.rect.top,c.rect.right,c.rect.top,
       c.rect.right,c.rect.bottom,c.rect.left,c.rect.bottom];
     final points=<Offset>[
       for(var k=0;k<8;k+=2)Offset(q[k],q[k+1])
@@ -151,13 +153,13 @@ class _IdCardA4EditorPageState extends State<IdCardA4EditorPage> {
     final dx=delta.dx/a4.width,dy=delta.dy/a4.height;
     setState((){
       if(resize){
-        final w=(old.width+dx).clamp(.08,1-old.x);
-        final h=(old.height+dy).clamp(.04,1-old.y);
+        final w=(old.width+dx).clamp(.08,1-old.x).toDouble();
+        final h=(old.height+dy).clamp(.04,1-old.y).toDouble();
         _layout[index]=old.copyWith(width:w,height:h);
       }else{
         _layout[index]=old.copyWith(
-          x:(old.x+dx).clamp(0.0,1-old.width),
-          y:(old.y+dy).clamp(0.0,1-old.height));
+          x:(old.x+dx).clamp(0.0,1-old.width).toDouble(),
+          y:(old.y+dy).clamp(0.0,1-old.height).toDouble());
       }
     });
   }
