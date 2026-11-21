@@ -284,6 +284,13 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
 
   Future<void> showWindow() async {
     if(!Platform.isWindows && !Platform.isMacOS)return;
+    if(Platform.isMacOS){
+      // Unlock native first-show suppression only for an explicit View.
+      try{
+        await const MethodChannel('file_share.desktop')
+          .invokeMethod<void>('allowShow');
+      }catch(e){debugPrint('macOS explicit window show: $e');}
+    }
     await windowManager.show();
     await windowManager.maximize();
     await windowManager.focus();
