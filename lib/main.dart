@@ -3467,7 +3467,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                           filled:false,
                           contentPadding:const EdgeInsets.symmetric(
                             horizontal:12,vertical:16)),
-                        onChanged:null)))),
+                        onChanged:null))),
                     const SizedBox(width:7),
                     // Rebuild only the Send control for each keystroke, not
                     // the whole chat feed (important for long pasted text).
