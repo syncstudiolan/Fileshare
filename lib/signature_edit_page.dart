@@ -14,6 +14,7 @@ import 'file_transfer_camera_page.dart';
 import 'signature_edit_engine.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
+import 'universal_tool_switcher.dart';
 import 'main.dart' show FileTheme;
 
 /// Compact sibling of Image Editing: familiar preview + lower tool strip,
@@ -135,6 +136,18 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   void _show(String message){
     if(mounted)FileShareTopNotice.show(context,message);
+  }
+
+  Future<File> _switchSnapshot(EditorDestination target)async{
+    final bytes=_original;
+    if(bytes==null||_busy)throw StateError('Signature is not ready');
+    if(_tool=='Rotate'&&_rotationDegrees.abs()>=.001){
+      throw StateError('Apply your tilt rotation before switching tools');
+    }
+    final data=await SignatureEditEngine.workingPng(
+      bytes,_selection,_filter,intensity:_filterIntensity);
+    // Original editor remains in Navigator history, unchanged.
+    return editorSnapshotFile(data);
   }
 
   Future<void> _export(String action)async{
@@ -708,6 +721,9 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       appBar:AppBar(
         title:const Text('Signature Edit',style:TextStyle(fontSize:16)),
         actions:[
+          ToolSwitchButton(current:EditorDestination.signature,
+            enabled:ready&&!_busy,
+            snapshot:_switchSnapshot,onError:_show),
           IconButton(tooltip:'Take photo',onPressed:_busy?null:_capture,
             icon:const Icon(Icons.camera_alt_outlined)),
           IconButton(tooltip:'Browse image',onPressed:_busy?null:_browse,
