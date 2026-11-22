@@ -101,7 +101,7 @@ fun Review(
   onClose: () -> Unit,
   onSave: suspend () -> Unit,
   onCart: (Int) -> Unit,
-  onSwitch: (List<Int>) -> Unit,
+  onSwitch: (List<Int>, String) -> Unit,
   onAddMore: () -> Unit,
   onRetake: (ScanPage) -> Unit,
 ) {
@@ -359,18 +359,25 @@ fun Review(
       "The PDF draft stays saved. Pick a page to edit as an image.") {
       Column(Modifier.padding(top=12.dp),
         verticalArrangement=Arrangement.spacedBy(10.dp)){
-        Btn("Current page",Modifier.fillMaxWidth(),I.imageOutline) {
+        Btn("Image Editing · current page",Modifier.fillMaxWidth(),I.imageOutline) {
           modal=""
-          onSwitch(listOf(index))
+          onSwitch(listOf(index),"image")
+        }
+        Btn("Signature Editing · current page",Modifier.fillMaxWidth(),
+          I.draw,BtnKind.Secondary){
+          modal=""
+          onSwitch(listOf(index),"signature")
         }
         if(selected.isNotEmpty()){
-          Btn("Selected pages (${selected.size})",Modifier.fillMaxWidth(),
-            I.plusBoxMultipleOutline,BtnKind.Secondary){
+          Btn("Image Tools · selected pages (${selected.size})",
+            Modifier.fillMaxWidth(),I.plusBoxMultipleOutline,BtnKind.Secondary){
             val picks=pages.indices.filter { pages[it].id in selected }
             modal=""
-            onSwitch(picks)
+            onSwitch(picks,"image")
           }
         }
+        T("Word conversion is unavailable for raster PDF pages.",
+          Type.small,ScanUi.dim)
         Btn("Cancel",Modifier.fillMaxWidth(),kind=BtnKind.Secondary){
           modal=""
         }
