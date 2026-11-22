@@ -18,6 +18,7 @@ import 'app_top_notice.dart';
 import 'photo_magic_processing_overlay.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
+import 'universal_tool_switcher.dart';
 import 'image_editing_windows_ai.dart';
 import 'photo_enhancer_engine.dart';
 
@@ -703,6 +704,18 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         'saturation':saturation,'exposure':exposure});
     }
     return data;
+  }
+
+  Future<File> _switchSnapshot(EditorDestination target)async{
+    if(_bytes==null)throw StateError('Choose an image first');
+    if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
+    if(_tool=='Erase')await _eraseQueue;
+    final bytes=await _visibleExportBytes();
+    // Keep current editor and history available when the destination closes.
+    await _saveDraft();
+    await _saveSession();
+    final jpg=bytes.length>2&&bytes[0]==0xff&&bytes[1]==0xd8;
+    return editorSnapshotFile(bytes,suffix:jpg?'jpg':'png');
   }
 
   Future<void> _export(String action)async {
@@ -1986,6 +1999,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       actionsIconTheme:const IconThemeData(size:19),
       title:const Text('Image Editing',style:TextStyle(fontSize:14)),
       actions:[
+        ToolSwitchButton(current:EditorDestination.image,
+          enabled:_bytes!=null&&!_exporting,
+          snapshot:_switchSnapshot,onError:_message),
         if(MediaQuery.sizeOf(context).width>=580)
         IconButton(tooltip:'Cancel / Close',visualDensity:VisualDensity.compact,
           onPressed:()=>Navigator.of(context).maybePop(),
