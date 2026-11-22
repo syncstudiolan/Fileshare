@@ -21,3 +21,9 @@ The iOS photo enhancer uses its existing Dart image-processing implementation.
 The native ONNX dependency required on Windows is isolated from the iOS
 CocoaPods build. TLS and artifact checksum verification must not be bypassed.
 Unsigned IPA requires external signing before device installation.
+
+## Validation follow-up
+The first merged-run analyzer failures were corrected in source. The next
+run exposed outdated UI test expectations for platform notices, selection
+confirmation and reduced-motion scrolling; all three expectations were
+updated before the new combined release attempt.
