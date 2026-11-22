@@ -184,16 +184,7 @@ fun Scanner(id: String?) {
               try {
                 // Keep the full native editable project before switching.
                 withContext(Dispatchers.IO) { saveDoc(doc) }
-                val paths=indices.map { i ->
-                  val page=doc.pages[i]
-                  val shot=page.shots.first()
-                  // A snapshot must include the newest crop/filter/rotation.
-                  val latest=if(shot.rendered)shot else
-                    withContext(Dispatchers.IO){renderShot(doc.id,shot)}
-                  val file=java.io.File(latest.out ?: latest.src)
-                  require(file.isFile) { "PDF page image unavailable" }
-                  file.absolutePath
-                }
+                val paths=snapshotPdfEditorPages(doc,indices)
                 (appContext as com.example.file_share.FileShareApplication)
                   .deliverEditorSnapshot(paths,target)
               }catch(e:Exception){
