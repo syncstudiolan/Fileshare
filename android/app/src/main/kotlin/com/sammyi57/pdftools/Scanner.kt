@@ -179,7 +179,7 @@ fun Scanner(id: String?) {
               }
             }
           },
-          onSwitch = { indices ->
+          onSwitch = { indices, target ->
             scope.launch {
               try {
                 // Keep the full native editable project before switching.
@@ -187,13 +187,15 @@ fun Scanner(id: String?) {
                 val paths=indices.map { i ->
                   val page=doc.pages[i]
                   val shot=page.shots.first()
-                  val original=shot.out?.takeIf { shot.rendered } ?: shot.src
-                  val file=java.io.File(original)
+                  // A snapshot must include the newest crop/filter/rotation.
+                  val latest=if(shot.rendered)shot else
+                    withContext(Dispatchers.IO){renderShot(doc.id,shot)}
+                  val file=java.io.File(latest.out ?: latest.src)
                   require(file.isFile) { "PDF page image unavailable" }
                   file.absolutePath
                 }
                 (appContext as com.example.file_share.FileShareApplication)
-                  .deliverEditorSnapshot(paths)
+                  .deliverEditorSnapshot(paths,target)
               }catch(e:Exception){
                 failure=e.message ?: "Could not switch PDF page to Image Editor"
               }
