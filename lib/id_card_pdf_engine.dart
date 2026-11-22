@@ -38,14 +38,14 @@ class IdCardPdfEngine {
     final columns=count==1?1:2;
     final rows=(count/columns).ceil();
     final gap=.035;
-    final width=count==1?.54:.41;
+    final width = count == 1 ? 0.54 : 0.41;
     final idHeight=width*(210/297)/1.586;
     final height=math.min(idHeight,(.90-gap*(rows-1))/rows);
     final top=(1-(height*rows+gap*(rows-1)))/2;
     return List.generate(count,(i){
       final column=i%columns,row=i~/columns;
       return IdCardPlacement(
-        x:columns==1?(1-width)/2:(column==0?.065:1-.065-width),
+        x:columns==1?(1-width)/2:(column == 0 ? 0.065 : 1 - 0.065 - width),
         y:top+row*(height+gap),width:width,height:height);
     });
   }
