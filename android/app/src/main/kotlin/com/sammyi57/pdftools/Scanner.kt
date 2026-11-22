@@ -179,6 +179,19 @@ fun Scanner(id: String?) {
               }
             }
           },
+          onSwitch = { indices, target ->
+            scope.launch {
+              try {
+                // Keep the full native editable project before switching.
+                withContext(Dispatchers.IO) { saveDoc(doc) }
+                val paths=snapshotPdfEditorPages(doc,indices)
+                (appContext as com.example.file_share.FileShareApplication)
+                  .deliverEditorSnapshot(paths,target)
+              }catch(e:Exception){
+                failure=e.message ?: "Could not switch PDF page to Image Editor"
+              }
+            }
+          },
           onAddMore = { retake = null; capture = true },
           onRetake = { retake = it; capture = true },
         )

@@ -533,6 +533,18 @@ jobs:
           .ios-build-venv/bin/python -m pip install --quiet Pillow
           .ios-build-venv/bin/python tool/generate_brand_assets.py
           flutter pub get
+          # iOS uses the verified Dart mobile enhancer; never fetch the unused
+          # native ONNX binary from the broken TLS host.
+          python3 tool/ios/isolate_unused_onnx_plugin.py
+          flutter pub get
+          python3 - <<'PY'
+          import json
+          data=json.load(open('.flutter-plugins-dependencies'))
+          assert not any(p['name']=='flutter_onnxruntime'
+                         for p in data['plugins'].get('ios',[])), (
+              'Native ONNX iOS plugin must not reappear')
+          print('iOS native ONNX plugin safely excluded')
+          PY
           if ! ruby -e 'require "xcodeproj"' >/dev/null 2>&1; then sudo gem install xcodeproj --no-document; fi
           python3 tool/ios/install_native_pdf.py
       - name: Verify iOS branded icon and source compatibility
@@ -588,41 +600,17 @@ jobs:
           with info.open('wb') as handle:
               plistlib.dump(data,handle)
           PY
-      - name: Resolve iOS CocoaPods using verified ONNX Runtime Azure package
+      - name: Resolve iOS CocoaPods without unused ONNX native binary
         shell: bash
         run: |
           set -euo pipefail
           cd ios
-          # Obtain the official version-locked CocoaPods specification first.
-          pod spec cat onnxruntime-c --version=1.28.0 > onnxruntime-c-secure-mirror.podspec.json
-          python3 - <<'PY'
-          import json, pathlib
-          p=pathlib.Path('onnxruntime-c-secure-mirror.podspec.json')
-          spec=json.loads(p.read_text())
-          source=spec.get('source',{})
-          url=source.get('http','')
-          expected='https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.28.0.zip'
-          if spec.get('name')!='onnxruntime-c' or spec.get('version')!='1.28.0' or url!=expected:
-              raise SystemExit(f'Unexpected upstream ONNX podspec: {spec.get("name")} {spec.get("version")} {url}')
-          if not source.get('sha256'):
-              raise SystemExit('No original SHA256 on ONNX podspec; refusing unverified download')
-          # Official Azure-hosted source is used by Microsoft's Apple dependency scripts.
-          source['http']='https://onnxruntimepackages.z14.web.core.windows.net/pod-archive-onnxruntime-c-1.28.0.zip'
-          p.write_text(json.dumps(spec,indent=2)+'\\n')
-          podfile=pathlib.Path('Podfile')
-          content=podfile.read_text()
-          needle="target 'Runner' do"
-          if content.count(needle)!=1:
-              raise SystemExit('Unexpected Podfile Runner target layout')
-          content=content.replace(needle,needle+"\\n  pod 'onnxruntime-c', :podspec => './onnxruntime-c-secure-mirror.podspec.json'",1)
-          podfile.write_text(content)
-          print('ONNX 1.28.0 verified mirror configured; original SHA256:',source['sha256'])
-          PY
-          # Verify the alternative host with normal TLS verification, never -k.
-          curl --fail --location --head --retry 2 --max-time 30 \\
-            https://onnxruntimepackages.z14.web.core.windows.net/pod-archive-onnxruntime-c-1.28.0.zip
           pod install --repo-update
-          grep -q 'onnxruntime-objc' Podfile.lock || { echo 'ONNX Runtime CocoaPods dependency missing'; exit 1; }
+          test -f Podfile.lock
+          if grep -Eq 'onnxruntime-(c|objc|extensions)' Podfile.lock; then
+            echo "Unexpected ONNX iOS CocoaPods dependency remains"
+            exit 1
+          fi
       - name: Build Release for real iPhone without developer certificate
         shell: bash
         run: |

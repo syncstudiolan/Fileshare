@@ -693,8 +693,34 @@ private val FULL = Crop(0f, 0f, 1f, 1f)
 private const val CARD_W = 85.6f * 2.8346f // ISO ID-1 card width in points, so ID copies print at real size
 private const val MARGIN = 24f
 
+/** Put ID-1 size cards on the sheet without overlap; extra cards shrink to fit.
+ * Placement is always normalized and can be dragged/resized in Review.
+ */
+fun defaultIdPlacements(count: Int, pageW: Float = 595.28f,
+  pageH: Float = 841.89f): List<ScanPlacement> {
+  if(count<=0)return emptyList()
+  val columns=if(count==1)1 else 2
+  val rows=(count+columns-1)/columns
+  val spacingX=0.035f
+  val spacingY=0.018f
+  val width=min(CARD_W/pageW,(1f-0.10f-spacingX*(columns-1))/columns)
+  val desiredHeight=width*(53.98f/85.6f)*(pageW/pageH)
+  val height=min(desiredHeight,(0.90f-spacingY*(rows-1))/rows)
+  val side=(1f-columns*width-spacingX*(columns-1))/2
+  val top=(1f-rows*height-spacingY*(rows-1))/2
+  return (0 until count).map { i ->
+    val col=i%columns
+    val row=i/columns
+    ScanPlacement(side+col*(width+spacingX),
+      top+row*(height+spacingY),width,height,i)
+  }
+}
+
 /** `kind`: doc | book | id | card | whiteboard. `size`: fit, or e.g. "A4-portrait". `imgs`: each image's (w, h). */
-fun layoutScanPage(kind: String, size: String, imgs: List<Pair<Int, Int>>): List<Sheet> {
+fun layoutScanPage(
+  kind: String, size: String, imgs: List<Pair<Int, Int>>,
+  placements: List<ScanPlacement> = emptyList(),
+): List<Sheet> {
   val (fw, fh) = imgs.first().let { it.first.toFloat() to it.second.toFloat() }
   val paper: Pair<Float, Float>? = if (size == "fit") null else {
     val (name, orient) = size.split('-').let { it[0] to it.getOrElse(1) { "portrait" } }
@@ -711,13 +737,18 @@ fun layoutScanPage(kind: String, size: String, imgs: List<Pair<Int, Int>>): List
   return when (kind) {
     "book" -> listOf(0f, 0.5f).map { x -> single(Crop(x, 0f, 0.5f, 1f), fw / 2, fh) }
     "card" -> listOf(single(FULL, fw, fh, 252f))
-    "id" -> { // front above back
+    "id" -> {
       val (W, H) = paper ?: A4
-      val cw = min(CARD_W, W - 2 * MARGIN)
-      listOf(Sheet(W, H, imgs.mapIndexed { i, (iw, ih) ->
-        val h = cw * ih / iw
-        Placed(i, FULL, (W - cw) / 2, if (i == 0) H / 2 + 12 else H / 2 - 12 - h, cw, h)
-      }))
+      val slots = placements.ifEmpty { defaultIdPlacements(imgs.size, W, H) }
+      listOf(Sheet(W, H, slots.filter { it.sourceIndex in imgs.indices }
+        .map { slot ->
+          val x = slot.x.coerceIn(0f,1f)
+          val y = slot.y.coerceIn(0f,1f)
+          val width = slot.w.coerceIn(0.02f, 1f-x)
+          val height = slot.h.coerceIn(0.02f, 1f-y)
+          Placed(slot.sourceIndex,FULL,x*W,(1f-y-height)*H,
+            width*W,height*H)
+        }))
     }
     else -> listOf(single(FULL, fw, fh))
   }

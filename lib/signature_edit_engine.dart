@@ -34,6 +34,22 @@ class SignatureEditEngine {
     });
   }
 
+  /// Rotate the actual source pixels on an isolate. This is not merely a
+  /// visual transform: future crop, exact-size output, Save and Cart receive
+  /// the rotated image. The current document is preserved if encoding fails.
+  /// Full-resolution working image for tool-to-tool transfers (no 20 KB
+  /// preview downgrade and no artificial exact-size padding).
+  static Future<Uint8List> workingPng(Uint8List original,
+    SignatureCrop crop,String filter,{double intensity=1})=>
+    compute(_signatureTransform,{
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':filter,'quad':crop.quad,'intensity':intensity,
+      'workingPng':true,
+    });
+
+  static Future<Uint8List> rotate(Uint8List original,double degrees)=>
+    compute(_rotateSignature,{'bytes':original,'degrees':degrees});
+
   /// Commit the crop at source resolution, not from the small preview.
   /// Subsequent edits work on this saved cropped source and the handles reset.
   static Future<Uint8List> applyCrop(Uint8List original,SignatureCrop crop)=>
@@ -85,6 +101,18 @@ class SignatureEditEngine {
     if(bytes.length!=target)throw StateError('Exact target encoding failed');
     return bytes;
   }
+}
+
+Uint8List _rotateSignature(Map<String,Object?> request){
+  final original=img.decodeImage(request['bytes'] as Uint8List);
+  if(original==null)throw const FormatException('Unsupported signature image');
+  final degrees=(request['degrees'] as num).toDouble();
+  if(!degrees.isFinite||degrees.abs()>360) {
+    throw ArgumentError.value(degrees,'degrees','Rotation must be within 360°');
+  }
+  final rotated=img.copyRotate(original,angle:degrees,
+    interpolation:img.Interpolation.linear);
+  return Uint8List.fromList(img.encodePng(rotated,level:1));
 }
 
 /// Isolate entrypoint: filters, crop and JPEG encoding off the UI thread.
@@ -213,6 +241,9 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
       width:(cropped.width*1100/preview).round(),
       height:(cropped.height*1100/preview).round());
     return Uint8List.fromList(img.encodeJpg(cropped,quality:86));
+  }
+  if(request['workingPng']==true){
+    return Uint8List.fromList(img.encodePng(cropped,level:2));
   }
   final target=request['target'] as int;
   // Try high-quality output first; downscale only if truly needed.

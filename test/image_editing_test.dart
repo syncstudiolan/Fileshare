@@ -131,5 +131,22 @@ void main(){
     expect(find.text('Image History / Continue Editing'),findsOneWidget);
     expect(find.byIcon(Icons.add_photo_alternate_outlined),findsOneWidget);
     expect(tester.takeException(),isNull);
+  }); 
+  test('Small JPEG targets prioritize a useful quality floor',()async{
+    final source=img.Image(width:720,height:960);
+    for(var y=0;y<source.height;y++){
+      for(var x=0;x<source.width;x++){
+        final base=(x*7+y*13+(x*y)%137)%256;
+        source.setPixelRgb(x,y,base,(base+50)%256,(base+110)%256);
+      }
+    }
+    final encoded=Uint8List.fromList(img.encodeJpg(source,quality:93));
+    final result=await ImageEditingEngine.compress(encoded,
+      targetKb:20,quality:90,format:'JPEG');
+    expect(result.length,lessThanOrEqualTo(20*1024));
+    final decoded=img.decodeJpg(result)!;
+    expect(decoded.width,greaterThan(32));
+    expect(decoded.height,greaterThan(32));
   });
+
 }

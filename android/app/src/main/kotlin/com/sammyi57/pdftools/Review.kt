@@ -101,6 +101,7 @@ fun Review(
   onClose: () -> Unit,
   onSave: suspend () -> Unit,
   onCart: (Int) -> Unit,
+  onSwitch: (List<Int>, String) -> Unit,
   onAddMore: () -> Unit,
   onRetake: (ScanPage) -> Unit,
 ) {
@@ -114,7 +115,8 @@ fun Review(
   var sheet by remember { mutableStateOf("") } // filters | adjust | resize | compress
   var compressionText by remember(doc.id) { mutableStateOf((doc.compressionTargetKb ?: 500).toString()) }
   var compressionError by remember { mutableStateOf("") }
-  var modal by remember { mutableStateOf("") } // crop | cleanup | markup | reorder | delete | rename | reset
+  var modal by remember { mutableStateOf("") } // crop | id-layout | cleanup | markup | reorder | delete | rename | reset
+  var cropInitialIndex by remember { mutableIntStateOf(0) }
   var saving by remember { mutableStateOf(false) }
   var filterAll by remember { mutableStateOf(false) } // Filters: every pick goes to all pages
   val selecting = selected.isNotEmpty()
@@ -146,6 +148,9 @@ fun Review(
         if (sel) {
           Tap(I.close, "Cancel selection") { selected = emptyList() }
           T("${selected.size} selected", Type.bold.copy(fontSize = 16.sp), ScanUi.text, Modifier.weight(1f))
+          IconBtn(I.swapHorizontal,21.dp,ScanUi.text,
+            "Switch selected PDF pages to Image Editing",
+            enabled=!saving){ modal="switch-editor" }
           T("Select all", Type.bold, ScanUi.accent, Modifier.tap { selected = pages.map { it.id } }.padding(horizontal = 12.dp, vertical = 12.dp))
         } else {
           Tap(I.arrowLeft, "Back", onClick = onClose)
@@ -154,6 +159,13 @@ fun Review(
             Spacer(Modifier.size(6.dp))
             Icon(I.pencilOutline, 15.dp, ScanUi.dim)
           }
+          // Compact switch action ahead of Cart and Save; no displacement
+          // of the bottom editing controls or the page preview.
+          IconBtn(I.swapHorizontal,21.dp,ScanUi.text,
+            "Switch PDF page to Image Editing",
+            enabled=!saving) {
+              modal="switch-editor"
+            }
           val ready = doc.isRendered && !saving
           IconBtn(I.plusBoxMultipleOutline, 23.dp, ScanUi.text, "Add to File Share Cart",
             enabled = ready) { onCart(index) }
@@ -166,6 +178,37 @@ fun Review(
             Spacer(Modifier.size(6.dp))
             T(if (doc.pdf != null) "Update PDF" else "Save PDF", Type.bold, ScanUi.onAccent)
           }
+        }
+      }
+    }
+
+
+    // Capture modes are also editable modes. Plain text tabs (not buttons)
+    // appear between the document title bar and the preview; horizontal
+    // scrolling keeps the compact PDF action buttons reachable on phones.
+    Row(
+      Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        .padding(horizontal=12.dp,vertical=6.dp),
+      horizontalArrangement=Arrangement.spacedBy(18.dp),
+      verticalAlignment=Alignment.CenterVertically,
+    ) {
+      listOf("doc","whiteboard","id","card").forEach { mode ->
+        val active=current.kind==mode
+        Column(
+          Modifier.tap(scaleTo=0.98f,label="Switch to ${KIND_LABEL.getValue(mode)}") {
+            if(!active){
+              selected=emptyList()
+              sheet=""
+              setDoc { convertScanMode(it,mode) }
+            }
+            if(mode=="id")modal="id-layout"
+          }.padding(horizontal=3.dp,vertical=5.dp),
+          horizontalAlignment=Alignment.CenterHorizontally,
+        ){
+          T(KIND_LABEL.getValue(mode),Type.med.copy(fontSize=13.sp),
+            if(active)ScanUi.accent else ScanUi.dim)
+          Box(Modifier.padding(top=3.dp).width(30.dp).height(2.dp)
+            .background(if(active)ScanUi.accent else Color.Transparent))
         }
       }
     }
@@ -277,7 +320,7 @@ fun Review(
     val tools = listOf(
       Triple(I.plusBoxMultipleOutline, "Add", selecting) to onAddMore,
       Triple(I.cameraRetakeOutline, "Retake", selecting) to { onRetake(current) },
-      Triple(I.crop, "Crop", selecting) to { modal = "crop" },
+      Triple(I.crop, "Crop", selecting) to { cropInitialIndex=0; modal = "crop" },
       // ponytail: rotating clears that page's cleanup/markup strokes; transform the strokes instead if people mind.
       Triple(I.rotateRight, "Rotate", false) to { editShots(targets) { s, _ -> s.copy(rotation = (s.rotation + 90) % 360, strokes = emptyList()) } },
       Triple(I.imageFilterBlackWhite, "Filters", false) to { sheet = if (sheet == "filters") "" else "filters" },
@@ -285,7 +328,10 @@ fun Review(
       Triple(I.filePdfBox, "Compress", false) to { sheet = if (sheet == "compress") "" else "compress" },
       Triple(I.eraser, "Cleanup", selecting) to { modal = "cleanup" },
       Triple(I.draw, "Markup", selecting) to { modal = "markup" },
-      Triple(I.resize, "Resize", false) to { sheet = if (sheet == "resize") "" else "resize" },
+      if(current.kind=="id")Triple(I.resize,"ID Layout",selecting)
+        to { modal="id-layout" }
+      else Triple(I.resize, "Resize", false)
+        to { sheet = if (sheet == "resize") "" else "resize" },
       Triple(I.swapHorizontal, "Reorder", pages.size < 2) to { modal = "reorder" },
       Triple(I.restore, "Reset", false) to { modal = "reset" },
       Triple(I.deleteOutline, "Delete", false) to { modal = "delete" },
@@ -309,7 +355,41 @@ fun Review(
   }
 
   when (modal) {
-    "crop" -> CropEditor(current, { modal = "" }) { corners ->
+    "switch-editor" -> AppDialog({modal=""},"Switch PDF to Image Editor",
+      "The PDF draft stays saved. Pick a page to edit as an image.") {
+      Column(Modifier.padding(top=12.dp),
+        verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Btn("Image Editing · current page",Modifier.fillMaxWidth(),I.imageOutline) {
+          modal=""
+          onSwitch(listOf(index),"image")
+        }
+        Btn("Signature Editing · current page",Modifier.fillMaxWidth(),
+          I.draw,BtnKind.Secondary){
+          modal=""
+          onSwitch(listOf(index),"signature")
+        }
+        if(selected.isNotEmpty()){
+          Btn("Image Tools · selected pages (${selected.size})",
+            Modifier.fillMaxWidth(),I.plusBoxMultipleOutline,BtnKind.Secondary){
+            val picks=pages.indices.filter { pages[it].id in selected }
+            modal=""
+            onSwitch(picks,"image")
+          }
+        }
+        T("Word conversion is unavailable for raster PDF pages.",
+          Type.small,ScanUi.dim)
+        Btn("Cancel",Modifier.fillMaxWidth(),kind=BtnKind.Secondary){
+          modal=""
+        }
+      }
+    }
+    "id-layout" -> IdCardLayoutEditor(
+      current,
+      onChange={ page -> editPages(listOf(page.id)) { page } },
+      onCrop={ index -> cropInitialIndex=index; modal="crop" },
+      onClose={ modal="" },
+    )
+    "crop" -> CropEditor(current, { modal = "" }, initialSide=cropInitialIndex) { corners ->
       editShots(listOf(current.id)) { sh, p -> val next = corners[p.shots.indexOf(sh)]; if (next == sh.corners) null else sh.copy(corners = next, strokes = emptyList()) }
       modal = ""
     }
@@ -360,7 +440,7 @@ fun Review(
 /** Draws a page from the PDF layout, so size choices, book halves and ID front/back look exactly as saved. */
 @Composable
 fun PagePreview(page: ScanPage, maxW: Dp, maxH: Dp, flat: Boolean) {
-  val sheets = layoutScanPage(page.kind, page.size, page.shots.map { it.shownW to it.shownH })
+  val sheets = layoutScanPage(page.kind, page.size, page.shots.map { it.shownW to it.shownH }, page.placements)
   val gap = if (sheets.size > 1) 6f else 0f
   val k = min((maxW.value - gap) / sheets.sumOf { it.W.toDouble() }.toFloat(), maxH.value / sheets.maxOf { it.H })
   val pending = page.shots.any { !it.rendered }
@@ -523,8 +603,11 @@ private fun DrawScope.photo(img: ImageBitmap, rot: Int, dw: Float, dh: Float) {
 
 // Adobe Scan's crop screen: drag the four corner handles (with a magnifier under your finger), Auto-detect, or No crop.
 @Composable
-private fun CropEditor(page: ScanPage, onCancel: () -> Unit, onDone: (List<List<Float>?>) -> Unit) {
-  var side by remember { mutableIntStateOf(0) }
+private fun CropEditor(page: ScanPage, onCancel: () -> Unit,
+  initialSide: Int = 0, onDone: (List<List<Float>?>) -> Unit) {
+  var side by remember(page.id,initialSide) {
+    mutableIntStateOf(initialSide.coerceIn(0,page.shots.lastIndex))
+  }
   var all by remember { mutableStateOf(page.shots.map { it.corners ?: FULL_CORNERS }) }
   var drag by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) } // corner, x, y on screen
   val shot = page.shots[side]

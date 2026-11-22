@@ -14,6 +14,7 @@ import 'file_transfer_camera_page.dart';
 import 'signature_edit_engine.dart';
 import 'image_editing_storage.dart';
 import 'editor_transfer_session.dart';
+import 'universal_tool_switcher.dart';
 import 'main.dart' show FileTheme;
 
 /// Compact sibling of Image Editing: familiar preview + lower tool strip,
@@ -46,6 +47,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   SignatureCrop _crop=SignatureCrop.full;
   String _filter='Original',_tool='Crop';
   double _filterIntensity=1;
+  double _rotationDegrees=0;
   Timer? _filterTimer;
   int _filterRevision=0;
   int _thumbnailRevision=0;
@@ -56,7 +58,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   static const _filters=['Original','White Background','Black & White','Grayscale',
     'Blue Ink','Dark Ink','Red Ink','Green Ink','High Contrast',
     'Soft Ink','Sepia','Invert','Clean Paper','Pencil'];
-  static const _tabs=['Crop','Compress','Filters'];
+  static const _tabs=['Crop','Compress','Filters','Rotate'];
   String _cropMode='Normal';
   int _corner=-1; // 0..3 corners, 4..7 edge midpoints, -2 interior drag.
   Offset? _lastDrag;
@@ -98,6 +100,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           const Offset(.92,.92),const Offset(.08,.92)];
         _filter='Original';
         _filterIntensity=1;
+        _rotationDegrees=0;
         _error=null;
       });
       unawaited(_refreshFilterThumbnails(bytes));
@@ -133,6 +136,19 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   void _show(String message){
     if(mounted)FileShareTopNotice.show(context,message);
+  }
+
+  Future<File> _switchSnapshot(EditorDestination target)async{
+    final bytes=_original;
+    if(bytes==null||_busy)throw StateError('Signature is not ready');
+    var data=await SignatureEditEngine.workingPng(
+      bytes,_selection,_filter,intensity:_filterIntensity);
+    // Include the exact current uncommitted tilt from the visible preview.
+    if(_tool=='Rotate'&&_rotationDegrees.abs()>=.001){
+      data=await SignatureEditEngine.rotate(data,_rotationDegrees);
+    }
+    // Original editor remains in Navigator history, unchanged.
+    return editorSnapshotFile(data);
   }
 
   Future<void> _export(String action)async{
@@ -244,6 +260,34 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
     }catch(e){
       if(mounted&&version==_filterRevision)_show('Filter failed: $e');
     }
+  }
+
+  Future<void> _applyRotation(double degrees)async{
+    final source=_original;
+    if(source==null||_busy||degrees.abs()<.001)return;
+    _filterRevision++;
+    _filterTimer?.cancel();
+    setState(()=>_busy=true);
+    try{
+      final rotated=await SignatureEditEngine.rotate(source,degrees);
+      final dimensions=await compute(_signatureDimensions,rotated);
+      final preview=await SignatureEditEngine.preview(
+        rotated,SignatureCrop.full,_filter,intensity:_filterIntensity);
+      if(!mounted)return;
+      setState((){
+        _original=rotated;
+        _preview=preview;
+        _discardApplied();
+        _aspect=dimensions[0]/dimensions[1];
+        _rotationDegrees=0;
+        _crop=SignatureCrop.full;
+        _quad=[const Offset(0,0),const Offset(1,0),
+          const Offset(1,1),const Offset(0,1)];
+        _cropMode='Normal';
+      });
+      unawaited(_refreshFilterThumbnails(rotated));
+    }catch(e){_show('Rotation failed: $e');}
+    finally{if(mounted)setState(()=>_busy=false);}
   }
 
   Future<void> _applyCrop()async{
@@ -425,9 +469,14 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           onPanUpdate:_busy||_appliedJpeg!=null?null:(d)=>_gestureUpdate(d,size),
           onPanEnd:(_){_lastDrag=null;_corner=-1;},
           child:Stack(fit:StackFit.expand,children:[
-            Image.memory(image,fit:BoxFit.fill,gaplessPlayback:true,
+            if(_tool=='Rotate' && _rotationDegrees.abs()>=.001)
+              Transform.rotate(
+                angle:_rotationDegrees*math.pi/180,
+                child:Image.memory(image,fit:BoxFit.contain,
+                  gaplessPlayback:true,filterQuality:FilterQuality.medium))
+            else Image.memory(image,fit:BoxFit.fill,gaplessPlayback:true,
               filterQuality:FilterQuality.medium),
-            if(_appliedJpeg==null)CustomPaint(painter:_SignatureCropPainter(
+            if(_appliedJpeg==null && _tool=='Crop')CustomPaint(painter:_SignatureCropPainter(
               _selection,showQuad:_cropMode=='Perspective')),
           ]),
         ),
@@ -436,6 +485,42 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   }
 
   Widget _controls(){
+    if(_tool=='Rotate'){
+      return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        const Row(children:[
+          Icon(Icons.rotate_right_rounded,color:FileTheme.violet,size:19),
+          SizedBox(width:8),
+          Text('Rotate / Straighten Signature',
+            style:TextStyle(fontWeight:FontWeight.w800,fontSize:16)),
+        ]),
+        const SizedBox(height:10),
+        Wrap(spacing:8,runSpacing:8,children:[
+          OutlinedButton(onPressed:_busy||_original==null?null:
+            ()=>_applyRotation(90),child:const Text('90°')),
+          OutlinedButton(onPressed:_busy||_original==null?null:
+            ()=>_applyRotation(180),child:const Text('180°')),
+          OutlinedButton(onPressed:_busy||_original==null?null:
+            ()=>_applyRotation(270),child:const Text('270°')),
+        ]),
+        const SizedBox(height:8),
+        Row(children:[
+          const Text('Fine tilt'),
+          Expanded(child:Slider(
+            min:-45,max:45,divisions:180,value:_rotationDegrees,
+            onChanged:_busy||_original==null?null:(value)=>setState((){
+              _rotationDegrees=value;
+            }))),
+          SizedBox(width:48,child:Text(
+            '${_rotationDegrees.toStringAsFixed(1)}°',
+            textAlign:TextAlign.end)),
+        ]),
+        SizedBox(width:double.infinity,child:FilledButton.icon(
+          onPressed:_busy||_original==null||_rotationDegrees.abs()<.001
+            ?null:()=>_applyRotation(_rotationDegrees),
+          icon:const Icon(Icons.check_rounded),
+          label:const Text('Apply Rotation'))),
+      ]);
+    }
     if(_tool=='Crop'){
       return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
         const Row(children:[
@@ -637,19 +722,44 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
       appBar:AppBar(
         title:const Text('Signature Edit',style:TextStyle(fontSize:16)),
         actions:[
-          IconButton(tooltip:'Take photo',onPressed:_busy?null:_capture,
-            icon:const Icon(Icons.camera_alt_outlined)),
-          IconButton(tooltip:'Browse image',onPressed:_busy?null:_browse,
-            icon:const Icon(Icons.folder_open_outlined)),
-          IconButton(tooltip:'Save exact size',onPressed:ready&&!_busy
-            ?()=>_export('save'):null,
-            icon:const Icon(Icons.download_rounded)),
-          IconButton(tooltip:'Share signature',onPressed:ready&&!_busy
-            ?()=>_export('share'):null,
-            icon:const Icon(Icons.ios_share_rounded)),
-          IconButton(tooltip:'Add to File Share Cart',onPressed:ready&&!_busy
-            ?()=>_export('cart'):null,
-            icon:const Icon(Icons.shopping_cart_outlined)),
+          ToolSwitchButton(current:EditorDestination.signature,
+            enabled:ready&&!_busy,
+            snapshot:_switchSnapshot,onError:_show),
+          if(MediaQuery.sizeOf(context).width>=560)...[
+            IconButton(tooltip:'Take photo',onPressed:_busy?null:_capture,
+              icon:const Icon(Icons.camera_alt_outlined)),
+            IconButton(tooltip:'Browse image',onPressed:_busy?null:_browse,
+              icon:const Icon(Icons.folder_open_outlined)),
+            IconButton(tooltip:'Save exact size',onPressed:ready&&!_busy
+              ?()=>_export('save'):null,
+              icon:const Icon(Icons.download_rounded)),
+            IconButton(tooltip:'Share signature',onPressed:ready&&!_busy
+              ?()=>_export('share'):null,
+              icon:const Icon(Icons.ios_share_rounded)),
+          ],
+          IconButton(tooltip:'Add to File Share Cart',
+            onPressed:ready&&!_busy?()=>_export('cart'):null,
+            icon:const Icon(Icons.shopping_cart_outlined,size:21)),
+          if(MediaQuery.sizeOf(context).width<560)
+            PopupMenuButton<String>(
+              tooltip:'More signature actions',
+              icon:const Icon(Icons.more_vert_rounded),
+              onSelected:(value){
+                switch(value){
+                  case 'camera':unawaited(_capture());
+                  case 'browse':unawaited(_browse());
+                  case 'save':unawaited(_export('save'));
+                  case 'share':unawaited(_export('share'));
+                }
+              },
+              itemBuilder:(_)=>[
+                const PopupMenuItem(value:'camera',child:Text('Take photo')),
+                const PopupMenuItem(value:'browse',child:Text('Browse image')),
+                if(ready&&!_busy)...[
+                  const PopupMenuItem(value:'save',child:Text('Save exact size')),
+                  const PopupMenuItem(value:'share',child:Text('Share signature')),
+                ],
+              ]),
         ]),
       body:Container(
         decoration:BoxDecoration(gradient:FileTheme.background(context)),
@@ -698,6 +808,7 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
                     Icon(switch(tab) {
                       'Crop'=>Icons.crop_rounded,
                       'Compress'=>Icons.compress_rounded,
+                      'Rotate'=>Icons.rotate_right_rounded,
                       _=>Icons.filter_rounded,
                     },color:FileTheme.violet,size:24),
                     const SizedBox(height:4),

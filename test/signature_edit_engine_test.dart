@@ -176,4 +176,21 @@ void main(){
     expect(thumbs['Original'],isNot(equals(thumbs['Black & White'])));
   });
 
+  test('Rotate 90/180 degrees and fine tilt commits real pixels',()async{
+    final original=source();
+    final right=img.decodePng(await SignatureEditEngine.rotate(original,90))!;
+    expect(right.width,110);
+    expect(right.height,340);
+    final half=img.decodePng(await SignatureEditEngine.rotate(original,180))!;
+    expect(half.width,340);
+    expect(half.height,110);
+    final tilted=img.decodePng(await SignatureEditEngine.rotate(original,12.5))!;
+    expect(tilted.width,greaterThan(340));
+    expect(tilted.height,greaterThan(110));
+    final exported=await SignatureEditEngine.exactJpeg(
+      Uint8List.fromList(img.encodePng(right)),
+      SignatureCrop.full,'Original',20);
+    expect(exported.length,20*1024);
+  });
+
 }
