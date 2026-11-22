@@ -65,8 +65,7 @@ class _FileShareToolboxPageState extends State<FileShareToolboxPage> {
       ?List<String>.of(widget.sourcePaths)
       :widget.sourcePath==null?<String>[]:[widget.sourcePath!];
     if(selected.isEmpty){
-      final picked=await FilePicker.pickFiles(type:FileType.image,
-        allowMultiple:true);
+      final picked=await FilePicker.pickFiles(type:FileType.image);
       if(picked.isNotEmpty){
         selected.addAll(picked.where((e)=>e.path!=null).map((e)=>e.path!));
       }
