@@ -724,19 +724,41 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
           ToolSwitchButton(current:EditorDestination.signature,
             enabled:ready&&!_busy,
             snapshot:_switchSnapshot,onError:_show),
-          IconButton(tooltip:'Take photo',onPressed:_busy?null:_capture,
-            icon:const Icon(Icons.camera_alt_outlined)),
-          IconButton(tooltip:'Browse image',onPressed:_busy?null:_browse,
-            icon:const Icon(Icons.folder_open_outlined)),
-          IconButton(tooltip:'Save exact size',onPressed:ready&&!_busy
-            ?()=>_export('save'):null,
-            icon:const Icon(Icons.download_rounded)),
-          IconButton(tooltip:'Share signature',onPressed:ready&&!_busy
-            ?()=>_export('share'):null,
-            icon:const Icon(Icons.ios_share_rounded)),
-          IconButton(tooltip:'Add to File Share Cart',onPressed:ready&&!_busy
-            ?()=>_export('cart'):null,
-            icon:const Icon(Icons.shopping_cart_outlined)),
+          if(MediaQuery.sizeOf(context).width>=560)...[
+            IconButton(tooltip:'Take photo',onPressed:_busy?null:_capture,
+              icon:const Icon(Icons.camera_alt_outlined)),
+            IconButton(tooltip:'Browse image',onPressed:_busy?null:_browse,
+              icon:const Icon(Icons.folder_open_outlined)),
+            IconButton(tooltip:'Save exact size',onPressed:ready&&!_busy
+              ?()=>_export('save'):null,
+              icon:const Icon(Icons.download_rounded)),
+            IconButton(tooltip:'Share signature',onPressed:ready&&!_busy
+              ?()=>_export('share'):null,
+              icon:const Icon(Icons.ios_share_rounded)),
+          ],
+          IconButton(tooltip:'Add to File Share Cart',
+            onPressed:ready&&!_busy?()=>_export('cart'):null,
+            icon:const Icon(Icons.shopping_cart_outlined,size:21)),
+          if(MediaQuery.sizeOf(context).width<560)
+            PopupMenuButton<String>(
+              tooltip:'More signature actions',
+              icon:const Icon(Icons.more_vert_rounded),
+              onSelected:(value){
+                switch(value){
+                  case 'camera':unawaited(_capture());
+                  case 'browse':unawaited(_browse());
+                  case 'save':unawaited(_export('save'));
+                  case 'share':unawaited(_export('share'));
+                }
+              },
+              itemBuilder:(_)=>[
+                const PopupMenuItem(value:'camera',child:Text('Take photo')),
+                const PopupMenuItem(value:'browse',child:Text('Browse image')),
+                if(ready&&!_busy)...[
+                  const PopupMenuItem(value:'save',child:Text('Save exact size')),
+                  const PopupMenuItem(value:'share',child:Text('Share signature')),
+                ],
+              ]),
         ]),
       body:Container(
         decoration:BoxDecoration(gradient:FileTheme.background(context)),
