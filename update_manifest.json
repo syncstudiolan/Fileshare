@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 549,
-    "notes": "Merge pull request #16 from syncstudiolan/feat/signature-white-paper-intensity-20261120",
-    "sha256": "02057fccf7636f3bf7e43fe1536373f05f9a32766c3538d5ae96ed2ad05489e5",
-    "size": 19232206,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-549/FileShare-Windows-Setup.exe",
+    "build": 555,
+    "notes": "release: verify PDF notice timer fix in unified PR17 release workflow",
+    "sha256": "d1caeaf8a13c58ffaa98229d29e7fc2ffc3cb06e51e026d50a7fcf4cc2012c11",
+    "size": 19262575,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-555/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
