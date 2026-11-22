@@ -73,7 +73,7 @@ fun reorderCardPlacement(page: ScanPage, source: Int, toFront: Boolean): ScanPag
 fun IdCardLayoutEditor(
   page: ScanPage,
   onChange: (ScanPage) -> Unit,
-  onCrop: () -> Unit,
+  onCrop: (Int) -> Unit,
   onClose: () -> Unit,
 ) {
   val currentPage by rememberUpdatedState(page)
@@ -169,7 +169,7 @@ fun IdCardLayoutEditor(
       Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement=Arrangement.spacedBy(8.dp)) {
         Btn("Crop selected",Modifier.width(132.dp),I.crop,BtnKind.Secondary,
-          height=45.dp,onClick=onCrop)
+          height=45.dp,onClick={ onCrop(selected) })
         Btn("Bring front",Modifier.width(128.dp),I.plus,BtnKind.Secondary,
           height=45.dp) {
           latestChange(reorderCardPlacement(currentPage,selected,true))
