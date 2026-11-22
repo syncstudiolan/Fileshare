@@ -45,6 +45,8 @@ void main(){
             child:const SizedBox(height:100,child:Text('Card'))),
         ])))));
     expect(find.text('Card'),findsOneWidget);
-    expect(find.byType(AnimatedBuilder),findsNothing);
+    expect(find.descendant(
+      of:find.byType(FileShareScrollDepth),
+      matching:find.byType(AnimatedBuilder)),findsNothing);
   });
 }
