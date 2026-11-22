@@ -2734,7 +2734,36 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       appLan.start().then((_) async {
         if (Platform.isAndroid) {
           _native.setMethodCallHandler((call) async {
-            if(call.method=='sharesReceived') await _takeSharedFiles();
+            if(call.method=='sharesReceived') {
+              await _takeSharedFiles();
+            }else if(call.method=='editorSwitchFromPdf'){
+              final args=Map<String,dynamic>.from(call.arguments as Map);
+              final paths=(args['paths'] as List?)?.whereType<String>()
+                .where((path)=>path.isNotEmpty).toList()??<String>[];
+              if(paths.isEmpty||!mounted)return;
+              final localPaths=<String>[];
+              for(final path in paths){
+                if(await File(path).exists())localPaths.add(path);
+              }
+              if(localPaths.isEmpty){
+                _snack('Selected PDF pages are not available');
+                return;
+              }
+              final navigator=fileShareNavigatorKey.currentState;
+              if(navigator==null)return;
+              if(localPaths.length==1){
+                unawaited(navigator.push(MaterialPageRoute<void>(
+                  builder:(_)=>ImageEditingPage(
+                    sourcePath:localPaths.first,
+                    sourceName:File(localPaths.first).uri.pathSegments.last))));
+              }else{
+                unawaited(navigator.push(MaterialPageRoute<void>(
+                  builder:(_)=>FileShareToolboxPage(
+                    sourcePaths:localPaths,
+                    sourceNames:localPaths.map((p)=>
+                      File(p).uri.pathSegments.last).toList()))));
+              }
+            }
           });
           try {
             final enabled=await _native.invokeMethod<bool>('getLanBootReceiver')??true;
