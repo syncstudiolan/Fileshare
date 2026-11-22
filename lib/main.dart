@@ -22,6 +22,7 @@ import 'auto_cloud_transfer_preference.dart';
 import 'guest_qr_print.dart';
 import 'transfer_downloads.dart';
 import 'image_editing_page.dart';
+import 'signature_edit_page.dart';
 import 'toolbox_page.dart';
 import 'file_share_doc_page.dart';
 import 'file_share_doc_engine.dart';
@@ -2752,10 +2753,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               final navigator=fileShareNavigatorKey.currentState;
               if(navigator==null)return;
               if(localPaths.length==1){
+                final name=File(localPaths.first).uri.pathSegments.last;
+                final target=args['target']?.toString()??'image';
                 unawaited(navigator.push(MaterialPageRoute<void>(
-                  builder:(_)=>ImageEditingPage(
-                    sourcePath:localPaths.first,
-                    sourceName:File(localPaths.first).uri.pathSegments.last))));
+                  builder:(_)=>target=='signature'
+                    ?SignatureEditPage(sourcePath:localPaths.first,
+                        sourceName:name)
+                    :ImageEditingPage(sourcePath:localPaths.first,
+                        sourceName:name))));
               }else{
                 unawaited(navigator.push(MaterialPageRoute<void>(
                   builder:(_)=>FileShareToolboxPage(
