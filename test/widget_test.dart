@@ -452,7 +452,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip('Delete selected cards'));
     await tester.pumpAndSettle();
-    expect(find.text('Delete selected cards?'),findsOneWidget);
+    expect(find.text('Delete selected files?'),findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(appLan.files.any((f)=>f.id=='keep-on-cancel'),isTrue);
