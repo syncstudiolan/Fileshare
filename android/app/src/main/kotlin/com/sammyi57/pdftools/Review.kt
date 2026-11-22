@@ -101,6 +101,7 @@ fun Review(
   onClose: () -> Unit,
   onSave: suspend () -> Unit,
   onCart: (Int) -> Unit,
+  onSwitch: (List<Int>) -> Unit,
   onAddMore: () -> Unit,
   onRetake: (ScanPage) -> Unit,
 ) {
@@ -155,6 +156,13 @@ fun Review(
             Spacer(Modifier.size(6.dp))
             Icon(I.pencilOutline, 15.dp, ScanUi.dim)
           }
+          // Compact switch action ahead of Cart and Save; no displacement
+          // of the bottom editing controls or the page preview.
+          IconBtn(I.swapHorizontal,21.dp,ScanUi.text,
+            "Switch PDF page to Image Editing",
+            enabled=!saving) {
+              modal="switch-editor"
+            }
           val ready = doc.isRendered && !saving
           IconBtn(I.plusBoxMultipleOutline, 23.dp, ScanUi.text, "Add to File Share Cart",
             enabled = ready) { onCart(index) }
@@ -344,6 +352,27 @@ fun Review(
   }
 
   when (modal) {
+    "switch-editor" -> AppDialog({modal=""},"Switch PDF to Image Editor",
+      "The PDF draft stays saved. Pick a page to edit as an image.") {
+      Column(Modifier.padding(top=12.dp),
+        verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Btn("Current page",Modifier.fillMaxWidth(),I.imageOutline) {
+          modal=""
+          onSwitch(listOf(index))
+        }
+        if(selected.isNotEmpty()){
+          Btn("Selected pages (${selected.size})",Modifier.fillMaxWidth(),
+            I.plusBoxMultipleOutline,BtnKind.Secondary){
+            val picks=pages.indices.filter { pages[it].id in selected }
+            modal=""
+            onSwitch(picks)
+          }
+        }
+        Btn("Cancel",Modifier.fillMaxWidth(),kind=BtnKind.Secondary){
+          modal=""
+        }
+      }
+    }
     "id-layout" -> IdCardLayoutEditor(
       current,
       onChange={ page -> editPages(listOf(page.id)) { page } },
