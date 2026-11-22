@@ -148,6 +148,9 @@ fun Review(
         if (sel) {
           Tap(I.close, "Cancel selection") { selected = emptyList() }
           T("${selected.size} selected", Type.bold.copy(fontSize = 16.sp), ScanUi.text, Modifier.weight(1f))
+          IconBtn(I.swapHorizontal,21.dp,ScanUi.text,
+            "Switch selected PDF pages to Image Editing",
+            enabled=!saving){ modal="switch-editor" }
           T("Select all", Type.bold, ScanUi.accent, Modifier.tap { selected = pages.map { it.id } }.padding(horizontal = 12.dp, vertical = 12.dp))
         } else {
           Tap(I.arrowLeft, "Back", onClick = onClose)
