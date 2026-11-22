@@ -45,8 +45,20 @@ data class Shot(
   val shownH get() = outH ?: height
 }
 
+/** Placement in fractions of the printable sheet; y=0 at the top.
+ * Persisted with the scan so dragging/resizing remains editable after reopen.
+ */
 @Serializable
-data class ScanPage(val id: String, val kind: String, val size: String, val shots: List<Shot>)
+data class ScanPlacement(
+  val x: Float, val y: Float, val w: Float, val h: Float,
+  val sourceIndex: Int = 0,
+)
+
+@Serializable
+data class ScanPage(
+  val id: String, val kind: String, val size: String, val shots: List<Shot>,
+  val placements: List<ScanPlacement> = emptyList(),
+)
 
 @Serializable
 data class PdfRef(@SerialName("uri") val path: String, val name: String)
@@ -222,7 +234,7 @@ fun deleteDoc(id: String) {
 }
 
 // Everything a user can change, minus render output, so re-renders don't count as edits.
-private fun ScanPage.edits() = listOf(id, kind, size, shots.map { listOf(pathOf(it.src), it.corners, it.rotation, it.filter, it.brightness, it.contrast, it.strokes) })
+private fun ScanPage.edits() = listOf(id, kind, size, placements, shots.map { listOf(pathOf(it.src), it.corners, it.rotation, it.filter, it.brightness, it.contrast, it.strokes) })
 
 /** True for a draft that was never saved, or a saved scan edited since. */
 fun ScanDoc.isDirty(): Boolean = saved == null || saved.name != name ||
@@ -250,7 +262,7 @@ suspend fun exportPdf(doc: ScanDoc): ScanDoc = withContext(Dispatchers.IO) {
   val sheets = doc.pages.flatMap { p ->
     val first = images.size
     images.addAll(p.shots.map { pathOf(it.out ?: it.src) })
-    layoutScanPage(p.kind, p.size, p.shots.map { it.shownW to it.shownH }).map { s -> s.copy(items = s.items.map { it.copy(img = first + it.img) }) }
+    layoutScanPage(p.kind, p.size, p.shots.map { it.shownW to it.shownH }, p.placements).map { s -> s.copy(items = s.items.map { it.copy(img = first + it.img) }) }
   }
   val tmp = buildScanPdf(sheets, images)
   // An invisible text layer over the words, so the scan can be searched and copied. Best effort: a page OCR can't
