@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -85,7 +87,8 @@ fun IdCardLayoutEditor(
     defaultIdPlacements(page.shots.size,pageW,pageH)
   }
   FullSheet(onClose,ScanUi.bg){
-    Column(Modifier.fillMaxSize().padding(12.dp),
+    Column(Modifier.fillMaxSize().statusBarsPadding()
+      .navigationBarsPadding().padding(12.dp),
       verticalArrangement=Arrangement.spacedBy(10.dp)) {
       Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
         Tap(I.arrowLeft,"Back to PDF editor",onClick=onClose)
