@@ -37,6 +37,16 @@ class SignatureEditEngine {
   /// Rotate the actual source pixels on an isolate. This is not merely a
   /// visual transform: future crop, exact-size output, Save and Cart receive
   /// the rotated image. The current document is preserved if encoding fails.
+  /// Full-resolution working image for tool-to-tool transfers (no 20 KB
+  /// preview downgrade and no artificial exact-size padding).
+  static Future<Uint8List> workingPng(Uint8List original,
+    SignatureCrop crop,String filter,{double intensity=1})=>
+    compute(_signatureTransform,{
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':filter,'quad':crop.quad,'intensity':intensity,
+      'workingPng':true,
+    });
+
   static Future<Uint8List> rotate(Uint8List original,double degrees)=>
     compute(_rotateSignature,{'bytes':original,'degrees':degrees});
 
@@ -231,6 +241,9 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
       width:(cropped.width*1100/preview).round(),
       height:(cropped.height*1100/preview).round());
     return Uint8List.fromList(img.encodeJpg(cropped,quality:86));
+  }
+  if(request['workingPng']==true){
+    return Uint8List.fromList(img.encodePng(cropped,level:2));
   }
   final target=request['target'] as int;
   // Try high-quality output first; downscale only if truly needed.
