@@ -43,7 +43,9 @@ void main(){
     await tester.enterText(find.byType(TextField),'pdf');
     await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced PDF Editing Tools'));
-    await tester.pumpAndSettle();
+    // A transient top notice (not a modal); pumpAndSettle would advance
+    // the fake 5-second timer and dismiss it before the assertion.
+    await tester.pump();
     expect(find.textContaining('Advanced PDF Pro ID Card Editor is currently Android only.'),findsOneWidget);
 
   });
