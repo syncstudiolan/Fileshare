@@ -1,4 +1,7 @@
 import 'app_top_notice.dart';
+import 'universal_tool_switcher.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -490,6 +493,68 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     }catch(e){_message('Save failed: '+e.toString());}
     finally{if(mounted)setState(()=>_busy=false);}
   }
+  Future<File> _switchSnapshot(EditorDestination target)async{
+    if(target!=EditorDestination.pdf){
+      throw UnsupportedError('Only document to PDF conversion is supported');
+    }
+    final source=_source;
+    if(source==null||_busy)throw StateError('Open a document first');
+    final doc=_document;
+    if(doc==null)throw UnsupportedError(
+      'This format is view-only; conversion to PDF is unavailable');
+    // Rich Word and other Office embedded objects are not supported by the
+    // Flutter document preview. Explicit consent prevents silent loss.
+    final allowed=await showDialog<bool>(context:context,builder:(dialog)=>
+      AlertDialog(
+        title:const Text('Convert visible document to PDF?'),
+        content:const Text(
+          'The PDF will contain the current editable text and its layout. '
+          'Complex tables, pictures, formulas and Office formatting may '
+          'not be reproduced exactly. The original stays unchanged.'),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),
+            child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(dialog,true),
+            child:const Text('Convert')),
+        ]));
+    if(allowed!=true)throw StateError('Conversion canceled');
+    final document=pw.Document(compress:true);
+    final format=switch(_paperSize){
+      'Legal'=>PdfPageFormat.legal,
+      'Letter'=>PdfPageFormat.letter,
+      _=>PdfPageFormat.a4,
+    };
+    final pageFormat=_landscape?format.landscape:format;
+    final font=pw.Font.helvetica();
+    final textBlocks=<pw.Widget>[];
+    for(final block in doc.blocks){
+      if(_deletedWordParagraphs.contains(block.id))continue;
+      final text=_controllers[block.id]?.text??block.original;
+      if(text.trim().isEmpty)continue;
+      textBlocks.add(pw.Padding(
+        padding:const pw.EdgeInsets.only(bottom:9),
+        child:pw.Text(text,
+          style:pw.TextStyle(font:font,fontSize:11),
+          textAlign:switch(_wordAlignments[block.id]??'left'){
+            'center'=>pw.TextAlign.center,
+            'right'=>pw.TextAlign.right,
+            'both'=>pw.TextAlign.justify,
+            _=>pw.TextAlign.left,
+          })));
+      for(final extra in _newWordParagraphs[block.id]??<String>[]){
+        textBlocks.add(pw.Text(extra,style:pw.TextStyle(font:font,fontSize:11)));
+      }
+    }
+    if(textBlocks.isEmpty)throw StateError('No printable document text');
+    document.addPage(pw.MultiPage(pageFormat:pageFormat,
+      margin:pw.EdgeInsets.all(_pageMarginMm*72/25.4),
+      maxPages:250,build:(_)=>textBlocks));
+    final data=await document.save();
+    // Text controllers stay in the previous editor when Back is pressed;
+    // save a private immutable PDF handoff, never overwrite the DOCX.
+    return editorSnapshotFile(data,suffix:'pdf');
+  }
+
   Future<void> _send() async{
     final file=_saved??_source;
     if(file==null||_busy)return;
@@ -595,6 +660,9 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     return Scaffold(
       appBar:AppBar(title:const Text('File Share Doc'),
         actions:[
+          ToolSwitchButton(current:EditorDestination.document,
+            enabled:file!=null&&!_busy,
+            snapshot:_switchSnapshot,onError:_message),
           if(file!=null)IconButton(
             onPressed:_busy?null:_selectFile,tooltip:'Open another file',
             icon:const Icon(Icons.folder_open_outlined)),
