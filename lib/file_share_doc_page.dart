@@ -1,5 +1,6 @@
 import 'app_top_notice.dart';
 import 'universal_tool_switcher.dart';
+import 'editor_transfer_session.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'dart:async';
@@ -402,11 +403,30 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
           _controllers[block.id]=controller;
         }
       }
+      if(doc!=null){
+        final draft=await EditorSessionStore.instance.load(
+          'document',file.absolute.path);
+        if(draft!=null){
+          final text=Map<String,dynamic>.from(
+            draft['text'] is Map?draft['text'] as Map:<String,dynamic>{});
+          for(final entry in text.entries){
+            final controller=_controllers[entry.key];
+            if(controller!=null && entry.value is String){
+              controller.text=entry.value as String;
+            }
+          }
+          _paperSize=draft['paper'] as String? ?? _paperSize;
+          _landscape=draft['landscape']==true;
+          _pageLayoutDirty=draft['layoutDirty']==true;
+          _dirty=true;
+        }
+      }
       if(!mounted)return;
+      final restoredDirty=_dirty;
       setState((){
         _source=file;_saved=null;_document=doc;
         _displayName=name??file.uri.pathSegments.last;
-        _dirty=false;
+        _dirty=restoredDirty;
         _status=edit
           ?'Edit the displayed text fields, then Save Copy. Complex Office '
             'layouts and unsupported embedded objects remain unchanged.'
@@ -502,6 +522,11 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
     final doc=_document;
     if(doc==null)throw UnsupportedError(
       'This format is view-only; conversion to PDF is unavailable');
+    await EditorSessionStore.instance.save('document',source.absolute.path,{
+      'text':{for(final e in _controllers.entries)e.key:e.value.text},
+      'paper':_paperSize,'landscape':_landscape,
+      'layoutDirty':_pageLayoutDirty,
+    });
     // Rich Word and other Office embedded objects are not supported by the
     // Flutter document preview. Explicit consent prevents silent loss.
     final allowed=await showDialog<bool>(context:context,builder:(dialog)=>
