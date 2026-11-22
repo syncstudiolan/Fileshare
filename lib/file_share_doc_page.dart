@@ -403,6 +403,7 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
           _controllers[block.id]=controller;
         }
       }
+      var hasRestoredDraft=false;
       if(doc!=null){
         final draft=await EditorSessionStore.instance.load(
           'document',file.absolute.path);
@@ -418,11 +419,11 @@ class _FileShareDocPageState extends State<FileShareDocPage>{
           _paperSize=draft['paper'] as String? ?? _paperSize;
           _landscape=draft['landscape']==true;
           _pageLayoutDirty=draft['layoutDirty']==true;
-          _dirty=true;
+          hasRestoredDraft=true;
         }
       }
       if(!mounted)return;
-      final restoredDirty=_dirty;
+      final restoredDirty=hasRestoredDraft;
       setState((){
         _source=file;_saved=null;_document=doc;
         _displayName=name??file.uri.pathSegments.last;
