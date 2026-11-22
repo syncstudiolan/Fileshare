@@ -114,7 +114,7 @@ fun Review(
   var sheet by remember { mutableStateOf("") } // filters | adjust | resize | compress
   var compressionText by remember(doc.id) { mutableStateOf((doc.compressionTargetKb ?: 500).toString()) }
   var compressionError by remember { mutableStateOf("") }
-  var modal by remember { mutableStateOf("") } // crop | cleanup | markup | reorder | delete | rename | reset
+  var modal by remember { mutableStateOf("") } // crop | id-layout | cleanup | markup | reorder | delete | rename | reset
   var saving by remember { mutableStateOf(false) }
   var filterAll by remember { mutableStateOf(false) } // Filters: every pick goes to all pages
   val selecting = selected.isNotEmpty()
@@ -166,6 +166,37 @@ fun Review(
             Spacer(Modifier.size(6.dp))
             T(if (doc.pdf != null) "Update PDF" else "Save PDF", Type.bold, ScanUi.onAccent)
           }
+        }
+      }
+    }
+
+
+    // Capture modes are also editable modes. Plain text tabs (not buttons)
+    // appear between the document title bar and the preview; horizontal
+    // scrolling keeps the compact PDF action buttons reachable on phones.
+    Row(
+      Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        .padding(horizontal=12.dp,vertical=6.dp),
+      horizontalArrangement=Arrangement.spacedBy(18.dp),
+      verticalAlignment=Alignment.CenterVertically,
+    ) {
+      listOf("doc","whiteboard","id","card").forEach { mode ->
+        val active=current.kind==mode
+        Column(
+          Modifier.tap(scaleTo=0.98f,label="Switch to ${KIND_LABEL.getValue(mode)}") {
+            if(!active){
+              selected=emptyList()
+              sheet=""
+              setDoc { convertScanMode(it,mode) }
+            }
+            if(mode=="id")modal="id-layout"
+          }.padding(horizontal=3.dp,vertical=5.dp),
+          horizontalAlignment=Alignment.CenterHorizontally,
+        ){
+          T(KIND_LABEL.getValue(mode),Type.med.copy(fontSize=13.sp),
+            if(active)ScanUi.accent else ScanUi.dim)
+          Box(Modifier.padding(top=3.dp).width(30.dp).height(2.dp)
+            .background(if(active)ScanUi.accent else Color.Transparent))
         }
       }
     }
@@ -285,7 +316,10 @@ fun Review(
       Triple(I.filePdfBox, "Compress", false) to { sheet = if (sheet == "compress") "" else "compress" },
       Triple(I.eraser, "Cleanup", selecting) to { modal = "cleanup" },
       Triple(I.draw, "Markup", selecting) to { modal = "markup" },
-      Triple(I.resize, "Resize", false) to { sheet = if (sheet == "resize") "" else "resize" },
+      if(current.kind=="id")Triple(I.resize,"ID Layout",selecting)
+        to { modal="id-layout" }
+      else Triple(I.resize, "Resize", false)
+        to { sheet = if (sheet == "resize") "" else "resize" },
       Triple(I.swapHorizontal, "Reorder", pages.size < 2) to { modal = "reorder" },
       Triple(I.restore, "Reset", false) to { modal = "reset" },
       Triple(I.deleteOutline, "Delete", false) to { modal = "delete" },
@@ -309,6 +343,12 @@ fun Review(
   }
 
   when (modal) {
+    "id-layout" -> IdCardLayoutEditor(
+      current,
+      onChange={ page -> editPages(listOf(page.id)) { page } },
+      onCrop={ modal="crop" },
+      onClose={ modal="" },
+    )
     "crop" -> CropEditor(current, { modal = "" }) { corners ->
       editShots(listOf(current.id)) { sh, p -> val next = corners[p.shots.indexOf(sh)]; if (next == sh.corners) null else sh.copy(corners = next, strokes = emptyList()) }
       modal = ""
@@ -360,7 +400,7 @@ fun Review(
 /** Draws a page from the PDF layout, so size choices, book halves and ID front/back look exactly as saved. */
 @Composable
 fun PagePreview(page: ScanPage, maxW: Dp, maxH: Dp, flat: Boolean) {
-  val sheets = layoutScanPage(page.kind, page.size, page.shots.map { it.shownW to it.shownH })
+  val sheets = layoutScanPage(page.kind, page.size, page.shots.map { it.shownW to it.shownH }, page.placements)
   val gap = if (sheets.size > 1) 6f else 0f
   val k = min((maxW.value - gap) / sheets.sumOf { it.W.toDouble() }.toFloat(), maxH.value / sheets.maxOf { it.H })
   val pending = page.shots.any { !it.rendered }
