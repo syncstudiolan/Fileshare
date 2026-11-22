@@ -104,6 +104,7 @@ class ToolSwitchButton extends StatelessWidget {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(builder:(_)=>next));
     }catch(error){
+      if(error is StateError && error.message=='Conversion canceled')return;
       if(context.mounted)_feedback(context,'Tool switch failed: $error');
     }
   }
