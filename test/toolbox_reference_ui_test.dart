@@ -47,6 +47,9 @@ void main(){
     // the fake 5-second timer and dismiss it before the assertion.
     await tester.pump();
     expect(find.textContaining('Advanced PDF Pro ID Card Editor is currently Android only.'),findsOneWidget);
+    // Dispose the app-owned 5s notice timer before the test ends.
+    await tester.pump(const Duration(seconds:6));
+    expect(find.textContaining('Advanced PDF Pro ID Card Editor is currently Android only.'),findsNothing);
 
   });
 }
