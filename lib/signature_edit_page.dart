@@ -141,11 +141,12 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
   Future<File> _switchSnapshot(EditorDestination target)async{
     final bytes=_original;
     if(bytes==null||_busy)throw StateError('Signature is not ready');
-    if(_tool=='Rotate'&&_rotationDegrees.abs()>=.001){
-      throw StateError('Apply your tilt rotation before switching tools');
-    }
-    final data=await SignatureEditEngine.workingPng(
+    var data=await SignatureEditEngine.workingPng(
       bytes,_selection,_filter,intensity:_filterIntensity);
+    // Include the exact current uncommitted tilt from the visible preview.
+    if(_tool=='Rotate'&&_rotationDegrees.abs()>=.001){
+      data=await SignatureEditEngine.rotate(data,_rotationDegrees);
+    }
     // Original editor remains in Navigator history, unchanged.
     return editorSnapshotFile(data);
   }
