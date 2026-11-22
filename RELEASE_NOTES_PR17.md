@@ -27,3 +27,8 @@ The first merged-run analyzer failures were corrected in source. The next
 run exposed outdated UI test expectations for platform notices, selection
 confirmation and reduced-motion scrolling; all three expectations were
 updated before the new combined release attempt.
+
+## Final UI test-teardown correction
+Third combined run proved the analyzer and core widget checks passed across
+platforms except for an active five-second PDF notice timer at test teardown.
+The test now advances the fake clock and disposes that notice before exit.
