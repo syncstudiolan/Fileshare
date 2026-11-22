@@ -37,15 +37,14 @@ void main(){
     expect(find.byTooltip('Redo'),findsOneWidget);
   });
 
-  testWidgets('PDF Toolbox provides a clear Windows warning while iPhone is supported',
+  testWidgets('PDF Toolbox only opens the Android-native Advanced PDF editor',
     (tester)async{
     await tester.pumpWidget(const MaterialApp(home:FileShareToolboxPage()));
     await tester.enterText(find.byType(TextField),'pdf');
     await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced PDF Editing Tools'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('PDF editing is available on Android and iPhone.'),findsOneWidget);
-    await tester.tap(find.text('OK'));
-    await tester.pumpAndSettle();
+    expect(find.textContaining('Advanced PDF Pro ID Card Editor is currently Android only.'),findsOneWidget);
+
   });
 }
