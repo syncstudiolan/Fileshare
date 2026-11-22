@@ -674,8 +674,9 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     final brightness=_brightness,contrast=_contrast;
     final saturation=_saturation,exposure=_exposure;
     var data=source;
-    if(background!=null){
-      if(cutout==null)throw StateError('Background preview is not ready');
+    if(background!=null && cutout!=null){
+      // An unfinished AI mask is not visible yet; export/switch the last
+      // complete pixels instead of blocking on an indefinite pending flag.
       data=background==Colors.transparent?cutout:
         await ImageEditingEngine.edit(cutout,'flatten',{'color':background.toARGB32()});
     }
