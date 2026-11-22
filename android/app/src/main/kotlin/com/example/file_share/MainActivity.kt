@@ -47,11 +47,11 @@ class FileShareApplication : Application() {
     private var channel: MethodChannel? = null
     private var bonjour: LanBonjourBridge? = null
     /** Native PDF editor -> existing Flutter editing stack, no new app shell. */
-    fun deliverEditorSnapshot(paths: List<String>) {
+    fun deliverEditorSnapshot(paths: List<String>, target: String) {
         if (paths.isEmpty()) return
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             channel?.invokeMethod("editorSwitchFromPdf",
-                mapOf("paths" to paths), object : MethodChannel.Result {
+                mapOf("paths" to paths, "target" to target), object : MethodChannel.Result {
                     override fun success(result: Any?) {
                         com.sammyi57.pdftools.EmbeddedPdfSession.exitToDashboard()
                     }
