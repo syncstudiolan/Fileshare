@@ -115,6 +115,7 @@ fun Review(
   var compressionText by remember(doc.id) { mutableStateOf((doc.compressionTargetKb ?: 500).toString()) }
   var compressionError by remember { mutableStateOf("") }
   var modal by remember { mutableStateOf("") } // crop | id-layout | cleanup | markup | reorder | delete | rename | reset
+  var cropInitialIndex by remember { mutableIntStateOf(0) }
   var saving by remember { mutableStateOf(false) }
   var filterAll by remember { mutableStateOf(false) } // Filters: every pick goes to all pages
   val selecting = selected.isNotEmpty()
@@ -308,7 +309,7 @@ fun Review(
     val tools = listOf(
       Triple(I.plusBoxMultipleOutline, "Add", selecting) to onAddMore,
       Triple(I.cameraRetakeOutline, "Retake", selecting) to { onRetake(current) },
-      Triple(I.crop, "Crop", selecting) to { modal = "crop" },
+      Triple(I.crop, "Crop", selecting) to { cropInitialIndex=0; modal = "crop" },
       // ponytail: rotating clears that page's cleanup/markup strokes; transform the strokes instead if people mind.
       Triple(I.rotateRight, "Rotate", false) to { editShots(targets) { s, _ -> s.copy(rotation = (s.rotation + 90) % 360, strokes = emptyList()) } },
       Triple(I.imageFilterBlackWhite, "Filters", false) to { sheet = if (sheet == "filters") "" else "filters" },
@@ -346,10 +347,10 @@ fun Review(
     "id-layout" -> IdCardLayoutEditor(
       current,
       onChange={ page -> editPages(listOf(page.id)) { page } },
-      onCrop={ modal="crop" },
+      onCrop={ index -> cropInitialIndex=index; modal="crop" },
       onClose={ modal="" },
     )
-    "crop" -> CropEditor(current, { modal = "" }) { corners ->
+    "crop" -> CropEditor(current, { modal = "" }, initialSide=cropInitialIndex) { corners ->
       editShots(listOf(current.id)) { sh, p -> val next = corners[p.shots.indexOf(sh)]; if (next == sh.corners) null else sh.copy(corners = next, strokes = emptyList()) }
       modal = ""
     }
@@ -563,8 +564,11 @@ private fun DrawScope.photo(img: ImageBitmap, rot: Int, dw: Float, dh: Float) {
 
 // Adobe Scan's crop screen: drag the four corner handles (with a magnifier under your finger), Auto-detect, or No crop.
 @Composable
-private fun CropEditor(page: ScanPage, onCancel: () -> Unit, onDone: (List<List<Float>?>) -> Unit) {
-  var side by remember { mutableIntStateOf(0) }
+private fun CropEditor(page: ScanPage, onCancel: () -> Unit,
+  initialSide: Int = 0, onDone: (List<List<Float>?>) -> Unit) {
+  var side by remember(page.id,initialSide) {
+    mutableIntStateOf(initialSide.coerceIn(0,page.shots.lastIndex))
+  }
   var all by remember { mutableStateOf(page.shots.map { it.corners ?: FULL_CORNERS }) }
   var drag by remember { mutableStateOf<Triple<Int, Float, Float>?>(null) } // corner, x, y on screen
   val shot = page.shots[side]
