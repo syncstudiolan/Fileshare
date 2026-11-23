@@ -122,18 +122,24 @@ def main()->None:
     if 'Explicit HWND and Shell icon identity' not in window_code:
         window_code=window_code.replace(base_created,
             base_created+'\n'+window_icon_code,1)
-    for directive in (
-        '#include <string>',
-        '#include <shellapi.h>',
-        '#include <shobjidl.h>',
-        '#include <propkey.h>',
-        '#include <propvarutil.h>',
-        '#pragma comment(lib, "shell32.lib")',
-        '#pragma comment(lib, "propsys.lib")',
-        '#pragma comment(lib, "ole32.lib")',
-    ):
-        if directive not in window_code:
-            window_code=directive+'\n'+window_code
+    # Property-store headers require the Windows types already imported by
+    # flutter_window.h; prepending them to the translation unit broke MSVC.
+    shell_headers = """#include <windows.h>
+#include <string>
+#include <shobjidl.h>
+#include <propsys.h>
+#include <propkey.h>
+#include <propvarutil.h>
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "propsys.lib")
+#pragma comment(lib, "ole32.lib")
+"""
+    runner_header='#include "flutter_window.h"'
+    if runner_header not in window_code:
+        raise SystemExit("Flutter Windows runner header changed")
+    window_code=window_code.replace(runner_header,
+        runner_header+'\n'+shell_headers,1)
     flutter_window.write_text(window_code,encoding="utf-8")
     assert 'WM_SETICON, ICON_SMALL' in window_code
     assert 'WM_SETICON, ICON_BIG' in window_code
