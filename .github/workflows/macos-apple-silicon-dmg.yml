@@ -15,7 +15,9 @@ permissions:
 
 jobs:
   macos_dmg:
-    runs-on: macos-latest
+    # Separate ARM64 runner queue repeatedly cancelled before any step started.
+    # Xcode Release builds a universal binary on an Intel Mac; verify arm64 below.
+    runs-on: macos-15-intel
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +29,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(uname -m)" = arm64
+          test "$(uname -m)" = x86_64
+          xcodebuild -version
           flutter config --enable-macos-desktop
+          # CocoaPods works with macOS ONNX and avoids Flutter SPM baseline 12.
+          flutter config --no-enable-swift-package-manager
           flutter create --project-name file_share --platforms=macos .
           # macos-latest uses Homebrew Python with PEP 668 protection;
           # install Pillow in a dedicated environment, never system-wide.
@@ -80,12 +85,14 @@ jobs:
           test -n "$app" && test -d "$app"
           executable=$(find "$app/Contents/MacOS" -maxdepth 1 -type f | head -1)
           test -n "$executable"
-          lipo -info "$executable" | grep -q arm64
+          lipo -info "$executable"
+          lipo -archs "$executable" | tr " " "\\n" | grep -qx arm64
           mkdir -p release/dmg-root
           ditto "$app" "release/dmg-root/File Share.app"
           ln -s /Applications release/dmg-root/Applications
           hdiutil create -volname "File Share" -srcfolder release/dmg-root -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
           test -s release/FileShare-macOS-AppleSilicon.dmg
+          hdiutil verify release/FileShare-macOS-AppleSilicon.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: FileShare-macOS-AppleSilicon-DMG
