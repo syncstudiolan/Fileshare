@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 578,
-    "notes": "ci(android): rerun after fixing both missing splash drawable references",
-    "sha256": "b94fc58f0fa486ea301fde9d70473a56e1b155d31cc49871294c3f6da83319b2",
-    "size": 19257130,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-578/FileShare-Windows-Setup.exe",
+    "build": 580,
+    "notes": "ci(android): use debug-signed ARM64 test APK when production keystore is missing",
+    "sha256": "835d6f81445b233ca8e8742d9002a1016f9c8430934776552867c8f07c638162",
+    "size": 19264687,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-580/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
