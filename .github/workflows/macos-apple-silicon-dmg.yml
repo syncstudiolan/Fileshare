@@ -8,6 +8,8 @@ on:
       - 'lib/main.dart'
       - 'lib/file_share_updates.dart'
       - 'tool/prepare_macos_tray_runner.py'
+      - 'tool/macos/**'
+      - 'lib/lan_engine.dart'
   workflow_dispatch:
 
 permissions:
@@ -84,7 +86,12 @@ jobs:
           set -euo pipefail
           flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter test --reporter expanded --timeout 2m
-          flutter build macos --release
+          # A monotonic macOS-only build number lets the installed .app detect
+          # later DMG releases, without changing Android/Windows/iOS versions.
+          echo "MAC_RELEASE_BUILD=$((600 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          flutter build macos --release \
+            --dart-define=FILE_SHARE_VERSION=0.1.0 \
+            --dart-define=FILE_SHARE_BUILD_NUMBER="$((600 + GITHUB_RUN_NUMBER))"
           app="build/macos/Build/Products/Release/file_share.app"
           if [[ ! -d "$app" ]]; then
             app=$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -type d | head -1)
@@ -114,4 +121,15 @@ jobs:
           gh release create "fileshare-macos-arm64-${GITHUB_SHA:0:8}" release/FileShare-macOS-AppleSilicon.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "File Share macOS Apple Silicon DMG" \
-            --notes "Unsigned and unnotarized Apple Silicon macOS build. macOS Gatekeeper approval may be required. LAN discovery and startup background behavior require testing on real Macs." --prerelease
+            --notes "Unsigned/unnotarized macOS 14+ ARM64-compatible DMG with Bonjour LAN discovery and macOS in-app update check/download. For this first upgrade from an older Mac build, install the DMG once in Finder; later updates can be downloaded and opened inside File Share. Gatekeeper approval and real LAN testing may be required." --prerelease
+      - name: Publish verified macOS update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="fileshare-macos-arm64-${GITHUB_SHA:0:8}"
+          python3 tool/publish_update_manifest.py macos 0.1.0 \
+            "$MAC_RELEASE_BUILD" "$tag" \
+            release/FileShare-macOS-AppleSilicon.dmg \
+            "macOS Bonjour LAN discovery and in-app Finder DMG updater"
