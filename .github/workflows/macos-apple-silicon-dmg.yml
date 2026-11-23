@@ -49,10 +49,10 @@ jobs:
           podfile = Path('macos/Podfile')
           if podfile.exists():
               old = podfile.read_text(encoding='utf-8')
-              new, count = re.subn(r"^\\s*#?\\s*platform\\s*:osx,\\s*'[^']+'",
+              new, count = re.subn(r"^\s*#?\s*platform\s*:osx,\s*'[^']+'",
                                    "platform :osx, '14.0'", old, flags=re.M)
               if not count:
-                  new = "platform :osx, '14.0'\\n" + old
+                  new = "platform :osx, '14.0'\n" + old
               podfile.write_text(new, encoding='utf-8')
           print('Runner and CocoaPods minimum macOS version: 14.0')
           PY
