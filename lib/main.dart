@@ -320,16 +320,21 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   Future<void> exitCompletely() async {
     if (_exiting) return;
     _exiting = true;
-    try { await appLan.stop(); } catch (_) { }
-    try { await _controlChannel?.close(); } catch (_) { }
+    // The updater cannot replace installed DLLs until the ENTIRE process,
+    // including tray, LAN sockets and single-instance lock, is terminated.
+    // Do not let a stalled network shutdown or window manager prevent exit.
+    try { await appLan.stop().timeout(const Duration(seconds:8)); } catch (e) {
+      debugPrint('LAN shutdown before exit: $e');
+    }
+    try { await _controlChannel?.close().timeout(const Duration(seconds:3)); } catch (_) { }
     _controlChannel = null;
-    try { await _instanceLock?.unlock(); } catch (_) { }
-    try { await _instanceLock?.close(); } catch (_) { }
+    try { await _instanceLock?.unlock().timeout(const Duration(seconds:3)); } catch (_) { }
+    try { await _instanceLock?.close().timeout(const Duration(seconds:3)); } catch (_) { }
     _instanceLock = null;
-    try { await desktop_tray.trayManager.destroy(); } catch (_) { }
-    try { await windowManager.setPreventClose(false); } catch (_) { }
-    await windowManager.destroy();
-    // Closing the last macOS window alone does not always quit the process.
+    try { await desktop_tray.trayManager.destroy().timeout(const Duration(seconds:3)); } catch (_) { }
+    try { await windowManager.setPreventClose(false).timeout(const Duration(seconds:3)); } catch (_) { }
+    try { await windowManager.destroy().timeout(const Duration(seconds:3)); } catch (_) { }
+    // A hidden window can otherwise leave a live process in the system tray.
     exit(0);
   }
 
