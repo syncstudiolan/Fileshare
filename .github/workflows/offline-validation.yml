@@ -332,7 +332,7 @@ jobs:
           $count=[FileShareIconProbe]::ExtractIconEx($exe,0,[ref]$large,[ref]$small,1)
           Write-Host "Embedded icon groups=$available; extracted=$count; large=$large; small=$small"
           try {
-            if($count -ne 1 -or $large -eq [IntPtr]::Zero -or $small -eq [IntPtr]::Zero){
+            if($available -lt 1 -or $count -lt 1 -or $large -eq [IntPtr]::Zero -or $small -eq [IntPtr]::Zero){
               throw "Branded File Share icons are missing from the Windows EXE resource"
             }
             Write-Host "PASS: Windows EXE has extractable large and small taskbar icons"
