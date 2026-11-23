@@ -220,9 +220,9 @@ class FileShareUpdates extends ChangeNotifier {
     final folder=Directory('${support.path}${Platform.pathSeparator}updater');
     await folder.create(recursive:true);
     final basename='fileshare-${release!.build}';
-    final helper=File('${folder.path}${Platform.pathSeparator}$'+'{basename}.ps1');
-    final ready=File('${folder.path}${Platform.pathSeparator}$'+'{basename}.ready');
-    final log=File('${folder.path}${Platform.pathSeparator}$'+'{basename}.log');
+    final helper=File('${folder.path}${Platform.pathSeparator}${basename}.ps1');
+    final ready=File('${folder.path}${Platform.pathSeparator}${basename}.ready');
+    final log=File('${folder.path}${Platform.pathSeparator}${basename}.log');
     if(await ready.exists())await ready.delete();
     String quote(String value)=>"'"+value.replaceAll("'","''")+"'";
     final script="""
@@ -293,7 +293,7 @@ try {
     if(!acknowledged){
       final details=await log.exists()?await log.readAsString():'No helper log';
       throw StateError('Update helper did not acknowledge startup. '
-        'The app will remain open. $'+'{details.substring(0,details.length.clamp(0,800))}');
+        'The app will remain open. ${details.length>800?details.substring(0,800):details}');
     }
     await WindowsBackground.instance.exitCompletely();
   }
