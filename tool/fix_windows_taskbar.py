@@ -153,7 +153,7 @@ def main()->None:
     if '#include "resource.h"' not in resources:
         resources='#include "resource.h"\n'+resources
     import re
-    icon_reference=r'(?m)^\\s*IDI_APP_ICON\\s+ICON\\s+[^\\r\\n]+'
+    icon_reference=r'(?m)^\s*IDI_APP_ICON\s+ICON\s+[^\r\n]+'
     canonical='IDI_APP_ICON ICON "resources\\\\app_icon.ico"'
     if re.search(icon_reference,resources):
         resources=re.sub(icon_reference,lambda _:canonical,resources,count=1)
