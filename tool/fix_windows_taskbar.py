@@ -146,9 +146,35 @@ def main()->None:
     assert 'PKEY_AppUserModel_RelaunchIconResource' in window_code
     assert 'PKEY_AppUserModel_ID' in window_code
 
+    # Flutter templates can change their resource and CMake registration.
+    # Force the ICO to be a genuine executable GROUP_ICON resource rather
+    # than relying on an icon file copied next to the installer shortcut.
     resources=RC.read_text(encoding="utf-8")
-    if 'IDI_APP_ICON' not in resources or 'app_icon.ico' not in resources:
-        raise SystemExit("Windows Runner.rc does not reference the branded app_icon.ico")
+    if '#include "resource.h"' not in resources:
+        resources='#include "resource.h"\n'+resources
+    import re
+    icon_reference=r'(?m)^\\s*IDI_APP_ICON\\s+ICON\\s+[^\\r\\n]+'
+    canonical='IDI_APP_ICON ICON "resources\\\\app_icon.ico"'
+    if re.search(icon_reference,resources):
+        resources=re.sub(icon_reference,lambda _:canonical,resources,count=1)
+    else:
+        resources+='\n'+canonical+'\n'
+    RC.write_text(resources,encoding="utf-8")
+    resource_header=ROOT/"windows/runner/resource.h"
+    if not resource_header.is_file() or "IDI_APP_ICON" not in resource_header.read_text():
+        raise SystemExit("Windows IDI_APP_ICON numeric resource ID is missing")
+    runner_cmake=ROOT/"windows/runner/CMakeLists.txt"
+    if not runner_cmake.is_file():
+        raise SystemExit("Generated Windows runner CMakeLists.txt missing")
+    cmake_text=runner_cmake.read_text(encoding="utf-8")
+    if '"Runner.rc"' not in cmake_text:
+        if '"win32_window.cpp"' not in cmake_text:
+            raise SystemExit("Cannot add branded Runner.rc to generated CMake")
+        cmake_text=cmake_text.replace('"win32_window.cpp"',
+          '"win32_window.cpp"\n  "Runner.rc"',1)
+        runner_cmake.write_text(cmake_text,encoding="utf-8")
+    if '"Runner.rc"' not in cmake_text:
+        raise SystemExit("Windows executable will not embed ICO resource")
     from PIL import Image
     with Image.open(ICO) as icon:
         icon.seek(0)
