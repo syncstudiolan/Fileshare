@@ -83,6 +83,33 @@ def patch_window() -> None:
         source = source.replace("import Cocoa\n", "", 1)
         source = source.replace("import FlutterMacOS\n", "", 1)
         text += "\n\n" + source
+    # Generated macOS Runner must register the same Flutter discovery channel
+    # as the iOS and Android native bridges; Dart cannot receive Bonjour peers
+    # without this step even when Info.plist permissions are present.
+    bonjour = ROOT / "tool/macos/FileShareMacLANBonjour.swift"
+    if not bonjour.is_file():
+        raise SystemExit("Native macOS LAN Bonjour bridge missing")
+    if "FileShareMacLANBonjour.register" not in text:
+        registration = "RegisterGeneratedPlugins(registry: flutterViewController)"
+        if registration not in text:
+            raise SystemExit("Cannot register macOS Bonjour channel")
+        text = text.replace(registration, registration + """
+    FileShareMacLANBonjour.register(
+      messenger: flutterViewController.engine.binaryMessenger)""", 1)
+    if "final class FileShareMacLANBonjour" not in text:
+        source = bonjour.read_text(encoding="utf-8")
+        for imported in ("import Cocoa\\n", "import FlutterMacOS\\n",
+                         "import Foundation\\n", "import Darwin\\n"):
+            source = source.replace(imported, "", 1)
+        if "import Darwin" not in text:
+            text = text.replace("import Cocoa\\n",
+                                "import Cocoa\\nimport Darwin\\n", 1)
+        text += "\\n\\n" + source
+    # Guard against brittle generated-runner patching. These contracts must
+    # appear in the compiled MainFlutterWindow.swift, not just external files.
+    if "FileShareMacLANBonjour.register" not in text or (
+         "final class FileShareMacLANBonjour" not in text):
+        raise SystemExit("macOS LAN channel was not embedded in Flutter runner")
     WINDOW.write_text(text,encoding="utf-8")
 
 def patch_delegate() -> None:
