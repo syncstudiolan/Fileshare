@@ -4,6 +4,8 @@ on:
   # Android test build on the explicitly requested merge into main.
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/workflows/macos-apple-silicon-dmg.yml'
   pull_request:
     branches: [main]
   workflow_dispatch:
