@@ -66,6 +66,23 @@ def patch_window() -> None:
     }
 """
         text=text.replace(registration,registration+channel,1)
+    if "FileShareDownloadFolder.register" not in text:
+        registration = "RegisterGeneratedPlugins(registry: flutterViewController)"
+        if registration not in text:
+            raise SystemExit("Cannot register macOS Finder destination channel")
+        text = text.replace(registration, registration + """
+    FileShareDownloadFolder.register(
+      messenger: flutterViewController.engine.binaryMessenger)""", 1)
+    # The macOS project is Flutter-generated in CI. Embedding the source in
+    # an existing compiled Swift file avoids fragile Xcode project rewrites.
+    bridge = ROOT / "tool/macos/FileShareDownloadFolder.swift"
+    if not bridge.is_file():
+        raise SystemExit("Native macOS Finder download bridge is missing")
+    if "final class FileShareDownloadFolder" not in text:
+        source = bridge.read_text(encoding="utf-8")
+        source = source.replace("import Cocoa\n", "", 1)
+        source = source.replace("import FlutterMacOS\n", "", 1)
+        text += "\n\n" + source
     WINDOW.write_text(text,encoding="utf-8")
 
 def patch_delegate() -> None:
@@ -151,6 +168,7 @@ def patch_local_network_permissions() -> None:
             entitlements = plistlib.load(handle)
         entitlements["com.apple.security.network.client"] = True
         entitlements["com.apple.security.network.server"] = True
+        entitlements["com.apple.security.files.user-selected.read-write"] = True
         with path.open("wb") as handle:
             plistlib.dump(entitlements, handle)
     print("macOS Bonjour privacy and sandbox client/server permissions ready")

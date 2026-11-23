@@ -15,6 +15,18 @@ class TransferDownloads {
   final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
   static const _key = 'downloaded_transfer_ids_v1';
   static const _channel = MethodChannel('file_share.native');
+  // iOS/macOS must export through native document-provider APIs. A Unix-style
+  // path under the app container is NOT the user's Files/Downloads folder.
+  static const _appleDownloads = MethodChannel('file_share.downloads');
+
+  Future<String?> appleDownloadFolder() =>
+      _appleDownloads.invokeMethod<String>('getDirectory');
+
+  /// The OS picker grants sandbox access to the chosen folder; the native
+  /// bridge stores a security-scoped bookmark for subsequent downloads.
+  /// Cancel leaves the existing folder unchanged.
+  Future<String?> chooseAppleDownloadFolder() =>
+      _appleDownloads.invokeMethod<String>('chooseDirectory');
 
   Future<void> init() async {
     saved.value = (await _prefs.getStringList(_key) ?? <String>[]).toSet();
@@ -70,6 +82,15 @@ class TransferDownloads {
       await prefs.setString('windows_last_download_folder', folder);
       return target.path;
     }
+    if (Platform.isIOS || Platform.isMacOS) {
+      // Native picker opens on first save if no folder is saved. Copying via
+      // NSFileCoordinator handles iCloud Drive and other document providers.
+      // A cancelled picker returns null so NEW remains on the card.
+      return _appleDownloads.invokeMethod<String>('exportFile', {
+        'path': source.path,
+        'name': safe,
+      });
+    }
     final directory = await getDownloadsDirectory();
     if (directory == null) throw StateError('Downloads directory unavailable');
     await directory.create(recursive: true);
@@ -96,6 +117,75 @@ class TransferDownloads {
     }
     return target;
   }
+}
+
+
+/// iOS Files and macOS Finder destination settings, without changing Android
+/// DCIM/Downloads or the Windows folder picker.
+class AppleDownloadLocationSetting extends StatefulWidget {
+  const AppleDownloadLocationSetting({super.key});
+  @override State<AppleDownloadLocationSetting> createState() =>
+      _AppleDownloadLocationSettingState();
+}
+
+class _AppleDownloadLocationSettingState
+    extends State<AppleDownloadLocationSetting> {
+  String? _folder;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final folder=await TransferDownloads.instance.appleDownloadFolder();
+      if(mounted)setState(() { _folder=folder; _error=null; });
+    } catch(e) {
+      if(mounted)setState(() { _error='Cannot read selected folder: $e'; });
+    }
+  }
+
+  Future<void> _choose() async {
+    if(_busy)return;
+    setState(() => _busy=true);
+    try {
+      final folder=await TransferDownloads.instance.chooseAppleDownloadFolder();
+      if(!mounted)return;
+      if(folder!=null)setState(() { _folder=folder; _error=null; });
+      // Cancel does not erase the previously chosen folder.
+    } catch(e) {
+      if(mounted)setState(() => _error='Cannot select download folder: $e');
+    } finally {
+      if(mounted)setState(() => _busy=false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment:CrossAxisAlignment.stretch,
+    children:[
+      ListTile(
+        leading:const Icon(Icons.folder_open_rounded),
+        title:Text(_folder??'No download folder selected'),
+        subtitle:Text(_folder==null
+            ?'First download will ask you to choose a folder.'
+            :'Files will be saved here until you change it.'),
+      ),
+      if(_error!=null)Padding(
+        padding:const EdgeInsets.only(bottom:8),
+        child:Text(_error!,style:TextStyle(
+          color:Theme.of(context).colorScheme.error))),
+      OutlinedButton.icon(
+        onPressed:_busy?null:_choose,
+        icon:const Icon(Icons.folder_copy_outlined),
+        label:Text(_busy?'Opening folder picker…'
+          :_folder==null?'Choose download folder':'Change download folder')),
+    ],
+  );
 }
 
 /// A tiny, bright badge anchored above the receiver's download icon.

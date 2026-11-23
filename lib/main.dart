@@ -2458,6 +2458,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _copySelectedToFolder()async{
     if(!_selectionActive||_bulkBusy)return;
     final lan=List<LanFile>.of(_chosenLan),cloud=List<CloudFile>.of(_chosenCloud);
+    if(Platform.isIOS||Platform.isMacOS){
+      // Apple sandbox folders cannot be used as plain Dart paths. Use the
+      // same security-scoped, remembered native destination as card Download.
+      setState(()=>_bulkBusy=true);
+      var copied=0, failed=0, cancelled=false;
+      try{
+        for(final file in lan){
+          try{
+            final path=await TransferDownloads.instance.export(
+              File(file.path),file.name);
+            if(path==null){cancelled=true;break;}
+            copied++;
+            await TransferDownloads.instance.markSaved('lan_${file.id}');
+          }catch(_){failed++;}
+        }
+        if(!cancelled){
+          for(final file in cloud){
+            try{
+              final local=await PersonalCloud.instance.download(file);
+              final path=await TransferDownloads.instance.export(local,file.name);
+              if(path==null){cancelled=true;break;}
+              copied++;
+              await TransferDownloads.instance.markSaved('cloud_${file.id}');
+            }catch(_){failed++;}
+          }
+        }
+        if(mounted)_snack('Saved $copied files · $failed failed'
+            + (cancelled?' · folder picker cancelled':''));
+      }finally{
+        if(mounted)setState((){_bulkBusy=false;_clearSelection();});
+      }
+      return;
+    }
     final target=await FilePicker.getDirectoryPath(dialogTitle:'Choose destination folder');
     if(target==null||!mounted)return;
     setState(()=>_bulkBusy=true);
@@ -4088,6 +4121,15 @@ class FeatureDesignPage extends StatelessWidget {
       ]),
     ),
     const SizedBox(height: 14),
+    if (Platform.isIOS || Platform.isMacOS) ...[
+      _section(c,
+        Platform.isIOS ? 'iPhone Files Download Folder'
+                       : 'macOS Finder Download Folder',
+        'Choose a folder once using the system picker. File Share remembers '
+        'the permission for later downloads. Change it here at any time.',
+        const AppleDownloadLocationSetting()),
+      const SizedBox(height:14),
+    ],
     if (Platform.isWindows) ...[
       _section(c, 'Windows Download Destination',
         'Choose a destination each time, or make Downloads the permanent default. '

@@ -211,48 +211,55 @@ class FileShareUpdates extends ChangeNotifier {
   Future<void> _installWindows(File installer) async {
     // The window's X button only hides File Share in the tray.
     // Start a separate, observable hand-off BEFORE shutting down LAN/tray.
-    // The helper itself waits for our exact PID to disappear before opening
-    // the interactive Inno Setup installer with UAC.
+    // A real elevated Setup Wizard must launch BEFORE the app exits.
+    // Its helper then waits for this PID to disappear before finishing setup.
     final oldPid=pid;
     final installedExe=Platform.resolvedExecutable;
-    final installDir=File(installedExe).parent.path;
     final support=await getApplicationSupportDirectory();
     final folder=Directory('${support.path}${Platform.pathSeparator}updater');
     await folder.create(recursive:true);
     final basename='fileshare-${release!.build}';
     final helper=File('${folder.path}${Platform.pathSeparator}${basename}.ps1');
     final ready=File('${folder.path}${Platform.pathSeparator}${basename}.ready');
+    final failed=File('${folder.path}${Platform.pathSeparator}${basename}.failed');
     final log=File('${folder.path}${Platform.pathSeparator}${basename}.log');
     if(await ready.exists())await ready.delete();
+    if(await failed.exists())await failed.delete();
     String quote(String value)=>"'"+value.replaceAll("'","''")+"'";
     final script="""
 \$ErrorActionPreference='Stop'
 \$oldPid=$oldPid
 \$installer=${quote(installer.path)}
 \$installedExe=${quote(installedExe)}
-\$installDir=${quote(installDir)}
 \$ready=${quote(ready.path)}
+\$failed=${quote(failed.path)}
 \$log=${quote(log.path)}
 try {
   if (-not (Test-Path -LiteralPath \$installer)) {
     throw 'Downloaded installer is missing.'
   }
-  # Handoff must be positively acknowledged before the app exits.
-  Set-Content -LiteralPath \$ready -Value 'ready' -Encoding ASCII
-  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Updater started; waiting for File Share PID \$oldPid")
+  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Requesting visible Windows Setup/UAC approval")
+  # Show the REAL elevated Inno wizard before telling Dart to close LAN/tray.
+  # Previously 'ready' was sent before Start-Process, even if UAC failed.
+  # Stable Inno AppId remembers the installed folder (no fragile /DIR quoting).
+  \$arguments=@('/NORESTART','/CLOSEAPPLICATIONS','/LOG')
+  \$setup=Start-Process -FilePath \$installer -Verb RunAs -ArgumentList \$arguments -PassThru
+  if (\$null -eq \$setup) { throw 'Windows could not launch the Setup Wizard.' }
+  Start-Sleep -Milliseconds 350
+  if (\$setup.HasExited -and \$setup.ExitCode -ne 0) {
+    throw "Installer exited before the wizard opened (code \$(\$setup.ExitCode))."
+  }
+  Set-Content -LiteralPath \$ready -Value 'installer-started' -Encoding ASCII
+  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Installer launched; waiting for File Share to exit")
   \$deadline=(Get-Date).AddSeconds(90)
   while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
     if ((Get-Date) -ge \$deadline) {
-      throw 'File Share did not exit completely within 90 seconds.'
+      throw 'File Share did not fully exit for installer within 90 seconds.'
     }
     Start-Sleep -Milliseconds 250
   }
-  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) File Share stopped; opening Setup Wizard")
-  # Launch a normal, visible wizard. Do NOT use silent installer flags.
-  # Stable Inno AppId preserves the existing installation and user data.
-  \$arguments=@('/NORESTART','/CLOSEAPPLICATIONS','/LOG',('/DIR="' + \$installDir + '"'))
-  \$setup=Start-Process -FilePath \$installer -Verb RunAs -ArgumentList \$arguments -PassThru -Wait
-  if (\$null -eq \$setup) { throw 'Windows could not launch the Setup Wizard.' }
+  # The user's ordinary Next / Install / Finish flow stays interactive.
+  \$setup.WaitForExit()
   if (\$setup.ExitCode -ne 0) {
     throw "Setup cancelled or failed (code \$(\$setup.ExitCode))."
   }
@@ -264,36 +271,45 @@ try {
 } catch {
   \$message = "\$(Get-Date -Format o) \$(\$_.Exception.Message)"
   Add-Content -LiteralPath \$log -Value \$message
+  # Denied UAC must not terminate File Share: tell the app why it failed.
+  if (-not (Test-Path -LiteralPath \$ready)) {
+    Set-Content -LiteralPath \$failed -Value \$_.Exception.Message
+  }
   # Keep failure visible instead of silently losing the running application.
   Add-Type -AssemblyName PresentationFramework
   [System.Windows.MessageBox]::Show(
     ("File Share update failed: " + \$_.Exception.Message +
        [Environment]::NewLine + "Details: " + \$log),
     'File Share Update','OK','Error') | Out-Null
-  if (Test-Path -LiteralPath \$installedExe) {
+  if ((Test-Path -LiteralPath \$ready) -and
+      (Test-Path -LiteralPath \$installedExe)) {
     Start-Process -FilePath \$installedExe
   }
 }
 """;
     await helper.writeAsString(script,flush:true);
     final process=await Process.start('powershell.exe',[
-      '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',helper.path,
+      '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass',
+      '-WindowStyle','Hidden','-File',helper.path,
     ],mode:ProcessStartMode.detached);
     if(process.pid<=0)throw StateError('Updater helper failed to start.');
-    // In particular: NEVER terminate the live tray process if PowerShell
-    // was blocked by policy, antivirus, or missing runtime.
+    // Keep the tray process alive while Windows shows UAC. Shut down only
+    // after Start-Process succeeded, not merely when PowerShell starts.
     var acknowledged=false;
-    for(var attempt=0;attempt<80;attempt++){
+    for(var attempt=0;attempt<360;attempt++){
       if(await ready.exists()){
-        acknowledged=(await ready.readAsString()).trim()=='ready';
+        acknowledged=(await ready.readAsString()).trim()=='installer-started';
         if(acknowledged)break;
       }
-      await Future<void>.delayed(const Duration(milliseconds:100));
+      if(await failed.exists()){
+        final details=await failed.readAsString();
+        throw StateError('Windows blocked or cancelled installer: $details');
+      }
+      await Future<void>.delayed(const Duration(milliseconds:250));
     }
     if(!acknowledged){
-      final details=await log.exists()?await log.readAsString():'No helper log';
-      throw StateError('Update helper did not acknowledge startup. '
-        'The app will remain open. ${details.length>800?details.substring(0,800):details}');
+      throw StateError('Setup Wizard could not be started. File Share remains '
+        'running; check updater log: ${log.path}');
     }
     await WindowsBackground.instance.exitCompletely();
   }
