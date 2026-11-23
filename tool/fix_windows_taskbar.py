@@ -65,27 +65,116 @@ def main()->None:
     if '#include "resource.h"' not in window_code:
         window_code='#include "resource.h"\n'+window_code
     on_create='bool FlutterWindow::OnCreate() {'
-    window_icon_code='''  // File Share branded taskbar and Alt-Tab icons.
+    window_icon_code='''  // Explicit HWND and Shell icon identity: Windows taskbar/pinned
+  // shortcuts can prefer AppUserModel relaunch resources over WM_GETICON.
   HWND hwnd = GetHandle();
-  HINSTANCE module = GetModuleHandle(nullptr);
-  HICON iconSmall = static_cast<HICON>(LoadImage(
-      module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
-  HICON iconLarge = static_cast<HICON>(LoadImage(
-      module, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
-  if (hwnd && iconSmall) SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(iconSmall));
-  if (hwnd && iconLarge) SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(iconLarge));
+  if (hwnd) {
+    HINSTANCE module = GetModuleHandleW(nullptr);
+    HICON iconSmall = reinterpret_cast<HICON>(LoadImageW(
+        module, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, 16, 16,
+        LR_DEFAULTCOLOR | LR_SHARED));
+    HICON iconLarge = reinterpret_cast<HICON>(LoadImageW(
+        module, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, 32, 32,
+        LR_DEFAULTCOLOR | LR_SHARED));
+    if (iconSmall) SendMessageW(hwnd, WM_SETICON, ICON_SMALL,
+                               reinterpret_cast<LPARAM>(iconSmall));
+    if (iconLarge) SendMessageW(hwnd, WM_SETICON, ICON_BIG,
+                               reinterpret_cast<LPARAM>(iconLarge));
+
+    IPropertyStore* store = nullptr;
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(
+        hwnd, IID_PPV_ARGS(&store)))) {
+      wchar_t exePath[MAX_PATH] = {};
+      if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
+        std::wstring resource = std::wstring(exePath) + L",-"
+                              + std::to_wstring(IDI_APP_ICON);
+        PROPVARIANT value{};
+        if (SUCCEEDED(InitPropVariantFromString(resource.c_str(), &value))) {
+          store->SetValue(PKEY_AppUserModel_RelaunchIconResource, value);
+          PropVariantClear(&value);
+        }
+        const std::wstring command = L"\\\"" + std::wstring(exePath) + L"\\\"";
+        if (SUCCEEDED(InitPropVariantFromString(command.c_str(), &value))) {
+          store->SetValue(PKEY_AppUserModel_RelaunchCommand, value);
+          PropVariantClear(&value);
+        }
+      }
+      // Set window AppID AFTER relaunch properties, matching installer links.
+      PROPVARIANT appID{};
+      if (SUCCEEDED(InitPropVariantFromString(L"FileShare.Desktop", &appID))) {
+        store->SetValue(PKEY_AppUserModel_ID, appID);
+        PropVariantClear(&appID);
+      }
+      store->Release();
+    }
+  }
 '''
     if on_create not in window_code:
         raise SystemExit("Unknown Flutter Windows runner: OnCreate signature changed")
-    if 'File Share branded taskbar and Alt-Tab icons.' not in window_code:
-        window_code=window_code.replace(on_create,on_create+'\n'+window_icon_code,1)
+    # Install after Win32Window::OnCreate has created the HWND, not before.
+    # The previous patch injected at function entry, so GetHandle() could
+    # be null and WM_SETICON silently had no effect on the taskbar.
+    base_created='''  if (!Win32Window::OnCreate()) {
+    return false;
+  }'''
+    if base_created not in window_code:
+        raise SystemExit("FlutterWindow::OnCreate base HWND setup has changed")
+    if 'Explicit HWND and Shell icon identity' not in window_code:
+        window_code=window_code.replace(base_created,
+            base_created+'\n'+window_icon_code,1)
+    # Property-store headers require the Windows types already imported by
+    # flutter_window.h; prepending them to the translation unit broke MSVC.
+    shell_headers = """#include <windows.h>
+#include <string>
+#include <shobjidl.h>
+#include <propsys.h>
+#include <propkey.h>
+#include <propvarutil.h>
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "propsys.lib")
+#pragma comment(lib, "ole32.lib")
+"""
+    runner_header='#include "flutter_window.h"'
+    if runner_header not in window_code:
+        raise SystemExit("Flutter Windows runner header changed")
+    window_code=window_code.replace(runner_header,
+        runner_header+'\n'+shell_headers,1)
     flutter_window.write_text(window_code,encoding="utf-8")
     assert 'WM_SETICON, ICON_SMALL' in window_code
     assert 'WM_SETICON, ICON_BIG' in window_code
+    assert 'PKEY_AppUserModel_RelaunchIconResource' in window_code
+    assert 'PKEY_AppUserModel_ID' in window_code
 
+    # Flutter templates can change their resource and CMake registration.
+    # Force the ICO to be a genuine executable GROUP_ICON resource rather
+    # than relying on an icon file copied next to the installer shortcut.
     resources=RC.read_text(encoding="utf-8")
-    if 'IDI_APP_ICON' not in resources or 'app_icon.ico' not in resources:
-        raise SystemExit("Windows Runner.rc does not reference the branded app_icon.ico")
+    if '#include "resource.h"' not in resources:
+        resources='#include "resource.h"\n'+resources
+    import re
+    icon_reference=r'(?m)^\s*IDI_APP_ICON\s+ICON\s+[^\r\n]+'
+    canonical='IDI_APP_ICON ICON "resources\\\\app_icon.ico"'
+    if re.search(icon_reference,resources):
+        resources=re.sub(icon_reference,lambda _:canonical,resources,count=1)
+    else:
+        resources+='\n'+canonical+'\n'
+    RC.write_text(resources,encoding="utf-8")
+    resource_header=ROOT/"windows/runner/resource.h"
+    if not resource_header.is_file() or "IDI_APP_ICON" not in resource_header.read_text():
+        raise SystemExit("Windows IDI_APP_ICON numeric resource ID is missing")
+    runner_cmake=ROOT/"windows/runner/CMakeLists.txt"
+    if not runner_cmake.is_file():
+        raise SystemExit("Generated Windows runner CMakeLists.txt missing")
+    cmake_text=runner_cmake.read_text(encoding="utf-8")
+    if '"Runner.rc"' not in cmake_text:
+        if '"win32_window.cpp"' not in cmake_text:
+            raise SystemExit("Cannot add branded Runner.rc to generated CMake")
+        cmake_text=cmake_text.replace('"win32_window.cpp"',
+          '"win32_window.cpp"\n  "Runner.rc"',1)
+        runner_cmake.write_text(cmake_text,encoding="utf-8")
+    if '"Runner.rc"' not in cmake_text:
+        raise SystemExit("Windows executable will not embed ICO resource")
     from PIL import Image
     with Image.open(ICO) as icon:
         icon.seek(0)
