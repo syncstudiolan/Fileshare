@@ -98,13 +98,13 @@ def patch_window() -> None:
       messenger: flutterViewController.engine.binaryMessenger)""", 1)
     if "final class FileShareMacLANBonjour" not in text:
         source = bonjour.read_text(encoding="utf-8")
-        for imported in ("import Cocoa\\n", "import FlutterMacOS\\n",
-                         "import Foundation\\n", "import Darwin\\n"):
+        for imported in ("import Cocoa\n", "import FlutterMacOS\n",
+                         "import Foundation\n", "import Darwin\n"):
             source = source.replace(imported, "", 1)
         if "import Darwin" not in text:
-            text = text.replace("import Cocoa\\n",
-                                "import Cocoa\\nimport Darwin\\n", 1)
-        text += "\\n\\n" + source
+            text = text.replace("import Cocoa\n",
+                                "import Cocoa\nimport Darwin\n", 1)
+        text += "\n\n" + source
     # Guard against brittle generated-runner patching. These contracts must
     # appear in the compiled MainFlutterWindow.swift, not just external files.
     if "FileShareMacLANBonjour.register" not in text or (
