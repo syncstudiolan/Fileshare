@@ -175,14 +175,28 @@ class LanEngine extends ChangeNotifier {
     await _bindReceiver();
     // Recover automatically if an older app process temporarily owns the port.
     _listenerRetry = Timer.periodic(const Duration(seconds: 8), (_) {
-      if (_server == null) unawaited(_bindReceiver());
+      if (_server != null) return;
+      unawaited(_bindReceiver().then((_) async {
+        // If a background copy of File Share temporarily held the TCP port,
+        // discovery must start when the receiver finally becomes available.
+        // Previously the retry re-bound TCP but never advertised that socket.
+        if (_server == null || _disposed) return;
+        if (testSupportDirectory == null &&
+            (Platform.isIOS || Platform.isAndroid || Platform.isMacOS) &&
+            !_bonjourStarted) {
+          await _startBonjour();
+        }
+        if (testSupportDirectory == null && Platform.isWindows &&
+            _windowsDiscovery == null) {
+          await _startWindowsBonjour();
+        }
+      }));
     });
     // iOS rejects raw UDP broadcast without Apple's restricted multicast
-    // entitlement. Bonjour is the system-supported discovery mechanism.
-    // Android keeps the UDP v1 discovery for existing older clients.
-    // Isolated unit tests need only the TCP queue/receiver. Broadcasting on
-    // hosted macOS runners can fail with 'No route to host' even while the
-    // local TCP port is usable. Production discovery is unchanged.
+    // entitlement. macOS can also lose IPv4 broadcasts due to network and
+    // firewall policies. Bonjour DNS-SD is shared by iOS, Android and macOS;
+    // keep UDP v1 on desktops/Android only for older LAN clients.
+    // Isolated unit tests need only the TCP queue/receiver.
     if (testSupportDirectory == null && !Platform.isIOS) try {
       _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
         discoveryPort, reuseAddress: true);
@@ -196,12 +210,15 @@ class LanEngine extends ChangeNotifier {
       });
       refresh();
       _heartbeat = Timer.periodic(const Duration(seconds: 5), (_) {
-        refresh();
+        // UDP announce only. Restarting Bonjour every five seconds would
+        // repeatedly drop peers while NSNetServiceBrowser is resolving.
+        refresh(refreshBonjour: false);
         _expirePeers();
         _dispatchQueued();
       });
     } catch (e) { error = 'LAN broadcast unavailable: ' + e.toString(); }
-    if (testSupportDirectory == null && (Platform.isIOS || Platform.isAndroid)) {
+    if (testSupportDirectory == null &&
+        (Platform.isIOS || Platform.isAndroid || Platform.isMacOS)) {
       await _startBonjour();
     }
     if (testSupportDirectory == null && Platform.isWindows) {
@@ -310,8 +327,8 @@ class LanEngine extends ChangeNotifier {
     }
   }
 
-  /// iOS Bonjour and Android NsdManager advertise the same TCP receiver.
-  /// Both platforms announce stable IDs via TXT records and resolve to IPv4.
+  /// iOS and macOS NetService, and Android NsdManager, advertise the same
+  /// TCP receiver using stable device IDs in TXT records and IPv4 peers.
   Future<void> _startBonjour() async {
     if (_bonjourStarted || _server == null || deviceId == null) return;
     _bonjour.setMethodCallHandler((call) async {
@@ -341,7 +358,9 @@ class LanEngine extends ChangeNotifier {
       final first = !peers.containsKey(id);
       _bonjourPeerIds.add(id);
       if (error?.startsWith('Nearby discovery:') == true ||
-          error?.startsWith('Bonjour discovery unavailable:') == true) {
+          error?.startsWith('Bonjour discovery unavailable:') == true ||
+          (Platform.isMacOS &&
+           error?.startsWith('LAN broadcast unavailable:') == true)) {
         error = null;
       }
       peers[id] = LanPeer(id, safeFileName(name is String ? name : 'Device'),
@@ -365,9 +384,11 @@ class LanEngine extends ChangeNotifier {
 
   Future<void> retryReceiver() => _bindReceiver();
 
-  void refresh() {
-    // Manual refresh must work on iPhone even though raw UDP broadcast is off.
-    if (_bonjourStarted && Platform.isIOS) {
+  void refresh({bool refreshBonjour = true}) {
+    // Manual refresh must work on iOS/macOS through native Bonjour. Heartbeat
+    // calls this with refreshBonjour:false to avoid tearing down the browser.
+    if (refreshBonjour && _bonjourStarted &&
+        (Platform.isIOS || Platform.isMacOS)) {
       unawaited(_bonjour.invokeMethod<void>('refresh').catchError((Object e) {
         error = 'Nearby refresh failed: $e';
         _notify();
