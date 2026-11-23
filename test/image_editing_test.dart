@@ -79,6 +79,16 @@ void main(){
     expect(image!.width,greaterThan(0));
   });
 
+  test('Small target JPEG keeps maximum resolution when it already fits',()async{
+    final input=example();
+    final result=await ImageEditingEngine.compress(input,
+      targetKb:20,quality:92,format:'JPEG');
+    final decoded=img.decodeJpg(result)!;
+    expect(result.length,lessThanOrEqualTo(20*1024));
+    expect(decoded.width,80);
+    expect(decoded.height,50);
+  });
+
   test('Compression uses current edited cutout and flattens JPEG on white',()async{
     final mask=Uint8List.fromList(List<int>.generate(80*50,
       (index)=>index%80<40?0:255));
