@@ -2458,6 +2458,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   Future<void> _copySelectedToFolder()async{
     if(!_selectionActive||_bulkBusy)return;
     final lan=List<LanFile>.of(_chosenLan),cloud=List<CloudFile>.of(_chosenCloud);
+    if(Platform.isIOS||Platform.isMacOS){
+      // Apple sandbox folders cannot be used as plain Dart paths. Use the
+      // same security-scoped, remembered native destination as card Download.
+      setState(()=>_bulkBusy=true);
+      var copied=0, failed=0, cancelled=false;
+      try{
+        for(final file in lan){
+          try{
+            final path=await TransferDownloads.instance.export(
+              File(file.path),file.name);
+            if(path==null){cancelled=true;break;}
+            copied++;
+            await TransferDownloads.instance.markSaved('lan_${file.id}');
+          }catch(_){failed++;}
+        }
+        if(!cancelled){
+          for(final file in cloud){
+            try{
+              final local=await PersonalCloud.instance.download(file);
+              final path=await TransferDownloads.instance.export(local,file.name);
+              if(path==null){cancelled=true;break;}
+              copied++;
+              await TransferDownloads.instance.markSaved('cloud_${file.id}');
+            }catch(_){failed++;}
+          }
+        }
+        if(mounted)_snack('Saved $copied files · $failed failed'
+            + (cancelled?' · folder picker cancelled':''));
+      }finally{
+        if(mounted)setState((){_bulkBusy=false;_clearSelection();});
+      }
+      return;
+    }
     final target=await FilePicker.getDirectoryPath(dialogTitle:'Choose destination folder');
     if(target==null||!mounted)return;
     setState(()=>_bulkBusy=true);
