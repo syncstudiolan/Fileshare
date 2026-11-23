@@ -6,6 +6,7 @@ and before building a signed macOS .app. Does not run Flutter or release.
 """
 from __future__ import annotations
 import json
+import plistlib
 from pathlib import Path
 from PIL import Image
 
@@ -127,10 +128,39 @@ def brand_icons() -> None:
                 ICONSET/filename,format="PNG")
     print("File Share branded macOS Dock and launcher icons ready")
 
+def patch_local_network_permissions() -> None:
+    """Give unsigned Apple Silicon builds the same LAN discovery rights as iOS."""
+    info = ROOT / "macos/Runner/Info.plist"
+    if not info.is_file():
+        raise SystemExit("Generated macOS Info.plist missing")
+    with info.open("rb") as handle:
+        data = plistlib.load(handle)
+    data["NSLocalNetworkUsageDescription"] = (
+        "Discover nearby File Share devices and transfer files over local Wi-Fi."
+    )
+    data["NSBonjourServices"] = ["_fileshare._tcp"]
+    data["NSCameraUsageDescription"] = "Capture photos to share."
+    data["NSMicrophoneUsageDescription"] = "Capture video to share."
+    with info.open("wb") as handle:
+        plistlib.dump(data, handle)
+    for name in ("Release.entitlements", "DebugProfile.entitlements"):
+        path = ROOT / "macos/Runner" / name
+        if not path.is_file():
+            raise SystemExit(f"Generated macOS entitlement missing: {name}")
+        with path.open("rb") as handle:
+            entitlements = plistlib.load(handle)
+        entitlements["com.apple.security.network.client"] = True
+        entitlements["com.apple.security.network.server"] = True
+        with path.open("wb") as handle:
+            plistlib.dump(entitlements, handle)
+    print("macOS Bonjour privacy and sandbox client/server permissions ready")
+
+
 def main() -> None:
     patch_window()
     patch_delegate()
     brand_icons()
+    patch_local_network_permissions()
     print("macOS menu-bar login, close-to-tray and native hidden launch patched.")
 
 if __name__=="__main__":
