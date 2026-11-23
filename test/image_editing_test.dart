@@ -89,6 +89,22 @@ void main(){
     expect(decoded.height,50);
   });
 
+  test('Lossless PNG compression retains all pixels when target fits',()async{
+    final input=example();
+    final result=await ImageEditingEngine.compress(input,
+      targetKb:50,format:'PNG');
+    final before=img.decodeImage(input)!;
+    final after=img.decodeImage(result)!;
+    expect(result.length,lessThanOrEqualTo(50*1024));
+    expect(after.width,before.width);
+    expect(after.height,before.height);
+    for(final point in <(int,int)>[(0,0),(25,12),(79,49)]){
+      final a=before.getPixel(point.$1,point.$2);
+      final b=after.getPixel(point.$1,point.$2);
+      expect([b.r,b.g,b.b,b.a],[a.r,a.g,a.b,a.a]);
+    }
+  });
+
   test('Compression uses current edited cutout and flattens JPEG on white',()async{
     final mask=Uint8List.fromList(List<int>.generate(80*50,
       (index)=>index%80<40?0:255));
