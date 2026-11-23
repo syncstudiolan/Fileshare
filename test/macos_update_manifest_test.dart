@@ -12,7 +12,7 @@ void main() {
     'build': 620,
     'url': url,
     'size': 123456,
-    'sha256': 'a' * 64,
+    'sha256': List<String>.filled(64, 'a').join(),
     'notes': 'macOS LAN Bonjour',
   };
 
