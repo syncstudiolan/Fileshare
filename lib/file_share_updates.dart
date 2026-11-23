@@ -214,6 +214,7 @@ class FileShareUpdates extends ChangeNotifier {
     // tray, single-instance lock and the Flutter process itself.
     final oldPid=pid;
     final installedExe=Platform.resolvedExecutable;
+    final installDir=File(installedExe).parent.path;
     final helperDir=await getApplicationSupportDirectory();
     final helper=File('${helperDir.path}${Platform.pathSeparator}'
       'fileshare-updater-${release!.build}.ps1');
@@ -223,6 +224,7 @@ class FileShareUpdates extends ChangeNotifier {
 \$oldPid = $oldPid
 \$installer = ${psQuote(installer.path)}
 \$installedExe = ${psQuote(installedExe)}
+\$installDir = ${psQuote(installDir)}
 \$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
 try {
   \$deadline = (Get-Date).AddSeconds(90)
@@ -234,7 +236,7 @@ try {
   }
   # Elevation is explicit and the Inno Setup wizard remains interactive.
   # Never use /SILENT or /VERYSILENT.
-  \$setup = Start-Process -FilePath \$installer -Verb RunAs -PassThru -Wait -ArgumentList @('/NORESTART','/CLOSEAPPLICATIONS','/LOG')
+  \$setup = Start-Process -FilePath \$installer -Verb RunAs -PassThru -Wait -ArgumentList @('/NORESTART','/CLOSEAPPLICATIONS','/LOG',('/DIR=' + '"' + \$installDir + '"'))
   if (\$setup.ExitCode -ne 0) {
     throw "Installer cancelled or failed (exit code \$(\$setup.ExitCode))."
   }
