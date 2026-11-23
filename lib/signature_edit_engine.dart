@@ -248,7 +248,9 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
   final target=request['target'] as int;
   // Preserve legible ink edges: find the highest quality that fits at each
   // resolution, reducing dimensions before resorting to destructive Q3 JPEG.
+  final fullResolution=cropped;
   var candidate=cropped;
+  var scale=1.0;
   const minimumQuality=68;
   for(var pass=0;pass<28;pass++) {
     var low=minimumQuality,high=96;
@@ -274,8 +276,13 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
     final height=candidate.height<=24?candidate.height:
       math.max(24,(candidate.height*factor).floor());
     if(width==candidate.width&&height==candidate.height)break;
-    candidate=img.copyResize(candidate,width:width,height:height,
-      interpolation:img.Interpolation.average);
+    // Always resample from the full-resolution edit, not an already resized
+    // candidate. Chained averaging blurs thin signature strokes.
+    scale*=factor;
+    candidate=img.copyResize(fullResolution,
+      width:math.max(1,(fullResolution.width*scale).floor()),
+      height:math.max(1,(fullResolution.height*scale).floor()),
+      interpolation:img.Interpolation.cubic);
   }
   throw StateError(
     'Exact ${(target/1024).round()} KB cannot retain readable ink. '
