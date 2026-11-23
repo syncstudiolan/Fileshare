@@ -49,17 +49,17 @@ jobs:
           project.write_text(updated)
           podfile=Path('macos/Podfile')
           contents=podfile.read_text()
-          contents,n=re.subn(r"^#?\\s*platform\\s*:osx,\\s*'[^']+'",
+          contents,n=re.subn(r"^#?\s*platform\s*:osx,\s*'[^']+'",
                             "platform :osx, '14.0'",contents,flags=re.M)
           if n==0:
-              contents="platform :osx, '14.0'\\n"+contents
+              contents="platform :osx, '14.0'\n"+contents
           podfile.write_text(contents)
           # Flutter may generate SwiftPM with its older 12.0 baseline.
           # Align the umbrella package with the app and ONNX requirement.
           package=Path('macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift')
           if package.is_file():
               original=package.read_text()
-              adjusted,n=re.subn(r'\\.macOS\\("[0-9.]+"\\)', '.macOS("14.0")',original)
+              adjusted,n=re.subn(r'\.macOS\("[0-9.]+"\)', '.macOS("14.0")',original)
               if n: package.write_text(adjusted)
           print('macOS deployment targets set to 14.0 (Apple Silicon)')
           PY
