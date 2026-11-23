@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 585,
-    "notes": "fix(ios): correct ONNX dependency version regex escaping in build script",
-    "sha256": "a513e5fa482bb9c64e63e612160cd320345c76ef067b50e6ee4b1aee14cbafc8",
+    "build": 593,
+    "notes": "ci(macos): target hosted Apple Silicon and run on changes to updater or LAN permissions",
+    "sha256": "5a1a69197c576f29679602c5149c240a342e4f104610f2f81bd154998fb50268",
     "size": 114585797,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-585/FileShare-Android-ARM64-Release.apk",
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-593/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
