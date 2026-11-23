@@ -104,7 +104,12 @@ class FileShareUpdates extends ChangeNotifier {
       if(parsed==null)throw const FormatException('Invalid release metadata');
       if(parsed.build>_currentBuild) {
         release=parsed;
-        stage=downloaded!=null && await downloaded!.exists()
+        final cached=downloaded;
+        final matchingCache=cached!=null &&
+            cached.path.endsWith('-${parsed.build}.' +
+              (Platform.isAndroid?'apk':Platform.isMacOS?'dmg':'exe'));
+        if(!matchingCache) downloaded=null;
+        stage=matchingCache && await cached!.exists()
           ?UpdateStage.ready:UpdateStage.available;
         if(startup && _suppressedBuild!=parsed.build)showPopup=true;
       } else {
@@ -349,6 +354,29 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
     if(context.mounted)FileShareTopNotice.show(context,
       'IPA link copied. Re-sign with your existing AppleJR certificate and bundle ID before installing.');
   }
+  Future<void> _confirmMacInstall() async {
+    if(!mounted)return;
+    final proceed=await showDialog<bool>(
+      context:context,
+      builder:(dialogContext)=>AlertDialog(
+        title:const Text('Install File Share update on Mac'),
+        content:const Text(
+          'The verified DMG will open in Finder and File Share will quit '
+          'completely, including its menu-bar LAN service. In the DMG '
+          'window, drag File Share.app to Applications, select Replace '
+          'if asked, then open File Share from Applications. Your files '
+          'and settings are not stored inside the .app bundle.'),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialogContext,false),
+            child:const Text('Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(dialogContext,true),
+            child:const Text('Open DMG and quit')),
+        ],
+      ),
+    );
+    if(proceed==true)await updates.install();
+  }
+
   @override void initState(){super.initState();updates.addListener(_changed);}
   void _changed(){if(mounted)setState((){});}
   @override void dispose(){updates.removeListener(_changed);super.dispose();}
@@ -406,7 +434,8 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
                 icon:const Icon(Icons.download_rounded),
                 label:const Text('Download now')),
             if(stage==UpdateStage.ready)
-              FilledButton.icon(onPressed:updates.install,
+              FilledButton.icon(
+                onPressed:Platform.isMacOS?_confirmMacInstall:updates.install,
                 icon:const Icon(Icons.install_mobile_outlined),
                 label:Text(Platform.isAndroid?'Install update':
                   Platform.isMacOS?'Open DMG installer and quit':'Install and restart')),
