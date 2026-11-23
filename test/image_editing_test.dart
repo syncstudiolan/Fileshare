@@ -149,4 +149,20 @@ void main(){
     expect(decoded.height,greaterThan(32));
   });
 
+  test('Enhance-ready cutout keeps transparency through PNG compression',()async{
+    final mask=Uint8List.fromList(List<int>.generate(80*50,
+      (index)=>index%80<40?0:255));
+    final cutout=await ImageEditingEngine.edit(example(),'background',{
+      'mask':mask,'maskWidth':80,'maskHeight':50,
+    });
+    final adjusted=await ImageEditingEngine.edit(cutout,'adjust',{
+      'brightness':1.05,'contrast':1.1,
+    });
+    final png=await ImageEditingEngine.compress(adjusted,
+      targetKb:100,format:'PNG');
+    final image=img.decodeImage(png)!;
+    expect(image.getPixel(2,2).a,0);
+    expect(image.getPixel(70,30).a,255);
+  });
+
 }
