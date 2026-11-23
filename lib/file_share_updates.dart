@@ -262,7 +262,7 @@ try {
   Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Setup complete; relaunching File Share")
   Start-Process -FilePath \$installedExe
 } catch {
-  \$message = "\$(Get-Date -Format o) \$($_.Exception.Message)"
+  \$message = "\$(Get-Date -Format o) \$(\$_.Exception.Message)"
   Add-Content -LiteralPath \$log -Value \$message
   # Keep failure visible instead of silently losing the running application.
   Add-Type -AssemblyName PresentationFramework
