@@ -43,7 +43,7 @@ class UpdateRelease {
         size is! int || size<1 ||
         url is! String || !url.startsWith(_allowedDownloadPrefix) ||
         !Uri.tryParse(url)!.hasScheme ||
-        !url.endsWith(platform=='android' ? '.apk' : platform=='ios' ? '.ipa' : '.exe') ||
+        !url.endsWith(platform=='android' ? '.apk' : platform=='ios' ? '.ipa' : platform=='macos' ? '.dmg' : '.exe') ||
         hash is! String || !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
       return null;
     }
@@ -69,7 +69,7 @@ class FileShareUpdates extends ChangeNotifier {
   int _currentBuild=1;
   String _currentVersion='0.1.0';
   String get currentLabel=>'$_currentVersion (build $_currentBuild)';
-  bool get supported=>Platform.isAndroid||Platform.isWindows||Platform.isIOS;
+  bool get supported=>Platform.isAndroid||Platform.isWindows||Platform.isIOS||Platform.isMacOS;
 
   void initializeVersion(String version,int build){
     _currentVersion=version;
@@ -99,7 +99,7 @@ class FileShareUpdates extends ChangeNotifier {
       if(data is! Map<String,dynamic>||data['schema']!=1){
         throw const FormatException('Unsupported update manifest');
       }
-      final platform=Platform.isAndroid?'android':Platform.isIOS?'ios':'windows';
+      final platform=Platform.isAndroid?'android':Platform.isIOS?'ios':Platform.isMacOS?'macos':'windows';
       final parsed=UpdateRelease.fromJson(data[platform],platform);
       if(parsed==null)throw const FormatException('Invalid release metadata');
       if(parsed.build>_currentBuild) {
@@ -140,8 +140,8 @@ class FileShareUpdates extends ChangeNotifier {
       final directory=await getApplicationSupportDirectory();
       final folder=Directory('${directory.path}${Platform.pathSeparator}updates');
       await folder.create(recursive:true);
-      final extension=Platform.isAndroid?'apk':'exe';
-      final name='FileShare-${Platform.isAndroid?'Android':'Windows'}-${next.build}.$extension';
+      final extension=Platform.isAndroid?'apk':Platform.isMacOS?'dmg':'exe';
+      final name='FileShare-${Platform.isAndroid?'Android':Platform.isMacOS?'macOS':'Windows'}-${next.build}.$extension';
       final file=File('${folder.path}${Platform.pathSeparator}$name');
       partial=File('${file.path}.download');
       if(await partial.exists())await partial.delete();
@@ -200,12 +200,34 @@ class FileShareUpdates extends ChangeNotifier {
           'installDownloadedApk',{'path':file.path});
       } else if(Platform.isWindows) {
         await _installWindows(file);
+      } else if(Platform.isMacOS) {
+        await _installMacOS(file);
       }
     }catch(e) {
       stage=UpdateStage.failed;
       error='Could not open installer: $e';
       notifyListeners();
     }
+  }
+
+  /// On macOS a DMG is a Finder disk image, not an Inno/PKG installer.
+  /// A sandboxed, unsigned app must not silently overwrite itself in
+  /// /Applications or bypass Gatekeeper/authorization. The user performs the
+  /// normal Finder Replace confirmation after this app fully quits.
+  Future<void> _installMacOS(File dmg) async {
+    if(!Platform.isMacOS)return;
+    if(!await dmg.exists())throw StateError('Downloaded Mac DMG is missing.');
+    // LaunchServices mounts and opens the disk image; the user can then drag
+    // File Share.app over Applications and approve Replace in Finder.
+    final opened=await Process.run('/usr/bin/open',[dmg.path]);
+    if(opened.exitCode!=0){
+      throw StateError('macOS could not open the DMG: ${opened.stderr}');
+    }
+    showPopup=false;
+    notifyListeners();
+    // Closing the window alone hides the desktop tray. Exit the *entire*
+    // running File Share process to release the old application bundle.
+    await WindowsBackground.instance.exitCompletely();
   }
 
   Future<void> _installWindows(File installer) async {
@@ -386,9 +408,12 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
             if(stage==UpdateStage.ready)
               FilledButton.icon(onPressed:updates.install,
                 icon:const Icon(Icons.install_mobile_outlined),
-                label:Text(Platform.isAndroid?'Install update':'Install and restart')),
+                label:Text(Platform.isAndroid?'Install update':
+                  Platform.isMacOS?'Open DMG installer and quit':'Install and restart')),
             if(stage==UpdateStage.installing)
-              const Text('System installer is opening. Confirm when prompted.'),
+              Text(Platform.isMacOS
+                ?'Opening the verified DMG in Finder and closing File Share. Drag File Share.app into Applications, choose Replace, then reopen File Share from Applications.'
+                :'System installer is opening. Confirm when prompted.'),
             if(stage!=UpdateStage.downloading &&
                 stage!=UpdateStage.installing)
               OutlinedButton.icon(
@@ -398,7 +423,9 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
             const SizedBox(height:10),
             Text(Platform.isIOS
               ?'iOS: this GitHub IPA is UNSIGNED. AppleJR must sign the new build using the same certificate, provisioning profile and bundle ID before installing it over the current app. File Share cannot silently install an IPA on iOS.'
-              :'Android needs an OS install confirmation. Windows may request administrator approval. Only verified GitHub Releases are installed.',
+              :Platform.isMacOS
+                ?'macOS uses a verified DMG: tap Open DMG installer and quit. In Finder, drag File Share.app to Applications, choose Replace, and reopen the updated app. The menu-bar background process closes for replacement. Your files and settings stay in macOS Application Support. Unsigned apps may require approval in Privacy & Security.'
+                :'Android needs an OS install confirmation. Windows may request administrator approval. Only verified GitHub Releases are installed.',
               textAlign:TextAlign.center,
               style:const TextStyle(fontSize:12)),
           ]),
