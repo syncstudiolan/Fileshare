@@ -269,20 +269,25 @@ class ImageEditingEngine {
     final target=(request['targetKb'] as int).clamp(1,500000).toInt()*1024;
     final preferred=(request['quality'] as int).clamp(5,100).toInt();
     if(format=='PNG'){
-      // PNG is lossless. If the requested size is impossible at the original
-      // dimensions, explicitly reduce dimensions rather than pretending the
-      // slider alone changes PNG quality.
-      Uint8List result=Uint8List.fromList(img.encodePng(source,level:6));
+      // PNG uses lossless DEFLATE compression. Try its strongest level first:
+      // this can meet a small target without deleting any pixels or alpha.
+      // Only if the full-resolution image does not fit, resize from the
+      // ORIGINAL source at every step (never resample a resampled image).
+      final original=source;
+      Uint8List result=Uint8List.fromList(img.encodePng(original,level:9));
       if(result.length<=target)return result;
-      for(var step=0;step<22;step++){
-        final factor=math.sqrt(target/result.length).clamp(.62,.88);
-        final width=math.max(1,(source.width*factor).floor());
-        final height=math.max(1,(source.height*factor).floor());
-        if(width==source.width && height==source.height)break;
-        source=img.copyResize(source,width:width,height:height,
-          interpolation:img.Interpolation.average);
-        result=Uint8List.fromList(img.encodePng(source,level:6));
+      var scale=1.0;
+      for(var step=0;step<26;step++){
+        final ratio=math.sqrt(target/result.length).clamp(.72,.94).toDouble();
+        scale*=ratio;
+        final width=math.max(1,(original.width*scale).round());
+        final height=math.max(1,(original.height*scale).round());
+        if(width==source.width&&height==source.height)break;
+        source=img.copyResize(original,width:width,height:height,
+          interpolation:img.Interpolation.cubic);
+        result=Uint8List.fromList(img.encodePng(source,level:9));
         if(result.length<=target)return result;
+        if(width<=16&&height<=16)break;
       }
       throw StateError('Target too small for a usable lossless PNG; '
         'try JPEG or choose a larger size');
