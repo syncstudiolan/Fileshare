@@ -10,6 +10,8 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=File Share
 DefaultDirName={autopf}\File Share
+; Preserve the existing Program Files folder for this stable AppId on upgrades.
+UsePreviousAppDir=yes
 DefaultGroupName=File Share
 OutputDir=..\dist
 OutputBaseFilename=FileShare-Windows-Setup
