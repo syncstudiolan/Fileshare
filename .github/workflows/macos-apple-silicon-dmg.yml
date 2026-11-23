@@ -1,0 +1,67 @@
+name: File Share macOS Apple Silicon DMG
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos-apple-silicon-dmg.yml'
+      - 'lib/main.dart'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos_dmg:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate macOS runner and branded background-launch support
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter config --enable-macos-desktop
+          flutter create --project-name file_share --platforms=macos .
+          python3 -m pip install --quiet Pillow
+          python3 tool/prepare_macos_tray_runner.py
+          flutter pub get
+      - name: Validate Dart and build Apple Silicon app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter test --reporter expanded --timeout 2m
+          flutter build macos --release
+          app="build/macos/Build/Products/Release/file_share.app"
+          if [[ ! -d "$app" ]]; then
+            app=$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -type d | head -1)
+          fi
+          test -n "$app" && test -d "$app"
+          executable=$(find "$app/Contents/MacOS" -maxdepth 1 -type f | head -1)
+          test -n "$executable"
+          lipo -info "$executable" | grep -q arm64
+          mkdir -p release/dmg-root
+          ditto "$app" "release/dmg-root/File Share.app"
+          ln -s /Applications release/dmg-root/Applications
+          hdiutil create -volname "File Share" -srcfolder release/dmg-root -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
+          test -s release/FileShare-macOS-AppleSilicon.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileShare-macOS-AppleSilicon-DMG
+          path: release/FileShare-macOS-AppleSilicon.dmg
+          if-no-files-found: error
+      - name: Publish unsigned Apple Silicon prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "fileshare-macos-arm64-${GITHUB_SHA:0:8}" release/FileShare-macOS-AppleSilicon.dmg \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "File Share macOS Apple Silicon DMG" \
+            --notes "Unsigned and unnotarized Apple Silicon macOS build. macOS Gatekeeper approval may be required. LAN discovery and startup background behavior require testing on real Macs." --prerelease
