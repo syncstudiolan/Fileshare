@@ -27,7 +27,7 @@ pubspec = plugin / "pubspec.yaml"
 original = pubspec.read_text()
 # Pub uses ^1.9.0 (not ==1.9.0). Accept compatible 1.x updates,
 # while refusing a major-version migration without reviewing its schema.
-version = re.search(r"^version:\\s*(\\d+)\\.(\\d+)\\.(\\d+)(?:\\+\\d+)?\\s*$", original, re.M)
+version = re.search(r"^version:\s*(\d+)\.(\d+)\.(\d+)(?:\+\d+)?\s*$", original, re.M)
 if not version or int(version.group(1)) != 1 or int(version.group(2)) < 9:
     raise SystemExit("Unsupported flutter_onnxruntime version; inspect plugin metadata")
 lines = original.splitlines(keepends=True)
