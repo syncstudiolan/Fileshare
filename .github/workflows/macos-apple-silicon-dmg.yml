@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/macos-apple-silicon-dmg.yml'
       - 'lib/main.dart'
+      - 'lib/file_share_updates.dart'
+      - 'tool/prepare_macos_tray_runner.py'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +15,7 @@ permissions:
 
 jobs:
   macos_dmg:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(uname -m)" = arm64
           flutter config --enable-macos-desktop
           flutter create --project-name file_share --platforms=macos .
           # macos-latest uses Homebrew Python with PEP 668 protection;
