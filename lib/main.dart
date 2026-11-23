@@ -482,35 +482,35 @@ class FileTheme {
   // Product palette derived from the approved blue/teal raised-surface design.
   // Retained identifiers keep existing tool widgets using the same palette.
   static const pink = Color(0xFF087F87);
-  static const violet = Color(0xFF006977);
-  static const night = Color(0xFF071B27);
+  static const violet = Color(0xFF5867A2);
+  static const night = Color(0xFF151B32);
   static const turquoise = Color(0xFF009A9C);
 
   static bool dark(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark;
 
   static Color surface(BuildContext context) =>
-      dark(context) ? const Color(0xFF123846) : const Color(0xFFD6E8EF);
+      dark(context) ? const Color(0xFF252D4C) : const Color(0xFFF2F4FC);
 
   static Color foreground(BuildContext context) =>
-      dark(context) ? const Color(0xFFEAF9FC) : const Color(0xFF102A38);
+      dark(context) ? const Color(0xFFF5F6FF) : const Color(0xFF17263A);
 
   static Color muted(BuildContext context) =>
-      dark(context) ? const Color(0xFFABC9D0) : const Color(0xFF526F7B);
+      dark(context) ? const Color(0xFFB5BCD7) : const Color(0xFF617086);
 
   static Gradient background(BuildContext context) => LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: dark(context)
-            ? const [Color(0xFF061A24), Color(0xFF123341), Color(0xFF071C29)]
-            : const [Color(0xFFC5D9E5), Color(0xFFD6E6EE), Color(0xFFBED4E1)],
+            ? const [Color(0xFF161B34), Color(0xFF242C4D), Color(0xFF171D37)]
+            : const [Color(0xFFF8F9FD), Color(0xFFF0F2FC), Color(0xFFE9EDFA)],
       );
 
   static Gradient dashboardBackground(BuildContext context) => LinearGradient(
     begin:Alignment.topCenter,end:Alignment.bottomCenter,
     colors:dark(context)
-      ?const [Color(0xFF061A24),Color(0xFF123341),Color(0xFF071C29)]
-      :const [Color(0xFFDBF1F9),Color(0xFFCFEBF5),Color(0xFFD9F1F9)],
+      ?const [Color(0xFF151A32),Color(0xFF252B4B),Color(0xFF191F39)]
+      :const [Color(0xFFF8FAFF),Color(0xFFF0F2FC),Color(0xFFE9EDFC)],
   );
 
   static ThemeData build(Brightness brightness) {
@@ -521,7 +521,7 @@ class FileTheme {
         seedColor: turquoise,
         brightness: brightness,
       ),
-      scaffoldBackgroundColor: dark ? night : const Color(0xFFCBDDE7),
+      scaffoldBackgroundColor: dark ? night : const Color(0xFFF5F7FD),
       pageTransitionsTheme: const PageTransitionsTheme(builders:{
         TargetPlatform.android:FileSharePageTransitions(),
         TargetPlatform.iOS:FileSharePageTransitions(),
@@ -532,7 +532,7 @@ class FileTheme {
       appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark ? const Color(0xFF163B49) : const Color(0xFFD7E8EF),
+        fillColor: dark ? const Color(0xFF293150) : const Color(0xFFF3F5FD),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
@@ -1396,10 +1396,10 @@ class DesignFileCard extends StatelessWidget {
         decoration: BoxDecoration(
           gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
             colors:FileTheme.dark(context)
-              ?(sent?const [Color(0xFF126365),Color(0xFF073B45)]
-                  :const [Color(0xFF27566A),Color(0xFF113544)])
-              :(sent?const [Color(0xFFD9F0F0),Color(0xFFB1DBDF)]
-                  :const [Color(0xFFE4F3F9),Color(0xFFBDD9E8)])),
+              ?(sent?const [Color(0xFF236EAA),Color(0xFF123F72)]
+                  :const [Color(0xFFB08A27),Color(0xFF705514)])
+              :(sent?const [Color(0xFFE2F4FF),Color(0xFF8DCBFF)]
+                  :const [Color(0xFFFFF6D5),Color(0xFFFFD65C)])),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(24), topRight: const Radius.circular(23),
             bottomLeft: Radius.circular(sent ? 23 : 6),
@@ -1657,8 +1657,8 @@ class TransferBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark=FileTheme.dark(context);
     final fill=dark
-        ? (incoming?const Color(0xFF153D50):const Color(0xFF075052))
-        : (incoming?const Color(0xFFD5EFF9):const Color(0xFFC9F1EC));
+        ? (incoming?const Color(0xFF94721A):const Color(0xFF14517F))
+        : (incoming?const Color(0xFFFFDC72):const Color(0xFF9DD7FF));
     final accent=incoming?FileTheme.violet:FileTheme.turquoise;
     return LayoutBuilder(builder:(context,constraints){
       final width=constraints.hasBoundedWidth
@@ -1726,7 +1726,7 @@ class _TransferBubblePainter extends CustomPainter {
     canvas.drawPath(path,Paint()
       ..style=PaintingStyle.stroke
       ..strokeWidth=1.5
-      ..color=dark?const Color(0xFF71A8AE):const Color(0xFFF7FEFF));
+      ..color=dark?const Color(0xFFDFE5FF):const Color(0xFFFFFFFF));
     final glint=Path()
       ..moveTo(left+23,2.3)
       ..lineTo(right-24,2.3);
