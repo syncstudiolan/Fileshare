@@ -70,7 +70,7 @@ final class FileShareMacLANBonjour: NSObject,
     ownId = id
     ownName = name
     ownPort = port
-    let cleanName = name.prefix(25).replacingOccurrences(of: ".", with: "-")
+    let cleanName = String(name.prefix(25)).replacingOccurrences(of: ".", with: "-")
     let instance = cleanName + "-" + String(id.prefix(8))
     let service = NetService(domain: "local.", type: "_fileshare._tcp.",
                              name: instance, port: Int32(port))
