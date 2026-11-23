@@ -211,11 +211,10 @@ class FileShareUpdates extends ChangeNotifier {
   Future<void> _installWindows(File installer) async {
     // The window's X button only hides File Share in the tray.
     // Start a separate, observable hand-off BEFORE shutting down LAN/tray.
-    // The helper itself waits for our exact PID to disappear before opening
-    // the interactive Inno Setup installer with UAC.
+    // A real elevated Setup Wizard must launch BEFORE the app exits.
+    // Its helper then waits for this PID to disappear before finishing setup.
     final oldPid=pid;
     final installedExe=Platform.resolvedExecutable;
-    final installDir=File(installedExe).parent.path;
     final support=await getApplicationSupportDirectory();
     final folder=Directory('${support.path}${Platform.pathSeparator}updater');
     await folder.create(recursive:true);
@@ -232,7 +231,6 @@ class FileShareUpdates extends ChangeNotifier {
 \$oldPid=$oldPid
 \$installer=${quote(installer.path)}
 \$installedExe=${quote(installedExe)}
-\$installDir=${quote(installDir)}
 \$ready=${quote(ready.path)}
 \$failed=${quote(failed.path)}
 \$log=${quote(log.path)}
