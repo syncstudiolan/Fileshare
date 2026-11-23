@@ -32,8 +32,10 @@ jobs:
           test "$(uname -m)" = x86_64
           xcodebuild -version
           flutter config --enable-macos-desktop
-          # CocoaPods works with macOS ONNX and avoids Flutter SPM baseline 12.
-          flutter config --no-enable-swift-package-manager
+          # The ONNX CocoaPods binary host currently presents a TLS
+          # certificate for the wrong hostname; DO NOT disable verification.
+          # SPM retrieves the verified ONNX package through GitHub instead.
+          flutter config --enable-swift-package-manager
           flutter create --project-name file_share --platforms=macos .
           # macos-latest uses Homebrew Python with PEP 668 protection;
           # install Pillow in a dedicated environment, never system-wide.
@@ -41,7 +43,7 @@ jobs:
           .macos-build-venv/bin/python -m pip install --quiet Pillow
           .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
           flutter pub get
-      - name: Require macOS 14 for the ONNX Runtime Swift package
+      - name: Fix macOS 14 deployment target before ONNX SwiftPM resolution
         shell: bash
         run: |
           set -euo pipefail
@@ -64,12 +66,17 @@ jobs:
           podfile.write_text(contents)
           # Flutter may generate SwiftPM with its older 12.0 baseline.
           # Align the umbrella package with the app and ONNX requirement.
-          package=Path('macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift')
-          if package.is_file():
+          packages=list(Path('macos').glob('**/FlutterGeneratedPluginSwiftPackage/Package.swift'))
+          if not packages:
+              raise SystemExit('Expected generated SwiftPM package is missing; cannot fix macOS 12.0 baseline')
+          for package in packages:
               original=package.read_text()
               adjusted,n=re.subn(r'\.macOS\("[0-9.]+"\)', '.macOS("14.0")',original)
-              if n: package.write_text(adjusted)
-          print('macOS deployment targets set to 14.0 (Apple Silicon)')
+              if not n:
+                  raise SystemExit('Unknown macOS SwiftPM package schema: '+str(package))
+              package.write_text(adjusted)
+              print('Patched generated SwiftPM package platform to macOS 14:', package)
+          print('Verified macOS 14 minimum for Runner and Flutter plugin package')
           PY
       - name: Validate Dart and build Apple Silicon app
         shell: bash
