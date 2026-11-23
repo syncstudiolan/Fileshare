@@ -296,40 +296,51 @@ class ImageEditingEngine {
       img.compositeImage(white,source);
       source=white;
     }
-    // Search the best JPEG quality at each scale, with a deliberate
-    // legibility floor. Low JPEG quality destroys faces and letters before
-    // downsampling with a good resampler does.
-    Uint8List? findAtSize(int minQuality){
+    // IMPORTANT: resize from the ORIGINAL decoded pixels at each candidate
+    // resolution. Repeatedly resizing the previous candidate irreversibly
+    // blurs eyes, hair, lettering and signature strokes.
+    final original=source;
+    final minQuality=math.min(68,preferred);
+    Uint8List? best;
+    var bestArea=-1;
+    var bestQuality=-1;
+    var factor=1.0;
+    for(var pass=0;pass<28;pass++){
+      final width=math.max(1,(original.width*factor).round());
+      final height=math.max(1,(original.height*factor).round());
+      source=(width==original.width&&height==original.height)
+        ?original:img.copyResize(original,width:width,height:height,
+          interpolation:img.Interpolation.cubic);
       var low=minQuality,high=preferred;
-      Uint8List? best;
+      Uint8List? fitting;
+      var fittingQuality=-1;
       for(var iteration=0;iteration<8 && low<=high;iteration++){
         final mid=(low+high)~/2;
         final encoded=Uint8List.fromList(img.encodeJpg(source,quality:mid));
-        if(encoded.length<=target){best=encoded;low=mid+1;}
-        else{high=mid-1;}
+        if(encoded.length<=target){
+          fitting=encoded;fittingQuality=mid;low=mid+1;
+        }else{high=mid-1;}
       }
-      return best;
-    }
-    // A readable picture at 20 KB may need fewer pixels; no encoder can
-    // guarantee full-resolution portrait detail at every requested size.
-    // Keep JPEG quality >= 68 by default instead of allowing blocky Q35.
-    final minQuality=math.min(68,preferred);
-    for(var pass=0;pass<24;pass++){
-      final fitting=findAtSize(minQuality);
-      if(fitting!=null)return fitting;
-      if(source.width<=32 && source.height<=32)break;
-      // Use measured bytes rather than blind repeated shrinking, and limit
-      // each step to retain as much useful edge detail as possible.
+      if(fitting!=null){
+        final area=width*height;
+        if(area>bestArea || (area==bestArea&&fittingQuality>bestQuality)){
+          best=fitting;bestArea=area;bestQuality=fittingQuality;
+        }
+        // At the highest available resolution the fitting quality is optimal.
+        // Do not shrink further just to fill the entire KB budget.
+        break;
+      }
+      if(width<=32&&height<=32)break;
       final measured=img.encodeJpg(source,quality:minQuality).length;
-      final factor=math.sqrt(target/measured).clamp(.72,.94).toDouble();
-      final width=math.max(1,(source.width*factor).floor());
-      final height=math.max(1,(source.height*factor).floor());
-      if(width==source.width&&height==source.height)break;
-      source=img.copyResize(source,width:width,height:height,
-        interpolation:img.Interpolation.average);
+      final ratio=math.sqrt(target/measured).clamp(.72,.94).toDouble();
+      factor*=ratio;
+      if((original.width*factor).round()==width &&
+          (original.height*factor).round()==height)factor*=.9;
     }
-    throw StateError('Cannot meet this size without losing all detail. '
+    if(best!=null)return best;
+    throw StateError('Cannot meet this size at readable JPEG quality. '
       'Try a slightly larger target.');
+
   }
 
   /// No AI model on Windows is silently claimed: this explicitly labeled
