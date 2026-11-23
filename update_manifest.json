@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 555,
-    "notes": "release: verify PDF notice timer fix in unified PR17 release workflow",
-    "sha256": "d1caeaf8a13c58ffaa98229d29e7fc2ffc3cb06e51e026d50a7fcf4cc2012c11",
-    "size": 19262575,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-555/FileShare-Windows-Setup.exe",
+    "build": 578,
+    "notes": "ci(android): rerun after fixing both missing splash drawable references",
+    "sha256": "b94fc58f0fa486ea301fde9d70473a56e1b155d31cc49871294c3f6da83319b2",
+    "size": 19257130,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-578/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
