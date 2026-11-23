@@ -246,30 +246,41 @@ Uint8List _signatureTransform(Map<String,dynamic> request) {
     return Uint8List.fromList(img.encodePng(cropped,level:2));
   }
   final target=request['target'] as int;
-  // Try high-quality output first; downscale only if truly needed.
-  // Preserve both width and height, never resize only one axis.
+  // Preserve legible ink edges: find the highest quality that fits at each
+  // resolution, reducing dimensions before resorting to destructive Q3 JPEG.
   var candidate=cropped;
-  for(var pass=0;pass<24;pass++) {
-    for(final quality in <int>[92,82,72,60,48,36,26,18,12,7,3]) {
-      final result=Uint8List.fromList(img.encodeJpg(candidate,quality:quality));
-      // Leave room for a valid COM segment when delta is 1,2 or 3 bytes.
-      if(result.length==target || result.length<=target-4) {
-        return SignatureEditEngine.padJpegToExactSize(result,target);
+  const minimumQuality=68;
+  for(var pass=0;pass<28;pass++) {
+    var low=minimumQuality,high=96;
+    Uint8List? best;
+    for(var iteration=0;iteration<8 && low<=high;iteration++){
+      final quality=(low+high)~/2;
+      final encoded=Uint8List.fromList(img.encodeJpg(candidate,quality:quality));
+      if(encoded.length==target || encoded.length<=target-4){
+        best=encoded;
+        low=quality+1;
+      }else{
+        high=quality-1;
       }
     }
+    if(best!=null){
+      return SignatureEditEngine.padJpegToExactSize(best,target);
+    }
     if(candidate.width<=24&&candidate.height<=24)break;
-    // Preserve very narrow strokes; never upscale a 1–23 px dimension.
-    final newWidth=candidate.width<=24?candidate.width:
-      math.max(24,(candidate.width*.80).round());
-    final newHeight=candidate.height<=24?candidate.height:
-      math.max(24,(candidate.height*.80).round());
-    if(newWidth==candidate.width&&newHeight==candidate.height)break;
-    candidate=img.copyResize(candidate,width:newWidth,height:newHeight,
+    final measured=img.encodeJpg(candidate,quality:minimumQuality).length;
+    final factor=math.sqrt(target/measured).clamp(.72,.94).toDouble();
+    final width=candidate.width<=24?candidate.width:
+      math.max(24,(candidate.width*factor).floor());
+    final height=candidate.height<=24?candidate.height:
+      math.max(24,(candidate.height*factor).floor());
+    if(width==candidate.width&&height==candidate.height)break;
+    candidate=img.copyResize(candidate,width:width,height:height,
       interpolation:img.Interpolation.average);
   }
   throw StateError(
-    'Exact ${(target/1024).round()} KB is not achievable without '
-    'making this signature unreadable. Increase the target or crop more.');
+    'Exact ${(target/1024).round()} KB cannot retain readable ink. '
+    'Increase the target size or crop more.');
+
 }
 
 /// Estimate the brightest paper color within small local regions. This
