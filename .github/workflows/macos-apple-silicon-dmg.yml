@@ -33,6 +33,36 @@ jobs:
           .macos-build-venv/bin/python -m pip install --quiet Pillow
           .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
           flutter pub get
+      - name: Require macOS 14 for the ONNX Runtime Swift package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          project=Path('macos/Runner.xcodeproj/project.pbxproj')
+          source=project.read_text()
+          updated,count=re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
+              'MACOSX_DEPLOYMENT_TARGET = 14.0;',source)
+          if count<1:
+              raise SystemExit('No macOS Runner deployment target found')
+          project.write_text(updated)
+          podfile=Path('macos/Podfile')
+          contents=podfile.read_text()
+          contents,n=re.subn(r"^#?\\s*platform\\s*:osx,\\s*'[^']+'",
+                            "platform :osx, '14.0'",contents,flags=re.M)
+          if n==0:
+              contents="platform :osx, '14.0'\\n"+contents
+          podfile.write_text(contents)
+          # Flutter may generate SwiftPM with its older 12.0 baseline.
+          # Align the umbrella package with the app and ONNX requirement.
+          package=Path('macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift')
+          if package.is_file():
+              original=package.read_text()
+              adjusted,n=re.subn(r'\\.macOS\\("[0-9.]+"\\)', '.macOS("14.0")',original)
+              if n: package.write_text(adjusted)
+          print('macOS deployment targets set to 14.0 (Apple Silicon)')
+          PY
       - name: Validate Dart and build Apple Silicon app
         shell: bash
         run: |
