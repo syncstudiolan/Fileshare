@@ -80,9 +80,9 @@ def patch_window() -> None:
         raise SystemExit("Native macOS Finder download bridge is missing")
     if "final class FileShareDownloadFolder" not in text:
         source = bridge.read_text(encoding="utf-8")
-        source = source.replace("import Cocoa\\n", "", 1)
-        source = source.replace("import FlutterMacOS\\n", "", 1)
-        text += "\\n\\n" + source
+        source = source.replace("import Cocoa\n", "", 1)
+        source = source.replace("import FlutterMacOS\n", "", 1)
+        text += "\n\n" + source
     WINDOW.write_text(text,encoding="utf-8")
 
 def patch_delegate() -> None:
