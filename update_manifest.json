@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 593,
-    "notes": "ci(macos): target hosted Apple Silicon and run on changes to updater or LAN permissions",
-    "sha256": "16b1516c4e4654a4ceca3b9c0d0fdc37520b12328ee0af5903f0c2166df5b7c1",
-    "size": 19264270,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-593/FileShare-Windows-Setup.exe",
+    "build": 596,
+    "notes": "Fix Apple received-file Downloads destination and Windows installer wizard handoff (#19)",
+    "sha256": "710107ad84a9294bce0334c1145289a286c706bb4fa716dce599cdf93d4f9709",
+    "size": 19266031,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-596/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
