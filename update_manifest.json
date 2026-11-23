@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 596,
-    "notes": "Fix Apple received-file Downloads destination and Windows installer wizard handoff (#19)",
-    "sha256": "710107ad84a9294bce0334c1145289a286c706bb4fa716dce599cdf93d4f9709",
-    "size": 19266031,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-596/FileShare-Windows-Setup.exe",
+    "build": 606,
+    "notes": "Fix File Share Windows taskbar FS icon and release [windows-only]",
+    "sha256": "567f96295e3e4285fc85e4e837ca408464987d5d47d08d5ed50803acf0fb0ff6",
+    "size": 19162502,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-606/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
