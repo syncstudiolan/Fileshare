@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 584,
-    "notes": "fix(macos): install Pillow using isolated venv on PEP 668 Homebrew runner",
-    "sha256": "1ea7fe12e6e0e63a700cce12656f3c7c9241b5c02386ab641b449e4ec6a0a2ec",
-    "size": 19262093,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-584/FileShare-Windows-Setup.exe",
+    "build": 585,
+    "notes": "fix(ios): correct ONNX dependency version regex escaping in build script",
+    "sha256": "e25214ed6bdafa3c7fa9ffcfeb35d60ae4f7350ccadf8e1f87778da897f8d8f0",
+    "size": 19269668,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-585/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
