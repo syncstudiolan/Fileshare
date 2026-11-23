@@ -8,6 +8,8 @@ on:
       - '.github/workflows/android-pr6-compact-release.yml'
       - 'test/photo_enhancer_preflight_test.dart'
       - 'android/app/src/main/AndroidManifest.xml'
+      - 'android/app/src/main/res/drawable/**'
+      - 'android/app/src/main/res/drawable-v21/**'
   workflow_dispatch:
 
 permissions:
