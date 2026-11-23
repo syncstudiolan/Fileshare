@@ -483,34 +483,34 @@ class FileTheme {
   // Retained identifiers keep existing tool widgets using the same palette.
   static const pink = Color(0xFF087F87);
   static const violet = Color(0xFF5867A2);
-  static const night = Color(0xFF151B32);
+  static const night = Color(0xFF000000);
   static const turquoise = Color(0xFF009A9C);
 
   static bool dark(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark;
 
   static Color surface(BuildContext context) =>
-      dark(context) ? const Color(0xFF252D4C) : const Color(0xFFF2F4FC);
+      dark(context) ? const Color(0xFF111318) : const Color(0xFFE7F1FA);
 
   static Color foreground(BuildContext context) =>
       dark(context) ? const Color(0xFFF5F6FF) : const Color(0xFF17263A);
 
   static Color muted(BuildContext context) =>
-      dark(context) ? const Color(0xFFB5BCD7) : const Color(0xFF617086);
+      dark(context) ? const Color(0xFFB8C1D0) : const Color(0xFF617086);
 
   static Gradient background(BuildContext context) => LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: dark(context)
-            ? const [Color(0xFF161B34), Color(0xFF242C4D), Color(0xFF171D37)]
-            : const [Color(0xFFF8F9FD), Color(0xFFF0F2FC), Color(0xFFE9EDFA)],
+            ? const [Color(0xFF000000), Color(0xFF06080B), Color(0xFF000000)]
+            : const [Color(0xFFEAF3FB), Color(0xFFDCEBF8), Color(0xFFCFE3F3)],
       );
 
   static Gradient dashboardBackground(BuildContext context) => LinearGradient(
     begin:Alignment.topCenter,end:Alignment.bottomCenter,
     colors:dark(context)
-      ?const [Color(0xFF151A32),Color(0xFF252B4B),Color(0xFF191F39)]
-      :const [Color(0xFFF8FAFF),Color(0xFFF0F2FC),Color(0xFFE9EDFC)],
+      ?const [Color(0xFF000000),Color(0xFF05070A),Color(0xFF000000)]
+      :const [Color(0xFFEAF4FC),Color(0xFFDCECF9),Color(0xFFCFE4F4)],
   );
 
   static ThemeData build(Brightness brightness) {
@@ -521,7 +521,7 @@ class FileTheme {
         seedColor: turquoise,
         brightness: brightness,
       ),
-      scaffoldBackgroundColor: dark ? night : const Color(0xFFF5F7FD),
+      scaffoldBackgroundColor: dark ? night : const Color(0xFFDFEDF8),
       pageTransitionsTheme: const PageTransitionsTheme(builders:{
         TargetPlatform.android:FileSharePageTransitions(),
         TargetPlatform.iOS:FileSharePageTransitions(),
@@ -532,7 +532,7 @@ class FileTheme {
       appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark ? const Color(0xFF293150) : const Color(0xFFF3F5FD),
+        fillColor: dark ? const Color(0xFF111318) : const Color(0xFFE5F1FB),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
@@ -1727,14 +1727,6 @@ class _TransferBubblePainter extends CustomPainter {
       ..style=PaintingStyle.stroke
       ..strokeWidth=1.5
       ..color=dark?const Color(0xFFDFE5FF):const Color(0xFFFFFFFF));
-    final glint=Path()
-      ..moveTo(left+23,2.3)
-      ..lineTo(right-24,2.3);
-    canvas.drawPath(glint,Paint()
-      ..color=Colors.white.withValues(alpha:dark ? .35 : .80)
-      ..strokeWidth=1.7
-      ..strokeCap=StrokeCap.round
-      ..style=PaintingStyle.stroke);
   }
 
   @override
