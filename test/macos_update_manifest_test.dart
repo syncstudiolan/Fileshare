@@ -35,8 +35,7 @@ void main() {
 
   test('macOS Finder update flow never bypasses authorization', () {
     final source=File('lib/file_share_updates.dart').readAsStringSync();
-    expect(source,contains('Platform.isMacOS||Platform.isIOS')==false
-      ?contains('Platform.isMacOS'):contains('Platform.isMacOS'));
+    expect(source,contains('Platform.isMacOS'));
     expect(source,contains("Process.run('/usr/bin/open',[dmg.path])"));
     expect(source,contains('await WindowsBackground.instance.exitCompletely();'));
     expect(source,contains('drag File Share.app to Applications'));
