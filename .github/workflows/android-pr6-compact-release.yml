@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/android-pr6-compact-release.yml'
+      - 'test/photo_enhancer_preflight_test.dart'
   workflow_dispatch:
 
 permissions:
