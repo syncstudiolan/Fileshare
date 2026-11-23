@@ -209,25 +209,59 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   Future<void> _installWindows(File installer) async {
-    // Start the verified Inno Setup executable directly. A hidden PowerShell
-    // trampoline could die before displaying UAC / the installer wizard,
-    // leaving File Share closed with no actionable error.
-    //
-    // Do not close File Share until Windows has accepted the launch. Inno
-    // Setup's /CLOSEAPPLICATIONS handles replacement of running app files
-    // when the user reaches Install. No /SILENT switch: Next/Install stay
-    // visible and require user approval.
-    final launched=await Process.start(installer.path,[
-      '/NORESTART','/CLOSEAPPLICATIONS',
-      '/LOG',
-    ],mode:ProcessStartMode.detached);
-    if(launched.pid<=0){
-      throw StateError('Windows did not start the update installer');
+    // File Share continues running in the tray when its window is closed.
+    // A detached updater must survive the complete shutdown of LAN sockets,
+    // tray, single-instance lock and the Flutter process itself.
+    final oldPid=pid;
+    final installedExe=Platform.resolvedExecutable;
+    final helperDir=await getApplicationSupportDirectory();
+    final helper=File('${helperDir.path}${Platform.pathSeparator}'
+      'fileshare-updater-${release!.build}.ps1');
+    String psQuote(String value)=>"'"+value.replaceAll("'","''")+"'";
+    final script="""
+\$ErrorActionPreference = 'Stop'
+\$oldPid = $oldPid
+\$installer = ${psQuote(installer.path)}
+\$installedExe = ${psQuote(installedExe)}
+\$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
+try {
+  \$deadline = (Get-Date).AddSeconds(90)
+  while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt \$deadline) {
+      throw 'File Share did not fully exit; installation was not started.'
     }
-    // The wizard now owns installation. Keep the app alive until the wizard
-    // asks Windows to close it; do not exit prematurely or relaunch the old EXE.
-    showPopup=false;
-    notifyListeners();
+    Start-Sleep -Milliseconds 300
+  }
+  # Elevation is explicit and the Inno Setup wizard remains interactive.
+  # Never use /SILENT or /VERYSILENT.
+  \$setup = Start-Process -FilePath \$installer -Verb RunAs -PassThru -Wait -ArgumentList @('/NORESTART','/CLOSEAPPLICATIONS','/LOG')
+  if (\$setup.ExitCode -ne 0) {
+    throw "Installer cancelled or failed (exit code \$(\$setup.ExitCode))."
+  }
+  if (-not (Test-Path -LiteralPath \$installedExe)) {
+    throw 'Updated File Share executable was not found at the previous location.'
+  }
+  Start-Process -FilePath \$installedExe
+} catch {
+  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) " + \$_.ToString())
+  Add-Type -AssemblyName PresentationFramework
+  [System.Windows.MessageBox]::Show(
+    ('File Share update could not finish: ' + \$_.Exception.Message +
+      [Environment]::NewLine + 'Installer: ' + \$installer +
+      [Environment]::NewLine + 'Log: ' + \$log),
+    'File Share Update','OK','Error') | Out-Null
+}
+""";
+    await helper.writeAsString(script,flush:true);
+    // Start a helper outside Program Files before closing the app. It waits
+    // for the actual PID to disappear, then opens the installer visibly.
+    final updater=await Process.start('powershell.exe',[
+      '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+      '-WindowStyle','Hidden','-File',helper.path,
+    ],mode:ProcessStartMode.detached);
+    if(updater.pid<=0)throw StateError('Updater helper did not launch');
+    // This performs full shutdown, not merely hiding the window in the tray.
+    await WindowsBackground.instance.exitCompletely();
   }
 
 }
