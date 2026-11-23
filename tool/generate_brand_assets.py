@@ -102,10 +102,18 @@ def main() -> None:
     # ICO embeds multiple sizes so tiny taskbar/tray use their own pixels.
     windows_icon = ROOT / "windows/runner/resources/app_icon.ico"
     windows_icon.parent.mkdir(parents=True, exist_ok=True)
-    icon.resize((256, 256), Image.Resampling.LANCZOS).save(
+    # Windows Shell/Explorer needs a real multi-resolution GROUP_ICON,
+    # including tiny taskbar dimensions. Use an opaque pale backing so the
+    # approved FS mark stays legible on both light and dark taskbars.
+    windows_mark = framed(256, 0.78, (242, 247, 255, 255))
+    windows_mark.save(
         windows_icon, format="ICO", sizes=[(16, 16), (24, 24),
             (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
     )
+    with Image.open(windows_icon) as multi:
+        sizes = multi.ico.sizes()
+        if not {(16, 16), (32, 32), (48, 48), (256, 256)}.issubset(sizes):
+            raise SystemExit(f"Missing Windows ICO taskbar sizes: {sizes}")
     BRAND.mkdir(parents=True, exist_ok=True)
     (BRAND / "file_share_tray.ico").write_bytes(windows_icon.read_bytes())
 
