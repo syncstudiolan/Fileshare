@@ -535,7 +535,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _processingAction='photo_enhance';
     setState((){_busy=true;_enhanceProgress=0;});
     try{
-      final result=await PhotoEnhancerEngine.enhance(current,
+      final source=await _visibleExportBytes();
+      final result=await PhotoEnhancerEngine.enhance(source,
         scale:_enhanceScale,blend:_enhanceStrength,
         onProgress:(p){if(mounted)setState(()=>_enhanceProgress=p);});
       final dimensions=await ImageEditingEngine.dimensions(result);
@@ -543,10 +544,14 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         throw StateError('Enhancement produced no usable image');
       }
       await _commit(current,result,'Photo enhance ${dimensions[0]}×${dimensions[1]}');
+      if(_pendingBackgroundColor!=null){
+        _pendingBackgroundColor=null;
+        _cutoutBytes=null; // The visible background is now baked into result.
+      }
       if(mounted)setState((){
         // Compare the actual pixels before and after this exact operation.
         // Keep these snapshots independent of draft originals and filters.
-        _enhanceBefore=current;
+        _enhanceBefore=source;
         _enhanceAfter=result;
         _compareFraction=.5;
       });
@@ -654,13 +659,16 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     _processingAction='compress';
     setState(()=>_busy=true);
     try{
-      final result=await ImageEditingEngine.compress(bytes,
+      final source=await _visibleExportBytes();
+      final result=await ImageEditingEngine.compress(source,
         targetKb:_targetKb,quality:_quality,format:_format);
       if(_format=='JPEG')_name=_name.replaceAll(
         RegExp(r'\.[^.]+$'),'.jpg');
       if(_format=='PNG')_name=_name.replaceAll(
         RegExp(r'\.[^.]+$'),'.png');
       await _commit(bytes,result,'Compress $_targetKb KB ($_format)');
+      _pendingBackgroundColor=null;
+      _cutoutBytes=null; // Compression already includes the visible composite.
       _message('Exported ${(result.length/1024).toStringAsFixed(1)} KB');
     }catch(e){_message('Compression failed: $e');}
     finally{
