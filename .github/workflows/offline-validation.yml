@@ -647,6 +647,84 @@ jobs:
           path: release/FileShare-iOS-UNSIGNED.ipa
           if-no-files-found: error
           retention-days: 30
+      # The standalone DMG workflow remained queued and was cancelled before
+      # any build steps ran. Reuse this already-allocated Apple Silicon runner
+      # (the same macOS runner that successfully compiled the iPhone IPA).
+      # No second macOS job is requested.
+      - name: Prepare macOS ARM64 app on the existing iOS macOS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          echo "Building macOS DMG on $(uname -m) / $(sw_vers -productVersion)"
+          flutter config --enable-macos-desktop
+          # CocoaPods supports ONNX Runtime on macOS and avoids the generated
+          # Swift Package Manager target stuck at macOS 12 in prior builds.
+          flutter config --no-enable-swift-package-manager
+          flutter create --project-name file_share --platforms=macos .
+          .ios-build-venv/bin/python tool/prepare_macos_tray_runner.py
+          flutter pub get
+          python3 - <<'PY'
+          import pathlib, re
+          root=pathlib.Path('macos')
+          project=root/'Runner.xcodeproj/project.pbxproj'
+          contents=project.read_text()
+          updated,n=re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
+                            'MACOSX_DEPLOYMENT_TARGET = 14.0;',contents)
+          if not n:
+              raise SystemExit('Cannot locate macOS Runner deployment target')
+          project.write_text(updated)
+          podfile=root/'Podfile'
+          contents=podfile.read_text()
+          contents,n=re.subn(r"^#?\s*platform\s*:osx,\s*'[^']+'",
+                             "platform :osx, '14.0'",contents,flags=re.M)
+          if not n:
+              contents="platform :osx, '14.0'\n"+contents
+          podfile.write_text(contents)
+          package=root/'Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift'
+          if package.is_file():
+              contents=package.read_text()
+              contents,n=re.subn(r'\.macOS\("[0-9.]+"\)',
+                                 '.macOS("14.0")',contents)
+              if n: package.write_text(contents)
+          print('macOS minimum deployment target: 14.0')
+          PY
+      - name: Compile Apple Silicon and create DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build macos --release
+          app="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' | head -1)"
+          test -n "$app" && test -d "$app"
+          executable="$(find "$app/Contents/MacOS" -maxdepth 1 -type f | head -1)"
+          test -n "$executable"
+          lipo -info "$executable"
+          lipo -archs "$executable" | tr ' ' '\n' | grep -qx arm64
+          mkdir -p release/macos-dmg-root
+          ditto "$app" "release/macos-dmg-root/File Share.app"
+          ln -s /Applications release/macos-dmg-root/Applications
+          hdiutil create -volname "File Share" -srcfolder release/macos-dmg-root \
+            -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
+          test -s release/FileShare-macOS-AppleSilicon.dmg
+          shasum -a 256 release/FileShare-macOS-AppleSilicon.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-macos-arm64-dmg
+          path: release/FileShare-macOS-AppleSilicon.dmg
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish latest Apple Silicon DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="fileshare-macos-arm64-${GITHUB_SHA:0:8}"
+          gh release create "$tag" release/FileShare-macOS-AppleSilicon.dmg \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "File Share macOS Apple Silicon DMG" \
+            --notes "ARM64 macOS 14+ build from latest main including PR #19. Unsigned and unnotarized; Gatekeeper approval may be required. LAN discovery, auto-start and folder access require real-device validation." \
+            --prerelease
 
   publish_ipa:
     name: iOS ONLY - Publish unsigned IPA for external signing
