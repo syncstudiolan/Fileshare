@@ -18,7 +18,7 @@
         android:name=".FileShareApplication"
         android:networkSecurityConfig="@xml/file_share_doc_network_security"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round">
+        >
         <activity android:name="com.sammyi57.pdftools.MainActivity"
             android:exported="false" android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"/>
