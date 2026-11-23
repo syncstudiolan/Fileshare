@@ -55,7 +55,7 @@ void main() {
       final source=sample();
       final enhanced=PhotoEnhancerEngine.enhanceMobileForTest(
         source,scale:2,strength:.9);
-      final after=image.decodeJpg(enhanced)!;
+      final after=image.decodePng(enhanced)!;
       final before=image.decodePng(source)!;
       expect(after.width,320);
       expect(after.height,240);
@@ -65,7 +65,7 @@ void main() {
     test('Ultra HD creates bounded larger output',(){
       final result=PhotoEnhancerEngine.enhanceMobileForTest(
         sample(),scale:4,strength:.8);
-      final output=image.decodeJpg(result)!;
+      final output=image.decodePng(result)!;
       expect(output.width,640);
       expect(output.height,480);
     });
