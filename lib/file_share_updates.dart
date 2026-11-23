@@ -209,45 +209,27 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   Future<void> _installWindows(File installer) async {
-    final currentPid=pid;
-    final exe=Platform.resolvedExecutable;
-    final scripts=await getTemporaryDirectory();
-    final script=File('${scripts.path}${Platform.pathSeparator}fileshare-update-${release!.build}.ps1');
-    // Literal escaping protects paths containing apostrophes.
-    String quote(String value)=>"'"+value.replaceAll("'","''")+"'";
-    final code="""
-\$ErrorActionPreference = 'Stop'
-\$oldPid = $currentPid
-\$setup = ${quote(installer.path)}
-\$app = ${quote(exe)}
-\$limit = (Get-Date).AddSeconds(45)
-while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
-  if ((Get-Date) -gt \$limit) { throw 'Previous File Share process did not exit.' }
-  Start-Sleep -Milliseconds 350
-}
-try {
-  # Show the real Inno Setup wizard, Install button, progress and Windows UAC.
-  \$process = Start-Process -FilePath \$setup -Verb RunAs -ArgumentList '/NORESTART','/CLOSEAPPLICATIONS','/LOG' -PassThru -Wait
-  if (\$process.ExitCode -ne 0) { throw "Installer exited \$(\$process.ExitCode)" }
-  Start-Process -FilePath \$app
-} catch {
-  \$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
-  Add-Content -Path \$log -Value \$_.ToString()
-  Add-Type -AssemblyName PresentationFramework
-  [System.Windows.MessageBox]::Show('File Share installation failed: '+\$_.Exception.Message+[Environment]::NewLine+'Log: '+\$log,'File Share Update','OK','Error') | Out-Null
-}
-""";
-    await script.writeAsString(code,flush:true);
-    final process=await Process.start('powershell.exe',[
-      '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
-      '-File',script.path,
+    // Start the verified Inno Setup executable directly. A hidden PowerShell
+    // trampoline could die before displaying UAC / the installer wizard,
+    // leaving File Share closed with no actionable error.
+    //
+    // Do not close File Share until Windows has accepted the launch. Inno
+    // Setup's /CLOSEAPPLICATIONS handles replacement of running app files
+    // when the user reaches Install. No /SILENT switch: Next/Install stay
+    // visible and require user approval.
+    final launched=await Process.start(installer.path,[
+      '/NORESTART','/CLOSEAPPLICATIONS',
+      '/LOG',
     ],mode:ProcessStartMode.detached);
-    if(process.pid<=0)throw StateError('Updater helper did not start');
-    // Remove file lock, stop LAN and tray, and let the elevated installer
-    // replace Program Files only after the process has fully exited.
-    await WindowsBackground.instance.exitCompletely();
-    exit(0);
+    if(launched.pid<=0){
+      throw StateError('Windows did not start the update installer');
+    }
+    // The wizard now owns installation. Keep the app alive until the wizard
+    // asks Windows to close it; do not exit prematurely or relaunch the old EXE.
+    showPopup=false;
+    notifyListeners();
   }
+
 }
 
 class FileShareUpdatePage extends StatefulWidget {
