@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 593,
-    "notes": "ci(macos): target hosted Apple Silicon and run on changes to updater or LAN permissions",
-    "sha256": "5a1a69197c576f29679602c5149c240a342e4f104610f2f81bd154998fb50268",
+    "build": 596,
+    "notes": "Fix Apple received-file Downloads destination and Windows installer wizard handoff (#19)",
+    "sha256": "e47f7ec572ff3ff1b625e83301646b24a9fa430f2baf9381bc1431be7416c10b",
     "size": 114585797,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-593/FileShare-Android-ARM64-Release.apk",
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-596/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
