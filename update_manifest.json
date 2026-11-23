@@ -17,11 +17,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 585,
-    "notes": "fix(ios): correct ONNX dependency version regex escaping in build script",
-    "sha256": "e25214ed6bdafa3c7fa9ffcfeb35d60ae4f7350ccadf8e1f87778da897f8d8f0",
-    "size": 19269668,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-585/FileShare-Windows-Setup.exe",
+    "build": 593,
+    "notes": "ci(macos): target hosted Apple Silicon and run on changes to updater or LAN permissions",
+    "sha256": "16b1516c4e4654a4ceca3b9c0d0fdc37520b12328ee0af5903f0c2166df5b7c1",
+    "size": 19264270,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-593/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
