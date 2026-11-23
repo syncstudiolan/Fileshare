@@ -33,6 +33,31 @@ jobs:
           .macos-build-venv/bin/python -m pip install --quiet Pillow
           .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
           flutter pub get
+      - name: Require macOS 14 for native ONNX Runtime and regenerate Flutter SwiftPM
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          pbx = Path('macos/Runner.xcodeproj/project.pbxproj')
+          source = pbx.read_text(encoding='utf-8')
+          updated, count = re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
+                                   'MACOSX_DEPLOYMENT_TARGET = 14.0;', source)
+          assert count > 0, 'Generated Runner has no macOS deployment target'
+          pbx.write_text(updated, encoding='utf-8')
+          podfile = Path('macos/Podfile')
+          if podfile.exists():
+              old = podfile.read_text(encoding='utf-8')
+              new, count = re.subn(r"^\\s*#?\\s*platform\\s*:osx,\\s*'[^']+'",
+                                   "platform :osx, '14.0'", old, flags=re.M)
+              if not count:
+                  new = "platform :osx, '14.0'\\n" + old
+              podfile.write_text(new, encoding='utf-8')
+          print('Runner and CocoaPods minimum macOS version: 14.0')
+          PY
+          # Regenerate FlutterGeneratedPluginSwiftPackage with the raised target.
+          flutter build macos --config-only
       - name: Validate Dart and build Apple Silicon app
         shell: bash
         run: |
