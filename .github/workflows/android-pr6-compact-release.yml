@@ -37,6 +37,24 @@ jobs:
         run: python3 tool/ensure_mlkit_proguard.py
       - name: Resolve Dart packages
         run: flutter pub get
+      - name: Fix legacy InAppWebView ProGuard configuration for AGP 9
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          files=list((Path.home()/'.pub-cache/hosted/pub.dev').glob('flutter_inappwebview_android-*/android/build.gradle'))
+          if not files:
+              raise SystemExit('Expected flutter_inappwebview_android Gradle file not found')
+          for path in files:
+              content=path.read_text()
+              old="getDefaultProguardFile('proguard-android.txt')"
+              if old in content:
+                  path.write_text(content.replace(old,"getDefaultProguardFile('proguard-android-optimize.txt')"))
+                  print('Patched obsolete ProGuard default in',path)
+              elif "proguard-android-optimize.txt" not in content:
+                  raise SystemExit('Unknown plugin ProGuard configuration: '+str(path))
+          PY
       - name: Analyze Dart
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Flutter regression tests
