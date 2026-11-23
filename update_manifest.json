@@ -15,6 +15,14 @@
     "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-ios-unsigned-build-596/FileShare-iOS-UNSIGNED.ipa",
     "version": "0.1.0"
   },
+  "macos": {
+    "build": 611,
+    "notes": "macOS Bonjour LAN discovery and in-app Finder DMG updater",
+    "sha256": "54c8151f5ad8d5d3a0f393217f8f19fb9bd443adf7188b36251eab58b99491c3",
+    "size": 55565843,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-macos-arm64-c32b941f/FileShare-macOS-AppleSilicon.dmg",
+    "version": "0.1.0"
+  },
   "schema": 1,
   "windows": {
     "build": 606,
