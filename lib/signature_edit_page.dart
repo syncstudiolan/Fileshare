@@ -153,32 +153,34 @@ class _SignatureEditPageState extends State<SignatureEditPage> {
 
   Future<void> _export(String action)async{
     if(_original==null||_busy)return;
-    final target=_selectedTargetKb;
-    if(target==null||target<5||target>10240){
-      _show('Enter a target between 5 KB and 10,240 KB');
-      return;
-    }
+    // Export the current visible edit, even before a target KB is selected.
+    // Only use an exact-size JPEG when it has actually been applied and
+    // still matches the current editor state.
     setState(()=>_busy=true);
     try{
-      final data=_appliedTargetKb==target && _appliedJpeg!=null
+      final target=_appliedTargetKb;
+      final compressed=target!=null && _appliedJpeg!=null;
+      final data=compressed
         ?_appliedJpeg!
-        :await SignatureEditEngine.exactJpeg(
-          _original!,_selection,_filter,target,
-          intensity:_filterIntensity);
-      if(data.length!=target*1024)throw StateError('Exact size check failed');
-      final name='Signature_${DateTime.now().millisecondsSinceEpoch}_${target}KB.jpg';
+        :await SignatureEditEngine.workingPng(
+          _original!,_selection,_filter,intensity:_filterIntensity);
+      final output=(!compressed && _tool=='Rotate' &&
+          _rotationDegrees.abs()>=.001)
+        ?await SignatureEditEngine.rotate(data,_rotationDegrees):data;
+      final name='Signature_${DateTime.now().millisecondsSinceEpoch}'
+        '${compressed?'_${target}KB.jpg':'.png'}';
       if(action=='cart'){
-        await ImageEditingCart.instance.addEditedBytes(data,name);
+        await ImageEditingCart.instance.addEditedBytes(output,name);
         if(mounted)returnToFileShareCart(context);
       }else if(action=='share'){
         final cache=await getTemporaryDirectory();
         final file=File('${cache.path}${Platform.pathSeparator}$name');
-        await file.writeAsBytes(data,flush:true);
+        await file.writeAsBytes(output,flush:true);
         await SharePlus.instance.share(ShareParams(files:[XFile(file.path)]));
       }else{
-        final path=await FilePicker.saveFile(fileName:name,bytes:data,
-          mimeType:'image/jpeg');
-        if(path!=null)_show('Saved exactly $target KB (${data.length} bytes)');
+        final path=await FilePicker.saveFile(fileName:name,bytes:output,
+          mimeType:compressed?'image/jpeg':'image/png');
+        if(path!=null)_show('Saved current edited signature');
       }
     }catch(e){
       _show('Exact-size export unavailable: $e');

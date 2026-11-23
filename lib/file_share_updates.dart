@@ -209,45 +209,63 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   Future<void> _installWindows(File installer) async {
-    final currentPid=pid;
-    final exe=Platform.resolvedExecutable;
-    final scripts=await getTemporaryDirectory();
-    final script=File('${scripts.path}${Platform.pathSeparator}fileshare-update-${release!.build}.ps1');
-    // Literal escaping protects paths containing apostrophes.
-    String quote(String value)=>"'"+value.replaceAll("'","''")+"'";
-    final code="""
+    // File Share continues running in the tray when its window is closed.
+    // A detached updater must survive the complete shutdown of LAN sockets,
+    // tray, single-instance lock and the Flutter process itself.
+    final oldPid=pid;
+    final installedExe=Platform.resolvedExecutable;
+    final installDir=File(installedExe).parent.path;
+    final helperDir=await getApplicationSupportDirectory();
+    final helper=File('${helperDir.path}${Platform.pathSeparator}'
+      'fileshare-updater-${release!.build}.ps1');
+    String psQuote(String value)=>"'"+value.replaceAll("'","''")+"'";
+    final script="""
 \$ErrorActionPreference = 'Stop'
-\$oldPid = $currentPid
-\$setup = ${quote(installer.path)}
-\$app = ${quote(exe)}
-\$limit = (Get-Date).AddSeconds(45)
-while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
-  if ((Get-Date) -gt \$limit) { throw 'Previous File Share process did not exit.' }
-  Start-Sleep -Milliseconds 350
-}
+\$oldPid = $oldPid
+\$installer = ${psQuote(installer.path)}
+\$installedExe = ${psQuote(installedExe)}
+\$installDir = ${psQuote(installDir)}
+\$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
 try {
-  # Show the real Inno Setup wizard, Install button, progress and Windows UAC.
-  \$process = Start-Process -FilePath \$setup -Verb RunAs -ArgumentList '/NORESTART','/CLOSEAPPLICATIONS','/LOG' -PassThru -Wait
-  if (\$process.ExitCode -ne 0) { throw "Installer exited \$(\$process.ExitCode)" }
-  Start-Process -FilePath \$app
+  \$deadline = (Get-Date).AddSeconds(90)
+  while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt \$deadline) {
+      throw 'File Share did not fully exit; installation was not started.'
+    }
+    Start-Sleep -Milliseconds 300
+  }
+  # Elevation is explicit and the Inno Setup wizard remains interactive.
+  # Never use /SILENT or /VERYSILENT.
+  \$setup = Start-Process -FilePath \$installer -Verb RunAs -PassThru -Wait -ArgumentList @('/NORESTART','/CLOSEAPPLICATIONS','/LOG',('/DIR=' + '"' + \$installDir + '"'))
+  if (\$setup.ExitCode -ne 0) {
+    throw "Installer cancelled or failed (exit code \$(\$setup.ExitCode))."
+  }
+  if (-not (Test-Path -LiteralPath \$installedExe)) {
+    throw 'Updated File Share executable was not found at the previous location.'
+  }
+  Start-Process -FilePath \$installedExe
 } catch {
-  \$log = Join-Path \$env:TEMP 'fileshare-update-error.log'
-  Add-Content -Path \$log -Value \$_.ToString()
+  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) " + \$_.ToString())
   Add-Type -AssemblyName PresentationFramework
-  [System.Windows.MessageBox]::Show('File Share installation failed: '+\$_.Exception.Message+[Environment]::NewLine+'Log: '+\$log,'File Share Update','OK','Error') | Out-Null
+  [System.Windows.MessageBox]::Show(
+    ('File Share update could not finish: ' + \$_.Exception.Message +
+      [Environment]::NewLine + 'Installer: ' + \$installer +
+      [Environment]::NewLine + 'Log: ' + \$log),
+    'File Share Update','OK','Error') | Out-Null
 }
 """;
-    await script.writeAsString(code,flush:true);
-    final process=await Process.start('powershell.exe',[
-      '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
-      '-File',script.path,
+    await helper.writeAsString(script,flush:true);
+    // Start a helper outside Program Files before closing the app. It waits
+    // for the actual PID to disappear, then opens the installer visibly.
+    final updater=await Process.start('powershell.exe',[
+      '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+      '-WindowStyle','Hidden','-File',helper.path,
     ],mode:ProcessStartMode.detached);
-    if(process.pid<=0)throw StateError('Updater helper did not start');
-    // Remove file lock, stop LAN and tray, and let the elevated installer
-    // replace Program Files only after the process has fully exited.
+    if(updater.pid<=0)throw StateError('Updater helper did not launch');
+    // This performs full shutdown, not merely hiding the window in the tray.
     await WindowsBackground.instance.exitCompletely();
-    exit(0);
   }
+
 }
 
 class FileShareUpdatePage extends StatefulWidget {

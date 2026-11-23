@@ -79,6 +79,32 @@ void main(){
     expect(image!.width,greaterThan(0));
   });
 
+  test('Small target JPEG keeps maximum resolution when it already fits',()async{
+    final input=example();
+    final result=await ImageEditingEngine.compress(input,
+      targetKb:20,quality:92,format:'JPEG');
+    final decoded=img.decodeJpg(result)!;
+    expect(result.length,lessThanOrEqualTo(20*1024));
+    expect(decoded.width,80);
+    expect(decoded.height,50);
+  });
+
+  test('Lossless PNG compression retains all pixels when target fits',()async{
+    final input=example();
+    final result=await ImageEditingEngine.compress(input,
+      targetKb:50,format:'PNG');
+    final before=img.decodeImage(input)!;
+    final after=img.decodeImage(result)!;
+    expect(result.length,lessThanOrEqualTo(50*1024));
+    expect(after.width,before.width);
+    expect(after.height,before.height);
+    for(final point in <(int,int)>[(0,0),(25,12),(79,49)]){
+      final a=before.getPixel(point.$1,point.$2);
+      final b=after.getPixel(point.$1,point.$2);
+      expect([b.r,b.g,b.b,b.a],[a.r,a.g,a.b,a.a]);
+    }
+  });
+
   test('Compression uses current edited cutout and flattens JPEG on white',()async{
     final mask=Uint8List.fromList(List<int>.generate(80*50,
       (index)=>index%80<40?0:255));
@@ -147,6 +173,22 @@ void main(){
     final decoded=img.decodeJpg(result)!;
     expect(decoded.width,greaterThan(32));
     expect(decoded.height,greaterThan(32));
+  });
+
+  test('Enhance-ready cutout keeps transparency through PNG compression',()async{
+    final mask=Uint8List.fromList(List<int>.generate(80*50,
+      (index)=>index%80<40?0:255));
+    final cutout=await ImageEditingEngine.edit(example(),'background',{
+      'mask':mask,'maskWidth':80,'maskHeight':50,
+    });
+    final adjusted=await ImageEditingEngine.edit(cutout,'adjust',{
+      'brightness':1.05,'contrast':1.1,
+    });
+    final png=await ImageEditingEngine.compress(adjusted,
+      targetKb:100,format:'PNG');
+    final image=img.decodeImage(png)!;
+    expect(image.getPixel(2,2).a,0);
+    expect(image.getPixel(70,30).a,255);
   });
 
 }

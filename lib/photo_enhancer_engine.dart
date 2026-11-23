@@ -218,7 +218,7 @@ Uint8List _mobileSafeEnhance(Map<String,Object?> request){
   final corrected=img.adjustColor(resized,
     contrast:1+.12*strength,saturation:1+.065*strength,
     brightness:1+.012*strength);
-  final output=img.Image(width:targetW,height:targetH,numChannels:3);
+  final output=img.Image(width:targetW,height:targetH,numChannels:4);
 
   final sharpness=1.1*strength;
   for(var y=0;y<targetH;y++){
@@ -242,11 +242,13 @@ Uint8List _mobileSafeEnhance(Map<String,Object?> request){
         return (center+(center-neighbors)*gain).round()
           .clamp(0,255).toInt();
       }
-      output.setPixelRgb(x,y,
+      output.setPixelRgba(x,y,
         channel(c.r,n.r,e.r,w.r,d.r),
         channel(c.g,n.g,e.g,w.g,d.g),
-        channel(c.b,n.b,e.b,w.b,d.b));
+        channel(c.b,n.b,e.b,w.b,d.b),
+        resized.getPixel(x,y).a.toInt());
     }
   }
-  return Uint8List.fromList(img.encodeJpg(output,quality:93));
+  // PNG is required: JPEG discards the cutout's transparent alpha channel.
+  return Uint8List.fromList(img.encodePng(output,level:1));
 }
