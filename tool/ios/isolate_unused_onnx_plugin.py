@@ -25,7 +25,11 @@ else:
     plugin = (config_dir / unquote(root_uri)).resolve()
 pubspec = plugin / "pubspec.yaml"
 original = pubspec.read_text()
-assert re.search(r"^version:\s*1\.9\.0\s*$", original, re.M), "Unexpected ONNX version"
+# Pub uses ^1.9.0 (not ==1.9.0). Accept compatible 1.x updates,
+# while refusing a major-version migration without reviewing its schema.
+version = re.search(r"^version:\\s*(\\d+)\\.(\\d+)\\.(\\d+)(?:\\+\\d+)?\\s*$", original, re.M)
+if not version or int(version.group(1)) != 1 or int(version.group(2)) < 9:
+    raise SystemExit("Unsupported flutter_onnxruntime version; inspect plugin metadata")
 lines = original.splitlines(keepends=True)
 # Only remove the ios platform declaration under flutter.plugin.platforms.
 platforms = next((i for i, line in enumerate(lines)
