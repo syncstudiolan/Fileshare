@@ -328,7 +328,9 @@ jobs:
           }
           '@
           $large=[IntPtr]::Zero; $small=[IntPtr]::Zero
+          $available=[FileShareIconProbe]::ExtractIconEx($exe,-1,[ref]$large,[ref]$small,0)
           $count=[FileShareIconProbe]::ExtractIconEx($exe,0,[ref]$large,[ref]$small,1)
+          Write-Host "Embedded icon groups=$available; extracted=$count; large=$large; small=$small"
           try {
             if($count -ne 1 -or $large -eq [IntPtr]::Zero -or $small -eq [IntPtr]::Zero){
               throw "Branded File Share icons are missing from the Windows EXE resource"
