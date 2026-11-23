@@ -379,8 +379,15 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       _enhanceBefore=null;
       _enhanceAfter=null;
     }
-    if(!step.startsWith('Background') && !step.startsWith('Remove plain-color')){
-      _cutoutBytes=null; // A crop or other transform changed image geometry.
+    if(step.startsWith('Photo enhance') && _cutoutBytes!=null){
+      // Enhancement operates on the current cutout, not the original photo.
+      // Update the overlay source so background previews and exports agree.
+      _cutoutBytes=next;
+    }else if(!step.startsWith('Background') &&
+        !step.startsWith('Remove plain-color') &&
+        !step.startsWith('Background replacement')){
+      _cutoutBytes=null;
+      _pendingBackgroundColor=null;
     }
     // Keep geometry from the last decoded image for color/erase/filter edits.
     // These do not change pixels dimensions; decoding them a second time for
