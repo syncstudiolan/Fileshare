@@ -4088,6 +4088,15 @@ class FeatureDesignPage extends StatelessWidget {
       ]),
     ),
     const SizedBox(height: 14),
+    if (Platform.isIOS || Platform.isMacOS) ...[
+      _section(c,
+        Platform.isIOS ? 'iPhone Files Download Folder'
+                       : 'macOS Finder Download Folder',
+        'Choose a folder once using the system picker. File Share remembers '
+        'the permission for later downloads. Change it here at any time.',
+        const AppleDownloadLocationSetting()),
+      const SizedBox(height:14),
+    ],
     if (Platform.isWindows) ...[
       _section(c, 'Windows Download Destination',
         'Choose a destination each time, or make Downloads the permanent default. '
