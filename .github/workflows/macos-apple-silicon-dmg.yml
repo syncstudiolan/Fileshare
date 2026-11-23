@@ -8,6 +8,8 @@ on:
       - 'lib/main.dart'
       - 'lib/file_share_updates.dart'
       - 'tool/prepare_macos_tray_runner.py'
+      - 'tool/macos/**'
+      - 'lib/lan_engine.dart'
   workflow_dispatch:
 
 permissions:
