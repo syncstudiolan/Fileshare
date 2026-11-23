@@ -27,8 +27,11 @@ jobs:
           set -euo pipefail
           flutter config --enable-macos-desktop
           flutter create --project-name file_share --platforms=macos .
-          python3 -m pip install --quiet Pillow
-          python3 tool/prepare_macos_tray_runner.py
+          # macos-latest uses Homebrew Python with PEP 668 protection;
+          # install Pillow in a dedicated environment, never system-wide.
+          python3 -m venv .macos-build-venv
+          .macos-build-venv/bin/python -m pip install --quiet Pillow
+          .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
           flutter pub get
       - name: Validate Dart and build Apple Silicon app
         shell: bash
