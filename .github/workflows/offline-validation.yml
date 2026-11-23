@@ -106,7 +106,7 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
   android:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[ios-only]') && !contains(github.event.head_commit.message, '[mac-only]')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[ios-only]') && !contains(github.event.head_commit.message, '[mac-only]') && !contains(github.event.head_commit.message, '[windows-only]')
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -311,6 +311,33 @@ jobs:
           $version = ((Get-Content pubspec.yaml | Where-Object { $_ -match '^version:' } | Select-Object -First 1) -replace '^version:\s*','').Split('+')[0]
           if (-not $version) { throw 'Missing app version' }
           flutter build windows --release "--dart-define=FILE_SHARE_VERSION=$version" "--dart-define=FILE_SHARE_BUILD_NUMBER=${{ github.run_number }}"
+      - name: Verify File Share EXE contains native Windows small and large icons
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'build/windows/x64/runner/Release/file_share.exe').Path
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public class FileShareIconProbe {
+            [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
+            public static extern uint ExtractIconEx(
+              string file, int index, out IntPtr large, out IntPtr small, uint count);
+            [DllImport("user32.dll")]
+            public static extern bool DestroyIcon(IntPtr icon);
+          }
+          '@
+          $large=[IntPtr]::Zero; $small=[IntPtr]::Zero
+          $count=[FileShareIconProbe]::ExtractIconEx($exe,0,[ref]$large,[ref]$small,1)
+          try {
+            if($count -ne 1 -or $large -eq [IntPtr]::Zero -or $small -eq [IntPtr]::Zero){
+              throw "Branded File Share icons are missing from the Windows EXE resource"
+            }
+            Write-Host "PASS: Windows EXE has extractable large and small taskbar icons"
+          } finally {
+            if($large -ne [IntPtr]::Zero){[void][FileShareIconProbe]::DestroyIcon($large)}
+            if($small -ne [IntPtr]::Zero){[void][FileShareIconProbe]::DestroyIcon($small)}
+          }
       - name: Record Windows release bundle size
         shell: pwsh
         run: |
@@ -507,7 +534,7 @@ jobs:
 
   # Three platform releases from the same main commit in this one workflow run.
   ios_unsigned:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[mac-only]')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[mac-only]') && !contains(github.event.head_commit.message, '[windows-only]')
     name: iOS ONLY - macOS Xcode compile and IPA packaging
     runs-on: macos-latest
     timeout-minutes: 90
