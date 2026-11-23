@@ -51,15 +51,20 @@ void main() {
       () async {
     // Static regression for the handoff ordering even in Linux Flutter CI.
     final src=await File('lib/file_share_updates.dart').readAsString();
-    final launch=src.indexOf(r'Start-Process -FilePath \$installer -Verb RunAs');
-    final acknowledge=src.indexOf(
+    // macOS has its own complete shutdown before the Windows helper method.
+    // Only assert ordering INSIDE _installWindows, not in the whole source.
+    final windowsStart=src.indexOf('Future<void> _installWindows(');
+    expect(windowsStart,greaterThan(0));
+    final windows=src.substring(windowsStart);
+    final launch=windows.indexOf(r'Start-Process -FilePath \$installer -Verb RunAs');
+    final acknowledge=windows.indexOf(
       r"Set-Content -LiteralPath \$ready -Value 'installer-started'");
-    final shutdown=src.indexOf(
+    final shutdown=windows.indexOf(
       'await WindowsBackground.instance.exitCompletely();');
     expect(launch,greaterThan(0));
     expect(acknowledge,greaterThan(launch),
       reason:'The old updater closed File Share before Inno Setup launched.');
     expect(shutdown,greaterThan(acknowledge));
-    expect(src.contains(r'Set-Content -LiteralPath \$failed'),isTrue);
+    expect(windows.contains(r'Set-Content -LiteralPath \$failed'),isTrue);
   });
 }
