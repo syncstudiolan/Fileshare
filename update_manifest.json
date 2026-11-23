@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 555,
-    "notes": "release: verify PDF notice timer fix in unified PR17 release workflow",
-    "sha256": "bbc5749f293cd17f82b05871e241f219ce1bb86ba502ac380f4b0898bfa5b947",
-    "size": 114630509,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-555/FileShare-Android-ARM64-Release.apk",
+    "build": 580,
+    "notes": "ci(android): use debug-signed ARM64 test APK when production keystore is missing",
+    "sha256": "e692b24c1e37627c57f2b25c405e79aae6a53078c9971b1aa5f31348c9857125",
+    "size": 114585797,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-580/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
