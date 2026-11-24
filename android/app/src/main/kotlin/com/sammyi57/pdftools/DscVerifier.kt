@@ -69,7 +69,7 @@ internal object DscVerifier {
     require(file.length() in 1..MAX_PDF) { "PDF exceeds DSC verification safety limit (64 MB)" }
     val bytes = file.readBytes()
     require(bytes.size.toLong() <= MAX_PDF) { "PDF exceeds DSC verification safety limit" }
-    val trust = DscTrust.load()
+    val trust = (DscRoots.bundled() + DscTrust.load()).distinctBy { DscSignedBytes.sha256(it.encoded) }
     val fetchedCrls = mutableMapOf<String, X509CRL?>()
     val fetchedOcsp = mutableMapOf<String, ByteArray?>()
     val fetchedIssuers = mutableMapOf<String, List<X509Certificate>>()
@@ -186,7 +186,7 @@ internal object DscVerifier {
     leaf.checkValidity(at)
     // Only explicitly imported CA certificates are trust anchors. Embedded
     // self-signed roots and arbitrary TLS trust stores never establish DSC trust.
-    val anchors = trusted.filter { it.basicConstraints >= 0 && !it.hasUnsupportedCriticalExtension() &&
+    val anchors = (trusted + embedded.filter(DscRoots::isPinned)).distinctBy { DscSignedBytes.sha256(it.encoded) }.filter { it.basicConstraints >= 0 && !it.hasUnsupportedCriticalExtension() &&
       (it.keyUsage?.getOrElse(5){false} ?: true) && runCatching { it.checkValidity(at); true }.getOrDefault(false) }.map { TrustAnchor(it, null) }.toSet()
     if (anchors.isEmpty()) return emptyList()
     val selector = X509CertSelector().apply { certificate = leaf }
@@ -343,8 +343,9 @@ internal object DscVerifier {
 
   private fun fetchEvidence(address: String, limit: Int, request: ByteArray? = null): ByteArray? = runCatching {
     val url = address.toHttpUrl()
-    require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() &&
-      url.port == 443 && url.host.contains('.'))
+    val cleartextCa = url.scheme == "http" && url.port == 80 && DscHttpPolicy.allowed(url.host)
+    require((url.isHttps && url.port == 443 || cleartextCa) && url.username.isEmpty() &&
+      url.password.isEmpty() && url.host.contains('.'))
     val builder = Request.Builder().url(url)
     if (request != null) builder.header("Accept", "application/ocsp-response")
       .post(request.toRequestBody("application/ocsp-request".toMediaType()))
