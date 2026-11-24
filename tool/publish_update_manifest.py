@@ -14,19 +14,21 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import quote
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 TOKEN = os.environ.get("GH_TOKEN", "")
 URL = f"https://api.github.com/repos/{REPO}/contents/update_manifest.json"
 
 
-def request(method: str, payload: dict | None = None):
+def request(method: str, payload: dict | None = None, url: str = URL):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
-        URL, method=method, data=data,
+        url, method=method, data=data,
         headers={
             "Authorization": f"Bearer {TOKEN}",
             "Accept": "application/vnd.github+json",
@@ -54,7 +56,28 @@ def publish(platform: str, version: str, build: int,
     sha = hashlib.file_digest(artifact.open("rb"), "sha256").hexdigest()
     asset_url = (f"https://github.com/{REPO}/releases/download/"
                  f"{tag}/{artifact.name}")
-    for attempt in range(3):
+    # Verify the remote asset, not just the local artifact. GitHub's
+    # release digest is computed from the uploaded bytes.
+    release_url = f"https://api.github.com/repos/{REPO}/releases/tags/{quote(tag, safe='')}"
+    remote = None
+    for attempt in range(5):
+        release = request("GET", url=release_url)
+        remote = next((a for a in release.get("assets", [])
+                       if a.get("name") == artifact.name and a.get("state") == "uploaded"), None)
+        if remote and remote.get("digest"):
+            break
+        time.sleep(2 ** attempt)
+    if not remote or remote.get("size") != artifact.stat().st_size or (
+            remote.get("digest") != f"sha256:{sha}") or (
+            remote.get("browser_download_url") != asset_url):
+        raise ValueError("GitHub release asset SHA-256/size/URL verification failed; manifest unchanged")
+    if release.get("draft"):
+        raise ValueError("refusing to publish draft release metadata")
+    source_sha = os.environ.get("GITHUB_SHA", "")
+    if source_sha and release.get("target_commitish") != source_sha:
+        raise ValueError("release does not reference the selected source commit")
+    print(f"Verified uploaded asset: {asset_url} ({remote['size']} bytes, {sha})")
+    for attempt in range(8):
         try:
             existing = request("GET")
             content = base64.b64decode(existing["content"])
@@ -67,8 +90,13 @@ def publish(platform: str, version: str, build: int,
             document_sha = None
         manifest["schema"] = 1
         previous = manifest.get(platform)
-        if isinstance(previous, dict) and int(previous.get("build", 0)) > build:
-            raise ValueError("refusing release downgrade")
+        if isinstance(previous, dict):
+            previous_build = int(previous.get("build", 0))
+            if previous_build > build:
+                raise ValueError("refusing release downgrade")
+            if previous_build == build and (
+                    previous.get("sha256") != sha or previous.get("url") != asset_url):
+                raise ValueError("refusing to replace an existing build with different bytes")
         manifest[platform] = {
             "version": version,
             "build": build,
@@ -93,8 +121,9 @@ def publish(platform: str, version: str, build: int,
             print(f"Published {platform} build {build}, SHA-256 {sha}")
             return
         except urllib.error.HTTPError as exc:
-            if exc.code not in (409, 422) or attempt == 2:
+            if exc.code not in (409, 422) or attempt == 7:
                 raise
+            time.sleep(min(2 ** attempt, 15))
     raise RuntimeError("failed to update release manifest")
 
 
