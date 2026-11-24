@@ -2,20 +2,13 @@ package com.sammyi57.pdftools
 
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDSignatureField
-import org.bouncycastle.asn1.ASN1InputStream
 import org.bouncycastle.asn1.x509.CRLDistPoint
 import org.bouncycastle.asn1.x509.Extension
 import org.bouncycastle.asn1.x509.GeneralName
 import org.bouncycastle.asn1.x509.GeneralNames
 import org.bouncycastle.asn1.ASN1OctetString
-import org.bouncycastle.cert.X509CertificateHolder
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509CRLConverter
-import org.bouncycastle.cms.CMSProcessableByteArray
 import org.bouncycastle.cms.CMSSignedData
-import org.bouncycastle.cms.CMSSignerDigestMismatchException
-import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.File
 import java.net.InetAddress
 import java.net.URL
@@ -55,10 +48,9 @@ internal object DscTrust {
 }
 
 internal object DscVerifier {
-  private val provider = BouncyCastleProvider()
+  private val provider = DscCms.provider
   private const val MAX_PDF = 64 * 1024 * 1024L
   private val supported = setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached")
-  private val strongDigests = setOf("2.16.840.1.101.3.4.2.1", "2.16.840.1.101.3.4.2.2", "2.16.840.1.101.3.4.2.3")
 
   fun read(path: String, password: String?, online: Boolean = false): DscDocument {
     val file = File(path)
@@ -105,29 +97,18 @@ internal object DscVerifier {
           try {
             // Bind the excluded raw bytes to the parsed signature dictionary.
             require(parts.cms.contentEquals(sig.contents)) { "Signature dictionary does not match the excluded contents" }
-            val encoded = ASN1InputStream(parts.cms).use { it.readObject()?.encoded ?: error("Empty CMS") }
-            val cms = CMSSignedData(CMSProcessableByteArray(parts.signed), encoded)
-            val signers = cms.signerInfos.signers
-            if (signers.size != 1) unknown("Unsupported CMS signer count")
-            else {
-              val signer = signers.first()
-              val holder = cms.certificates.getMatches(null).filterIsInstance<X509CertificateHolder>()
-                .singleOrNull { signer.sid.match(it) }
-              if (holder == null) unknown("Signer certificate missing or ambiguous")
-              else {
-                val converter = JcaX509CertificateConverter().setProvider(provider)
-                val cert = converter.getCertificate(holder)
-                val embedded = cms.certificates.getMatches(null).filterIsInstance<X509CertificateHolder>().map { converter.getCertificate(it) }
-                val intact = try { signer.verify(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(holder)) }
-                  catch (_: CMSSignerDigestMismatchException) { false }
+            val checked = DscCms.check(parts.signed, parts.cms, sig.subFilter == "ETSI.CAdES.detached")
+            val cert = checked.cert
+            val embedded = checked.embedded
+            val cms = checked.cms
+            val intact = checked.intact
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
                   val chain = buildChain(cert, embedded, trust)
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
                   val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
-                  val strong = signer.digestAlgOID in strongDigests &&
-                    ((cert.publicKey as? java.security.interfaces.RSAPublicKey)?.modulus?.bitLength() ?: 2048) >= 2048
+                  val strong = checked.strong
                   val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, online)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
@@ -146,8 +127,6 @@ internal object DscVerifier {
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
                     chain.isNotEmpty(), rev, widgets)
                 }
-              }
-            }
           } catch(e: Exception) { unknown("Signature could not be completely checked: ${e.message ?: e.javaClass.simpleName}") }
         }
       }
@@ -160,7 +139,8 @@ internal object DscVerifier {
     leaf.checkValidity()
     // Only explicitly imported CA certificates are trust anchors. Embedded
     // self-signed roots and arbitrary TLS trust stores never establish DSC trust.
-    val anchors = trusted.filter { it.basicConstraints >= 0 }.map { TrustAnchor(it, null) }.toSet()
+    val anchors = trusted.filter { it.basicConstraints >= 0 && !it.hasUnsupportedCriticalExtension() &&
+      (it.keyUsage?.getOrElse(5){false} ?: true) && runCatching { it.checkValidity(); true }.getOrDefault(false) }.map { TrustAnchor(it, null) }.toSet()
     if (anchors.isEmpty()) return emptyList()
     val selector = X509CertSelector().apply { certificate = leaf }
     val params = PKIXBuilderParameters(anchors, selector).apply {
@@ -175,7 +155,7 @@ internal object DscVerifier {
 
   private fun checkRevocation(chain: List<X509Certificate>, cms: CMSSignedData, online: Boolean): String {
     val now = Date()
-    val crls = cms.crLs.getMatches(null).mapNotNull { holder ->
+    val crls = cms.getCRLs().getMatches(null).mapNotNull { holder ->
       runCatching { JcaX509CRLConverter().setProvider(provider).getCRL(holder) }.getOrNull()
     }
     var complete = true
