@@ -27,13 +27,17 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var trusted by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
+  var builtIn by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
   var imported by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
   var confirmedFingerprints by remember { mutableStateOf<Map<String,String>>(emptyMap()) }
   var message by remember { mutableStateOf("") }
   var managing by remember { mutableStateOf(false) }
   var saving by remember { mutableStateOf(false) }
   LaunchedEffect(managing) {
-    if (managing) trusted = withContext(Dispatchers.IO) { DscTrust.load() }
+    if (managing) {
+      trusted = withContext(Dispatchers.IO) { DscTrust.load() }
+      builtIn = withContext(Dispatchers.IO) { DscRoots.bundled() }
+    }
   }
   val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
     if (uri != null) scope.launch {
@@ -60,6 +64,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
     Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(18.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("Signature validation", style = MaterialTheme.typography.titleLarge, color = c.ink)
+      Text(if (DscRustBridge.available) "PDF Craft native verifier available" else "Native verifier unavailable; advanced revision checks are limited", color = c.sub)
       if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
       val signatures = document.signatures.sortedBy { if (it.id == selected) 0 else 1 }
       for (sig in signatures) {
@@ -95,6 +100,10 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
       TextButton(onClick = { managing = !managing }) { Text(if(managing) "Hide trusted certificates" else "Trusted certificates") }
       if (managing) {
         Text("Only independently verified CA certificates should be trusted. A PDF's embedded root is never trusted automatically.", color = c.sub)
+        for (cert in builtIn) {
+          Text("Built-in CCA trust root: " + cert.subjectX500Principal.name, color = c.ink)
+          Text(DscSignedBytes.sha256(cert.encoded), color = c.sub)
+        }
         for (cert in trusted) {
           Text(cert.subjectX500Principal.name, color = c.ink)
           Text(DscSignedBytes.sha256(cert.encoded), color = c.sub)
