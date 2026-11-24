@@ -117,6 +117,13 @@ internal object DscVerifier {
           try {
             // Bind the excluded raw bytes to the parsed signature dictionary.
             require(parts.cms.contentEquals(sig.contents)) { "Signature dictionary does not match the excluded contents" }
+            val covered = sig.byteRange[2].toLong() + sig.byteRange[3].toLong()
+            fun nativeFor(cert: X509Certificate) = native.singleOrNull {
+              field != null && it.field == field.fullyQualifiedName &&
+                it.length == covered && it.fingerprint == DscSignedBytes.sha256(cert.encoded)
+            }
+            fun revisionAllowed(result: DscRustBridge.Result?) =
+              parts.whole || (result?.status == "valid" && result.modification == "allowed")
             if (sig.subFilter == "ETSI.RFC3161") {
               val stamp = DscTimestamp.document(parts.cms, parts.signed)
               var chain = buildChain(stamp.signer, stamp.certificates + dss.certificates, trust, stamp.time)
@@ -127,9 +134,10 @@ internal object DscVerifier {
               val rev = if(chain.size >= 2) checkRevocation(chain, stamp.cms, dss, online,
                 fetchedCrls, fetchedOcsp, stamp.time) else "Not established"
               val trustedTime = if(rev == "Good" && chain.size >= 2) stamp.time else null
+              val nativeResult = nativeFor(stamp.signer)
               val status = when {
-                rev == "Revoked" -> DscStatus.INVALID
-                trustedTime != null && parts.whole -> DscStatus.VALID
+                rev == "Revoked" || nativeResult?.status == "invalid" -> DscStatus.INVALID
+                trustedTime != null && revisionAllowed(nativeResult) -> DscStatus.VALID
                 else -> DscStatus.UNKNOWN
               }
               return@mapIndexed DscResult(id, "Document timestamp: " + stamp.signer.subjectX500Principal.name,
@@ -150,9 +158,10 @@ internal object DscVerifier {
               val intact = DscLegacy.verify(parts.signed, parts.cms, cert)
               val chain = if(intact) buildChain(cert, pool + dss.certificates, trust) else emptyList()
               return@mapIndexed DscResult(id, cert.subjectX500Principal.name,
-                if(intact) DscStatus.UNKNOWN else DscStatus.INVALID,
-                if(intact) "Legacy RSA/SHA-1 integrity verified; weak algorithm cannot establish current-policy validity"
-                else "Legacy RSA signature does not match signed bytes",
+                if(!intact || nativeFor(cert)?.status == "invalid") DscStatus.INVALID else DscStatus.UNKNOWN,
+                if(!intact) "Legacy RSA signature does not match signed bytes"
+                else if(nativeFor(cert)?.status == "invalid") "PDF Craft rejected this legacy signature or its revisions"
+                else "Legacy RSA/SHA-1 integrity verified; weak algorithm cannot establish current-policy validity",
                 cert, chain, intact, chain.isNotEmpty(), widgets = widgets)
             }
             val checked = DscCms.check(parts.signed, parts.cms, sig.subFilter == "ETSI.CAdES.detached",
@@ -179,27 +188,22 @@ internal object DscVerifier {
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
                   val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
                   val strong = checked.strong
-                  val covered = sig.byteRange[2].toLong() + sig.byteRange[3].toLong()
-                  val nativeResult = native.singleOrNull {
-                    field != null && it.field == field.fullyQualifiedName &&
-                      it.length == covered && it.fingerprint == DscSignedBytes.sha256(cert.encoded)
-                  }
+                  val nativeResult = nativeFor(cert)
                   // Only a matching native verdict and allowed revision classification
                   // can relax the original whole-file requirement. A missing library,
                   // unknown verdict or field mismatch never approves modifications.
-                  val revisionAccepted = parts.whole || (nativeResult?.status == "valid" &&
-                    nativeResult.modification == "allowed")
+                  val revisionAccepted = revisionAllowed(nativeResult)
                   val nativeRejected = nativeResult?.status == "invalid"
                   val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     nativeRejected -> "PDF Craft rejected this signature or its later revisions"
                     !revisionAccepted -> "Signed bytes intact; later revisions are not established as permitted"
-                    !parts.whole -> "Later revisions permitted by PDF Craft: " + nativeResult?.changes.orEmpty().joinToString(", ")
                     !signingUsage || !documentEku -> "Certificate key usage does not allow document signing"
                     !strong -> "Legacy or unsupported digest policy"
                     chain.isEmpty() -> "Certificate identity is not trusted or not currently valid"
                     rev != "Good" -> "Integrity and trust verified; current revocation status not established"
+                    !parts.whole -> "Verified signature; permitted later revisions: " + nativeResult?.changes.orEmpty().joinToString(", ")
                     else -> "Original signed bytes, trusted certificate chain and revocation evidence verified"
                   }
                   val status = when {
