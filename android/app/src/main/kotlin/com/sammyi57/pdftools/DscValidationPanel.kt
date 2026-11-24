@@ -127,9 +127,17 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           saving = true
           scope.launch {
             try {
-              val file = File(path)
-              val result = saveToDevice(Saved(name, path, file.length(), file.lastModified()))
-              if(result.isNotEmpty()) message = "Original signed PDF saved to $result"
+              val snapshot = withContext(Dispatchers.IO) {
+                val bytes = File(path).readBytes()
+                require(DscSignedBytes.sha256(bytes) == document.hash) {
+                  "PDF changed since validation. Reopen and verify again."
+                }
+                File.createTempFile("dsc-save-", ".pdf", context.cacheDir).apply { writeBytes(bytes) }
+              }
+              try {
+                val result = saveToDevice(Saved(name, snapshot.path, snapshot.length(), snapshot.lastModified()))
+                if(result.isNotEmpty()) message = "Original signed PDF saved to $result"
+              } finally { withContext(Dispatchers.IO) { snapshot.delete() } }
             } catch(e: Exception) { message = e.message ?: "Save failed" }
             finally { saving = false }
           }
