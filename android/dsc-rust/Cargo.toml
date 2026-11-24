@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 jni = "=0.21.1"
 serde_json = "1"
 sha2 = "0.10"
-pdfcraft-sign = { git = "https://github.com/storytold/pdfcraft", rev = "6e910675c68dd5092e889065cfe8d0274c1b2742" }
+pdfcraft-sign = { path = "../../third_party/pdfcraft-dsc-reference/crates/sign" }
 pdfcraft-cos = { git = "https://github.com/storytold/pdfcraft", rev = "6e910675c68dd5092e889065cfe8d0274c1b2742" }
 
 [profile.release]
