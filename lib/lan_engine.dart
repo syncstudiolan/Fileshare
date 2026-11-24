@@ -26,6 +26,7 @@ class WindowsLanPeerSources {
   final _udp=<String,LanPeer>{};
   final _bonjour=<String,LanPeer>{};
 
+  bool get hasBonjourPeers=>_bonjour.isNotEmpty;
   void observeUdp(LanPeer peer)=>_udp[peer.id]=peer;
   void replaceBonjour(Iterable<LanPeer> snapshot) {
     _bonjour
@@ -386,7 +387,7 @@ class LanEngine extends ChangeNotifier {
     final existing=_windowsDiscovery;
     // Recover a silent empty browser, without restarting healthy sessions.
     if(existing!=null &&
-        (existing.services.isNotEmpty || _windowsBrowseStartedAt==null ||
+        (_windowsSources.hasBonjourPeers || _windowsBrowseStartedAt==null ||
          DateTime.now().difference(_windowsBrowseStartedAt!)<
              const Duration(seconds:30)))return;
     _windowsBrowsing=true;
