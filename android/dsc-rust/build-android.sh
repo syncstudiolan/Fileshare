@@ -6,5 +6,7 @@ cargo ndk --version >/dev/null || { echo 'cargo-ndk required' >&2; exit 1; }
 : "${ANDROID_NDK_HOME:?Set ANDROID_NDK_HOME to the installed Android NDK}"
 # No download at app runtime. Cargo fetches only the pinned upstream
 # workspace and its build dependencies at build time.
-cargo ndk -t arm64-v8a -p 24 -o ../app/build/generated/dscRust/jniLibs build --release
-test -s ../app/build/generated/dscRust/jniLibs/arm64-v8a/libfileshare_dsc.so
+output="${1:?Pass Gradle-generated JNI output directory}"
+mkdir -p "$output"
+cargo ndk -t arm64-v8a -p 24 -o "$output" build --release
+test -s "$output/arm64-v8a/libfileshare_dsc.so"
