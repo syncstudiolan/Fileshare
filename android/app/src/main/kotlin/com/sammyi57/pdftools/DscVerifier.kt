@@ -38,7 +38,7 @@ internal data class DscDocument(val hash: String, val signatures: List<DscResult
 internal object DscTrust {
   private val factory get() = CertificateFactory.getInstance("X.509")
   private fun directory() = File(appContext.filesDir, "dsc_trust").apply { mkdirs() }
-  fun load(): List<X509Certificate> = directory().listFiles().orEmpty().take(256).mapNotNull { file ->
+  fun load(): List<X509Certificate> = directory().listFiles().orEmpty().filter { it.extension == "cer" }.take(256).mapNotNull { file ->
     runCatching { file.inputStream().use { factory.generateCertificate(it) as X509Certificate } }.getOrNull()
   }
   fun parse(bytes: ByteArray): List<X509Certificate> {
@@ -46,7 +46,10 @@ internal object DscTrust {
     return factory.generateCertificates(bytes.inputStream()).filterIsInstance<X509Certificate>()
       .also { require(it.isNotEmpty() && it.size <= 32) { "No supported certificates" } }
   }
-  fun add(cert: X509Certificate) {
+  fun add(cert: X509Certificate, confirmedFingerprint: String) {
+    require(confirmedFingerprint.replace(Regex("[ :\\s]"), "").equals(DscSignedBytes.sha256(cert.encoded), ignoreCase = true)) { "Certificate fingerprint mismatch" }
+    require(cert.basicConstraints >= 0 && !cert.hasUnsupportedCriticalExtension() &&
+      (cert.keyUsage?.getOrElse(5){false} ?: true)) { "Certificate is not an eligible CA" }
     val target = File(directory(), DscSignedBytes.sha256(cert.encoded) + ".cer")
     require(target.exists() || load().size < 256) { "Trust store is full" }
     val temp = File.createTempFile("cert-", ".tmp", directory())
