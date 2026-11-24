@@ -17,6 +17,8 @@ permissions:
 
 jobs:
   macos_dmg:
+    # A Windows-only release can change shared Dart code without rebuilding Mac.
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[windows-only]')
     # Separate ARM64 runner queue repeatedly cancelled before any step started.
     # Xcode Release builds a universal binary on an Intel Mac; verify arm64 below.
     runs-on: macos-15-intel
