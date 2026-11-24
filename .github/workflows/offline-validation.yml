@@ -1,112 +1,39 @@
-name: Validate File Share background LAN and compact releases
+name: File Share Release Pipeline
 
 on:
-  # Android test build on the explicitly requested merge into main.
   push:
     branches: [main]
-    paths-ignore:
-      - '.github/workflows/macos-apple-silicon-dmg.yml'
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      android:
+        description: Android signed APK
+        type: boolean
+        default: true
+      windows:
+        description: Windows x64 Setup EXE
+        type: boolean
+        default: true
+      ios:
+        description: iOS unsigned IPA (external signing)
+        type: boolean
+        default: true
+      macos:
+        description: macOS Apple Silicon DMG
+        type: boolean
+        default: true
 
-# Avoid overlapping validations when multiple source fixes are pushed.
+# Ordinary merges do not release. [release-now] is an explicit one-time
+# authorization for the initial migration; later use the Run workflow button.
 concurrency:
-  group: fileshare-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: fileshare-production-release
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
-  preview_validation:
-    # Before merging PR #6, run actual analyzer/tests/Android compilation.
-    # Release-authorized PR 16: validate once before merging to avoid failed releases.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-      - name: Generate Android runner for plugin analyzer
-        run: flutter create --project-name file_share --platforms=android .
-      - name: Supply Maven Central fallback for Flutter Gradle included build
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.gradle/init.d"
-          cat > "$HOME/.gradle/init.d/fileshare-maven-fallback.gradle" <<'GRADLE'
-          gradle.beforeSettings { settings ->
-            settings.pluginManagement.repositories {
-              google()
-              mavenCentral()
-              gradlePluginPortal()
-            }
-          }
-          gradle.beforeProject { project ->
-            project.buildscript.repositories {
-              google()
-              mavenCentral()
-              gradlePluginPortal()
-            }
-          }
-          GRADLE
-      - name: Generate final Android launcher logo assets
-        run: |
-          python3 -m pip install --quiet Pillow
-          python3 tool/generate_brand_assets.py
-      - name: Verify ML Kit release rules
-        run: python3 tool/ensure_mlkit_proguard.py
-      - run: flutter pub get
-      - name: Repair upstream WebView ProGuard configuration for AGP 9
-        run: python3 tool/fix_legacy_inappwebview_gradle.py
-      - name: Check existing Worker and automatic device-transfer schema
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --check cloudflare/worker.js
-          node --test cloudflare/device_receipt.test.mjs cloudflare/inbox_events.test.mjs cloudflare/guest_instant.test.mjs cloudflare/auto_cloud_midnight.test.mjs
-          python3 - <<'PY'
-          import sqlite3
-          connection=sqlite3.connect(':memory:')
-          script=open('cloudflare/schema.sql',encoding='utf8').read()
-          connection.executescript(script)
-          for table in ('device_transfers','device_transfer_parts','uploads','accounts'):
-              assert connection.execute(
-                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                  (table,)).fetchone(),table
-          print('Existing Cloudflare setup auto-installs device transfer tables.')
-          PY
-      - name: Analyze all Dart sources
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
-      - name: Run Toolbox UI and image processing regression tests
-        run: flutter test --reporter expanded --timeout 2m
-      - name: Compile upstream native Android PDF Tools and scanner
-        working-directory: android
-        run: ./gradlew :app:compileDebugKotlin --no-daemon --console=plain
-      - name: Verify the original 24-tool Kotlin registry on JVM
-        working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
-      - name: Build File Share Android PDF Tools test APK
-        run: flutter build apk --debug --target-platform android-arm64
-      - name: Verify test APK debug signature
-        shell: bash
-        run: |
-          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
-          "$signer" verify --verbose build/app/outputs/flutter-apk/app-debug.apk
-      - name: Upload Android PDF Tools test APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: file-share-pdf-tools-android-debug
-          path: build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
   android:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[ios-only]') && !contains(github.event.head_commit.message, '[mac-only]') && !contains(github.event.head_commit.message, '[windows-only]')
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.android) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -235,20 +162,11 @@ jobs:
           name: file-share-android-signed-release-apk
           path: build/app/outputs/flutter-apk/FileShare-Android-ARM64-Release.apk
           if-no-files-found: error
-      - name: Build special full-backend emulator-only debug APK
-        if: github.event_name == 'workflow_dispatch'
-        run: flutter build apk --debug --dart-define=FILE_SHARE_BACKGROUND_VALIDATION=true
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
-        with:
-          name: file-share-background-emulator-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
 
   windows:
     # Still produce the Windows installer if Android signing secrets are missing.
     # The needs edge serializes Windows after Android; no parallel release builds.
-    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[ios-only]') && !contains(github.event.head_commit.message, '[mac-only]'))))
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.windows) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
 
     runs-on: windows-latest
     timeout-minutes: 50
@@ -406,64 +324,9 @@ jobs:
           path: dist/FileShare-Windows-Setup.exe
           if-no-files-found: error
 
-  android_background_emulator:
-    name: Verify Android background TCP receive and notification
-    if: false # Windows installer only
-    needs: android
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: file-share-background-emulator-apk
-          path: emulator-apk
-      - name: Enable hardware acceleration
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Launch real Android emulator and receive after Home
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: default
-          arch: x86_64
-          profile: pixel_4
-          disable-animations: true
-          script: |
-            mkdir -p screenshots
-            adb install -r emulator-apk/app-debug.apk
-            adb shell pm grant com.example.file_share android.permission.POST_NOTIFICATIONS || true
-            adb shell am start -n com.example.file_share/.MainActivity
-            sleep 10
-            adb shell input keyevent KEYCODE_HOME
-            sleep 3
-            adb shell pidof com.example.file_share > screenshots/process-pid.txt || true
-            adb shell dumpsys activity services com.example.file_share > screenshots/service-state.txt || true
-            adb shell ss -tlpn > screenshots/tcp-listeners.txt || true
-            adb logcat -c || true
-            adb forward tcp:49311 tcp:49311
-            python3 -c 'import json,socket; data=b"LAN background receiver test\n"; header=json.dumps({"protocol":"fileshare-file-v1","name":"lan_background_probe.txt","size":len(data),"batch":"background-check","sender":"GitHub runner","senderId":"runner-device"}).encode()+b"\n"; s=socket.create_connection(("127.0.0.1",49311),timeout=12); s.settimeout(20); s.sendall(header+data); reply=s.recv(64); print("Background receiver response:",repr(reply)); open("screenshots/transfer-result.txt","w").write(("PASS" if reply.startswith(b"OK") else "FAIL")+": "+repr(reply)); s.close()'
-            sleep 4
-            adb logcat -d -v time > screenshots/android-logcat.txt || true
-            adb shell dumpsys notification --noredact > screenshots/notification-diagnostics.txt
-            adb exec-out screencap -p > screenshots/01-android-after-background-receive.png
-            adb shell cmd statusbar expand-notifications
-            sleep 2
-            adb exec-out screencap -p > screenshots/02-file-received-notification.png
-            grep -F 'lan_background_probe.txt' screenshots/notification-diagnostics.txt || true
-            grep -q '^PASS' screenshots/transfer-result.txt
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: file-share-background-receive-proof
-          path: screenshots/*
-          if-no-files-found: warn
-
   publish_release:
     name: Publish Android ARM64 production-signed release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.android.result == 'success'
+    if: github.ref == 'refs/heads/main' && needs.android.result == 'success'
     needs: [android]
     runs-on: ubuntu-latest
     permissions:
@@ -500,7 +363,7 @@ jobs:
 
   publish_windows_release:
     name: Publish Windows installer and update manifest
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.windows.result == 'success'
+    if: github.ref == 'refs/heads/main' && needs.windows.result == 'success'
     needs: [windows]
     runs-on: ubuntu-latest
     permissions:
@@ -536,7 +399,7 @@ jobs:
 
   # Three platform releases from the same main commit in this one workflow run.
   ios_unsigned:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[mac-only]') && !contains(github.event.head_commit.message, '[windows-only]')
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.ios) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
     name: iOS ONLY - macOS Xcode compile and IPA packaging
     runs-on: macos-latest
     timeout-minutes: 90
@@ -664,6 +527,7 @@ jobs:
           zip -qry release/FileShare-iOS-UNSIGNED.ipa Payload
           unzip -tq release/FileShare-iOS-UNSIGNED.ipa
           file "$app/Runner"
+          lipo -archs "$app/Runner" | tr ' ' '\n' | grep -qx arm64
           python3 - <<'PY'
           import os
           path='release/FileShare-iOS-UNSIGNED.ipa'
@@ -676,89 +540,11 @@ jobs:
           path: release/FileShare-iOS-UNSIGNED.ipa
           if-no-files-found: error
           retention-days: 30
-      # The standalone DMG workflow remained queued and was cancelled before
-      # any build steps ran. Reuse this already-allocated Apple Silicon runner
-      # (the same macOS runner that successfully compiled the iPhone IPA).
-      # No second macOS job is requested.
-      - name: Prepare macOS ARM64 app on the existing iOS macOS runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(uname -s)" = Darwin
-          echo "Building macOS DMG on $(uname -m) / $(sw_vers -productVersion)"
-          flutter config --enable-macos-desktop
-          # CocoaPods supports ONNX Runtime on macOS and avoids the generated
-          # Swift Package Manager target stuck at macOS 12 in prior builds.
-          flutter config --no-enable-swift-package-manager
-          flutter create --project-name file_share --platforms=macos .
-          .ios-build-venv/bin/python tool/prepare_macos_tray_runner.py
-          flutter pub get
-          python3 - <<'PY'
-          import pathlib, re
-          root=pathlib.Path('macos')
-          project=root/'Runner.xcodeproj/project.pbxproj'
-          contents=project.read_text()
-          updated,n=re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
-                            'MACOSX_DEPLOYMENT_TARGET = 14.0;',contents)
-          if not n:
-              raise SystemExit('Cannot locate macOS Runner deployment target')
-          project.write_text(updated)
-          podfile=root/'Podfile'
-          contents=podfile.read_text()
-          contents,n=re.subn(r"^#?\s*platform\s*:osx,\s*'[^']+'",
-                             "platform :osx, '14.0'",contents,flags=re.M)
-          if not n:
-              contents="platform :osx, '14.0'\n"+contents
-          podfile.write_text(contents)
-          package=root/'Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift'
-          if package.is_file():
-              contents=package.read_text()
-              contents,n=re.subn(r'\.macOS\("[0-9.]+"\)',
-                                 '.macOS("14.0")',contents)
-              if n: package.write_text(contents)
-          print('macOS minimum deployment target: 14.0')
-          PY
-      - name: Compile Apple Silicon and create DMG
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter build macos --release
-          app="$(find build/macos/Build/Products/Release -maxdepth 1 -type d -name '*.app' | head -1)"
-          test -n "$app" && test -d "$app"
-          executable="$(find "$app/Contents/MacOS" -maxdepth 1 -type f | head -1)"
-          test -n "$executable"
-          lipo -info "$executable"
-          lipo -archs "$executable" | tr ' ' '\n' | grep -qx arm64
-          mkdir -p release/macos-dmg-root
-          ditto "$app" "release/macos-dmg-root/File Share.app"
-          ln -s /Applications release/macos-dmg-root/Applications
-          hdiutil create -volname "File Share" -srcfolder release/macos-dmg-root \
-            -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
-          test -s release/FileShare-macOS-AppleSilicon.dmg
-          shasum -a 256 release/FileShare-macOS-AppleSilicon.dmg
-      - uses: actions/upload-artifact@v4
-        with:
-          name: file-share-macos-arm64-dmg
-          path: release/FileShare-macOS-AppleSilicon.dmg
-          if-no-files-found: error
-          retention-days: 30
-      - name: Publish latest Apple Silicon DMG
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="fileshare-macos-arm64-${GITHUB_SHA:0:8}"
-          gh release create "$tag" release/FileShare-macOS-AppleSilicon.dmg \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "File Share macOS Apple Silicon DMG" \
-            --notes "ARM64 macOS 14+ build from latest main including PR #19. Unsigned and unnotarized; Gatekeeper approval may be required. LAN discovery, auto-start and folder access require real-device validation." \
-            --prerelease
 
   publish_ipa:
     name: iOS ONLY - Publish unsigned IPA for external signing
     needs: [ios_unsigned]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.ios_unsigned.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -792,3 +578,11 @@ jobs:
             "fileshare-ios-unsigned-build-${{ github.run_number }}" \
             release/FileShare-iOS-UNSIGNED.ipa "Unsigned iOS release — re-sign with AppleJR using the original certificate/profile and bundle ID."
 
+
+  macos:
+    name: macOS Apple Silicon DMG
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.macos) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
+    uses: ./.github/workflows/macos-apple-silicon-dmg.yml
+    with:
+      build: ${{ github.run_number }}
+    secrets: inherit
