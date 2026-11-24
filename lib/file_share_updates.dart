@@ -80,7 +80,8 @@ class FileShareUpdates extends ChangeNotifier {
 
   /// New session: clear a previous "Update later" only when the app restarts.
   Future<void> check({bool startup=false}) async {
-    if(!supported||_checking||_downloading||stage==UpdateStage.installing)return;
+    if(!supported||_checking||_downloading||
+        (Platform.isWindows&&stage==UpdateStage.installing))return;
     _checking=true;
     stage=UpdateStage.checking;error=null;notifyListeners();
     final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
