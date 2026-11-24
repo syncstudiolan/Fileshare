@@ -180,9 +180,20 @@ def _verify_release_set(release: dict, entries: dict, tag: str,
         remote = by_name.get(filename)
         if not remote or remote.get("state") != "uploaded" or (
                 remote.get("size") != entry["size"] or
-                remote.get("digest") != "sha256:" + entry["sha256"] or
-                remote.get("browser_download_url") != entry["url"]):
-            raise ValueError(f"{platform}: GitHub asset URL/size/SHA-256 mismatch")
+                remote.get("digest") != "sha256:" + entry["sha256"]):
+            raise ValueError(f"{platform}: GitHub asset size/SHA-256 mismatch")
+        actual_url = remote.get("browser_download_url", "")
+        # GitHub draft releases use a temporary untagged-<id> URL until
+        # published (observed in Build 624). Verify the real digest and
+        # size in both phases, but allow only the trusted temporary URL
+        # for this exact filename in this repository while still draft.
+        temporary_url = re.fullmatch(
+            rf"https://github\.com/{re.escape(REPO)}/releases/download/"
+            rf"untagged-[A-Za-z0-9]+/{re.escape(filename)}",
+            actual_url if isinstance(actual_url, str) else "",
+        )
+        if actual_url != entry["url"] and not (draft and temporary_url):
+            raise ValueError(f"{platform}: GitHub asset download URL mismatch")
 
 
 def publish_set(version: str, build: int, root: Path, selected: list[str]) -> None:
@@ -242,8 +253,18 @@ def publish_set(version: str, build: int, root: Path, selected: list[str]) -> No
     current, _ = _read_manifest()
     _merge_release_set(current, entries)
     request("PATCH", {"draft": False}, url=release_url)
-    published = request("GET", url=release_url)
-    _verify_release_set(published, entries, tag, source, draft=False)
+    # The public tag URL may take a moment to replace the draft URL.
+    # Do not write the manifest until the final URL, digest, size and
+    # complete asset set have all been confirmed in the published release.
+    for attempt in range(8):
+        published = request("GET", url=release_url)
+        try:
+            _verify_release_set(published, entries, tag, source, draft=False)
+            break
+        except ValueError:
+            if attempt == 7:
+                raise
+            time.sleep(min(2 ** attempt, 15))
 
     # One optimistic-lock commit updates all selected platforms together.
     # If publication or verification fails, none of the update entries change.
