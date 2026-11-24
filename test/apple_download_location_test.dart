@@ -47,24 +47,44 @@ void main() {
       'Files/Selected');
   });
 
-  test('Windows updater starts elevated wizard before closing tray',
+  test('Windows updater requests native elevation before closing tray',
       () async {
-    // Static regression for the handoff ordering even in Linux Flutter CI.
     final src=await File('lib/file_share_updates.dart').readAsString();
-    // macOS has its own complete shutdown before the Windows helper method.
-    // Only assert ordering INSIDE _installWindows, not in the whole source.
     final windowsStart=src.indexOf('Future<void> _installWindows(');
     expect(windowsStart,greaterThan(0));
     final windows=src.substring(windowsStart);
-    final launch=windows.indexOf(r'Start-Process -FilePath \$installer -Verb RunAs');
-    final acknowledge=windows.indexOf(
-      r"Set-Content -LiteralPath \$ready -Value 'installer-started'");
+    final launch=windows.indexOf('await _requestWindowsSetup(installerPath);');
     final shutdown=windows.indexOf(
       'await WindowsBackground.instance.exitCompletely();');
     expect(launch,greaterThan(0));
-    expect(acknowledge,greaterThan(launch),
-      reason:'The old updater closed File Share before Inno Setup launched.');
-    expect(shutdown,greaterThan(acknowledge));
-    expect(windows.contains(r'Set-Content -LiteralPath \$failed'),isTrue);
+    expect(shutdown,greaterThan(launch));
+    expect(windows,contains('ShellExecuteExW'));
+    expect(windows,contains("wide('runas')"));
+    expect(windows,contains("wide('/NORESTART /CLOSEAPPLICATIONS /LOG')"));
+    expect(windows,contains('..nShow=1'));
+    expect(windows,contains('if(started==0)'));
+    expect(windows,contains('if(error==1223)'));
+    expect(windows,contains('Isolate.run'));
+    expect(windows, isNot(contains('powershell.exe')));
+    expect(windows, isNot(contains('installer-started')));
+  });
+
+  test('Windows updater locks install, verifies SHA and allows retry', () async {
+    final src=await File('lib/file_share_updates.dart').readAsString();
+    final install=src.substring(src.indexOf('Future<void> install()'),
+      src.indexOf('Future<void> _installMacOS('));
+    final lock=install.indexOf('stage=UpdateStage.installing');
+    final hash=install.indexOf('sha256.bind(file.openRead())');
+    final launch=install.indexOf('await _installWindows(file)');
+    expect(lock,greaterThan(0));
+    expect(hash,greaterThan(lock));
+    expect(launch,greaterThan(hash));
+    expect(install,contains('await file.length()!=selected.size'));
+    expect(install,contains('stage=Platform.isWindows?UpdateStage.ready:UpdateStage.failed'));
+    expect(src,contains('_downloading||stage==UpdateStage.installing'));
+    final installer=await File('tool/FileShareInstaller.iss').readAsString();
+    expect(installer,contains('UsePreviousAppDir=yes'));
+    expect(installer,contains('PrivilegesRequired=admin'));
+    expect(installer,contains('Flags: nowait postinstall skipifsilent'));
   });
 }
