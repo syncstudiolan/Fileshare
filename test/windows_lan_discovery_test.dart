@@ -62,6 +62,6 @@ void main() {
     expect(source,contains('unawaited(_startWindowsBonjour());'));
     expect(source,contains('_sendAnnouncement(destination:packet.address)'));
     expect(source,contains("MethodChannel('file_share.lan_discovery')"));
-    expect(source,contains('(Platform.isIOS || Platform.isMacOS)'));
+    expect(source,contains('Platform.isIOS||Platform.isAndroid||Platform.isMacOS'));
   });
 }
