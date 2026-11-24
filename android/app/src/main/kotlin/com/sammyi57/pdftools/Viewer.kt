@@ -122,11 +122,12 @@ fun PdfViewerScreen(path: String, name: String) {
     if (doc == null) return@LaunchedEffect
     dscBusy = true
     dscError = ""
+    dsc = null
     try {
       dsc = withContext(Dispatchers.IO) {
         val offline = DscVerifier.read(path, password)
-        if (offline.signatures.any { it.status == DscStatus.UNKNOWN && it.trusted &&
-              it.integrity && it.revocation == "Not established" }) {
+        if (offline.signatures.any { it.status == DscStatus.UNKNOWN && it.integrity &&
+              (!it.trusted || it.revocation == "Not established") }) {
           DscVerifier.read(path, password, online = true)
         } else offline
       }
