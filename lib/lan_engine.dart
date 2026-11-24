@@ -286,7 +286,7 @@ class LanEngine extends ChangeNotifier {
         }
         final task=_accept(connection).catchError((Object e){
           debugPrint('LAN receive cleanup: $e');
-        }).whenComplete(()=>_incomingConnections.remove(connection));
+        }).whenComplete((){_incomingConnections.remove(connection);});
         _incomingConnections[connection]=task;
         unawaited(task);
       },
