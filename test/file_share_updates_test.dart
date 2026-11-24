@@ -52,14 +52,21 @@ void main(){
     expect(source,contains('Share IPA to signing app'));
   });
 
-  test('one release workflow selects platforms and reuses Mac builder',(){
+  test('one release workflow selects platforms and fails fast before group publication',(){
     final pipeline=File('.github/workflows/offline-validation.yml').readAsStringSync();
     for(final platform in ['android','windows','ios','macos']){
       expect(pipeline,contains('inputs.$platform'));
     }
     expect(pipeline,contains('[release-now]'));
     expect(pipeline,contains('  macos:'));
-    expect(pipeline,contains('runs-on: macos-15-intel'));
+    expect(pipeline,contains("'runner':'macos-15-intel'"));
+    expect(pipeline,contains('fail-fast: true'));
+    expect(pipeline,contains('Restore clean source for macOS after iOS packaging'));
+    expect(pipeline,contains("needs: [release_preflight, build]"));
+    expect(pipeline,contains("needs.build.result == 'success'"));
+    expect(pipeline,contains('tool/publish_update_manifest.py --set'));
+    expect(pipeline, isNot(contains('publish_windows_release:')));
+    expect(pipeline, isNot(contains('publish_ipa:')));
     expect(pipeline,contains('hdiutil verify'));
     expect(pipeline,contains(r'--build-number="${{ github.run_number }}"'));
     final mac=File('.github/workflows/macos-apple-silicon-dmg.yml').readAsStringSync();
