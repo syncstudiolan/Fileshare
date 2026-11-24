@@ -16,6 +16,10 @@ import java.util.concurrent.TimeUnit
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.bouncycastle.asn1.x509.AuthorityInformationAccess
+import org.bouncycastle.asn1.x509.AccessDescription
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
@@ -27,6 +31,7 @@ internal data class DscResult(
   val certificate: X509Certificate? = null, val chain: List<X509Certificate> = emptyList(),
   val integrity: Boolean = false, val trusted: Boolean = false,
   val revocation: String = "Not established", val widgets: List<DscWidget> = emptyList(),
+  val trustedTime: Date? = null,
 )
 internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
 
@@ -63,7 +68,10 @@ internal object DscVerifier {
     require(bytes.size.toLong() <= MAX_PDF) { "PDF exceeds DSC verification safety limit" }
     val trust = DscTrust.load()
     val fetchedCrls = mutableMapOf<String, X509CRL?>()
+    val fetchedOcsp = mutableMapOf<String, ByteArray?>()
+    val fetchedIssuers = mutableMapOf<String, List<X509Certificate>>()
     val results = PDDocument.load(bytes, password.orEmpty()).use { pdf ->
+      val dss = DscDss.read(pdf)
       val fields = pdf.documentCatalog.acroForm?.fieldTree?.filterIsInstance<PDSignatureField>().orEmpty()
       val signatures = pdf.signatureDictionaries
       require(signatures.size <= 64) { "Too many signatures to check safely" }
@@ -110,11 +118,22 @@ internal object DscVerifier {
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
-                  val chain = buildChain(cert, embedded, trust)
+                  val pool = embedded + dss.certificates
+                  val stamp = DscTimestamp.attached(cms)
+                  val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
+                  val trustedTime = if (stamp != null && tsaChain.size >= 2 &&
+                    checkRevocation(tsaChain, stamp.cms, dss, online, fetchedCrls, fetchedOcsp, stamp.time) == "Good")
+                    stamp.time else null
+                  val at = trustedTime ?: Date()
+                  var chain = buildChain(cert, pool, trust, at)
+                  if (chain.isEmpty() && online && trust.isNotEmpty()) {
+                    val extra = discoverIssuers(cert, pool, trust, fetchedIssuers)
+                    chain = buildChain(cert, pool + extra, trust, at)
+                  }
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
                   val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
                   val strong = checked.strong
-                  val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, online, fetchedCrls)
+                  val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     !parts.whole -> "Signed bytes intact; later revisions require DocMDP analysis"
@@ -122,7 +141,7 @@ internal object DscVerifier {
                     !strong -> "Legacy or unsupported digest policy"
                     chain.isEmpty() -> "Certificate identity is not trusted or not currently valid"
                     rev != "Good" -> "Integrity and trust verified; current revocation status not established"
-                    else -> "Original signed bytes, trusted certificate chain and current CRLs verified"
+                    else -> "Original signed bytes, trusted certificate chain and revocation evidence verified"
                   }
                   val status = when {
                     rev == "Revoked" -> DscStatus.INVALID
@@ -130,7 +149,7 @@ internal object DscVerifier {
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
-                    chain.isNotEmpty(), rev, widgets)
+                    chain.isNotEmpty(), rev, widgets, trustedTime)
                 }
           } catch(e: Exception) { unknown("Signature could not be completely checked: ${e.message ?: e.javaClass.simpleName}") }
         }
@@ -140,17 +159,17 @@ internal object DscVerifier {
   }
 
   private fun buildChain(leaf: X509Certificate, embedded: List<X509Certificate>,
-      trusted: List<X509Certificate>): List<X509Certificate> = runCatching {
-    leaf.checkValidity()
+      trusted: List<X509Certificate>, at: Date = Date()): List<X509Certificate> = runCatching {
+    leaf.checkValidity(at)
     // Only explicitly imported CA certificates are trust anchors. Embedded
     // self-signed roots and arbitrary TLS trust stores never establish DSC trust.
     val anchors = trusted.filter { it.basicConstraints >= 0 && !it.hasUnsupportedCriticalExtension() &&
-      (it.keyUsage?.getOrElse(5){false} ?: true) && runCatching { it.checkValidity(); true }.getOrDefault(false) }.map { TrustAnchor(it, null) }.toSet()
+      (it.keyUsage?.getOrElse(5){false} ?: true) && runCatching { it.checkValidity(at); true }.getOrDefault(false) }.map { TrustAnchor(it, null) }.toSet()
     if (anchors.isEmpty()) return emptyList()
     val selector = X509CertSelector().apply { certificate = leaf }
     val params = PKIXBuilderParameters(anchors, selector).apply {
       isRevocationEnabled = false // evaluated explicitly below
-      date = Date()
+      date = at
       maxPathLength = 8
       addCertStore(CertStore.getInstance("Collection", CollectionCertStoreParameters(embedded + trusted)))
     }
@@ -158,14 +177,15 @@ internal object DscVerifier {
     path.certPath.certificates.filterIsInstance<X509Certificate>() + path.trustAnchor.trustedCert
   }.getOrDefault(emptyList())
 
-  private fun checkRevocation(chain: List<X509Certificate>, cms: CMSSignedData, online: Boolean, fetched: MutableMap<String, X509CRL?>): String {
+  private fun checkRevocation(chain: List<X509Certificate>, cms: CMSSignedData, dss: DscDss.Evidence,
+      online: Boolean, fetched: MutableMap<String, X509CRL?>, ocspCache: MutableMap<String, ByteArray?>, at: Date): String {
     val now = Date()
     val crls = cms.getCRLs().getMatches(null).mapNotNull { holder ->
       runCatching { JcaX509CRLConverter().setProvider(provider).getCRL(holder) }.getOrNull()
     }
     var complete = true
     for ((cert, issuer) in chain.zipWithNext()) {
-      val evidence = crls.toMutableList()
+      val evidence = (crls + dss.crls).toMutableList()
       if (online) {
         for (url in crlUrls(cert).take(2)) {
           if (url in fetched) fetched[url]?.let(evidence::add)
@@ -184,12 +204,23 @@ internal object DscVerifier {
             crl.getExtensionValue("2.5.29.28") == null &&
             !crl.hasUnsupportedCriticalExtension() &&
             (issuer.keyUsage?.getOrElse(6){false} ?: true) &&
-            crl.thisUpdate <= now && crl.nextUpdate?.let { it >= now } == true &&
+            crl.thisUpdate <= at && crl.thisUpdate <= now && crl.nextUpdate?.let { it >= at } == true &&
             run { crl.verify(issuer.publicKey, provider); true }
         }.getOrDefault(false)
       }
-      if (valid.any { it.isRevoked(cert) }) return "Revoked"
-      if (valid.isEmpty()) complete = false
+      if (valid.any { it.getRevokedCertificate(cert)?.revocationDate?.let { date -> date <= at } == true }) return "Revoked"
+      val ocsp = dss.ocsps.map { DscOcsp.check(it, cert, issuer, at, now) }.toMutableList()
+      if (online && valid.isEmpty() && DscOcsp.Verdict.GOOD !in ocsp) {
+        for (url in aiaUrls(cert, AccessDescription.id_ad_ocsp).take(2)) {
+          val key = url + ":" + DscSignedBytes.sha256(cert.encoded)
+          if (key !in ocspCache && ocspCache.size < 4) {
+            ocspCache[key] = fetchEvidence(url, 1024 * 1024, DscOcsp.request(cert, issuer))
+          }
+          ocspCache[key]?.let { ocsp.add(DscOcsp.check(it, cert, issuer, at, now)) }
+        }
+      }
+      if (DscOcsp.Verdict.REVOKED in ocsp) return "Revoked"
+      if (valid.isEmpty() && DscOcsp.Verdict.GOOD !in ocsp) complete = false
     }
     return if (complete) "Good" else "Not established"
   }
@@ -230,27 +261,68 @@ internal object DscVerifier {
     .callTimeout(7, TimeUnit.SECONDS).retryOnConnectionFailure(false)
     .build()
 
-  private fun fetchCrl(address: String): X509CRL? = runCatching {
+  private fun aiaUrls(cert: X509Certificate, method: org.bouncycastle.asn1.ASN1ObjectIdentifier): List<String> = runCatching {
+    val raw = cert.getExtensionValue(Extension.authorityInfoAccess.id) ?: return emptyList()
+    AuthorityInformationAccess.getInstance(ASN1OctetString.getInstance(raw).octets).accessDescriptions
+      .filter { it.accessMethod == method && it.accessLocation.tagNo == GeneralName.uniformResourceIdentifier }
+      .map { it.accessLocation.name.toString() }.distinct()
+  }.getOrDefault(emptyList())
+
+  private fun discoverIssuers(leaf: X509Certificate, embedded: List<X509Certificate>,
+      trust: List<X509Certificate>, cache: MutableMap<String, List<X509Certificate>>): List<X509Certificate> {
+    val pool = (embedded + trust).toMutableList()
+    val visited = mutableSetOf<String>()
+    var current = leaf
+    repeat(8) {
+      if (!visited.add(DscSignedBytes.sha256(current.encoded))) return pool
+      if (trust.any { it == current }) return pool
+      fun issuerOf(candidate: X509Certificate): Boolean = candidate.basicConstraints >= 0 &&
+        candidate.subjectX500Principal == current.issuerX500Principal &&
+        runCatching { current.verify(candidate.publicKey, provider); true }.getOrDefault(false)
+      var parent = pool.firstOrNull(::issuerOf)
+      if (parent == null) {
+        for(url in aiaUrls(current, AccessDescription.id_ad_caIssuers).take(2)) {
+          if(url !in cache && cache.size < 4) {
+            cache[url] = fetchEvidence(url, 2 * 1024 * 1024)?.let {
+              runCatching { DscTrust.parse(it) }.getOrDefault(emptyList())
+            }.orEmpty()
+          }
+          pool.addAll(cache[url].orEmpty().filter(::issuerOf))
+        }
+        parent = pool.firstOrNull(::issuerOf)
+      }
+      current = parent ?: return pool
+    }
+    return pool
+  }
+
+  private fun fetchCrl(address: String): X509CRL? = fetchEvidence(address, 4 * 1024 * 1024)?.let {
+    runCatching { CertificateFactory.getInstance("X.509").generateCRL(it.inputStream()) as X509CRL }.getOrNull()
+  }
+
+  private fun fetchEvidence(address: String, limit: Int, request: ByteArray? = null): ByteArray? = runCatching {
     val url = address.toHttpUrl()
     require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() &&
       url.port == 443 && url.host.contains('.'))
-    // Only endpoints from a certificate on an already trusted path;
-    // no PDF bytes or certificate secret keys leave the app.
-    http.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+    val builder = Request.Builder().url(url)
+    if (request != null) builder.header("Accept", "application/ocsp-response")
+      .post(request.toRequestBody("application/ocsp-request".toMediaType()))
+    else builder.get()
+    http.newCall(builder.build()).execute().use { response ->
       require(response.isSuccessful)
-      val body = response.body ?: error("Empty CRL")
-      require(body.contentLength() <= 4L * 1024 * 1024)
+      val body = response.body ?: error("Empty evidence")
+      require(body.contentLength() <= limit.toLong())
       val out = java.io.ByteArrayOutputStream()
       body.byteStream().use { input ->
         val buffer = ByteArray(8192)
         while (true) {
           val n = input.read(buffer)
           if (n < 0) break
-          require(out.size() + n <= 4 * 1024 * 1024)
+          require(out.size() + n <= limit)
           out.write(buffer, 0, n)
         }
       }
-      CertificateFactory.getInstance("X.509").generateCRL(out.toByteArray().inputStream()) as X509CRL
+      out.toByteArray()
     }
   }.getOrNull()
 }
