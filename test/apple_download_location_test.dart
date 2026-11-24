@@ -47,24 +47,26 @@ void main() {
       'Files/Selected');
   });
 
-  test('Windows updater starts elevated wizard before closing tray',
+  test('Windows updater launches native elevated setup before closing tray',
       () async {
-    // Static regression for the handoff ordering even in Linux Flutter CI.
     final src=await File('lib/file_share_updates.dart').readAsString();
-    // macOS has its own complete shutdown before the Windows helper method.
-    // Only assert ordering INSIDE _installWindows, not in the whole source.
-    final windowsStart=src.indexOf('Future<void> _installWindows(');
-    expect(windowsStart,greaterThan(0));
-    final windows=src.substring(windowsStart);
-    final launch=windows.indexOf(r'Start-Process -FilePath \$installer -Verb RunAs');
-    final acknowledge=windows.indexOf(
-      r"Set-Content -LiteralPath \$ready -Value 'installer-started'");
+    final start=src.indexOf('Future<void> _installWindows(');
+    final end=src.indexOf('Future<void> revealWindowsInstaller()',start);
+    expect(start,greaterThan(0));
+    expect(end,greaterThan(start));
+    final windows=src.substring(start,end);
+    final launch=windows.indexOf('await Isolate.run(');
+    final reject=windows.indexOf('if(code<=32)');
     final shutdown=windows.indexOf(
       'await WindowsBackground.instance.exitCompletely();');
     expect(launch,greaterThan(0));
-    expect(acknowledge,greaterThan(launch),
-      reason:'The old updater closed File Share before Inno Setup launched.');
-    expect(shutdown,greaterThan(acknowledge));
-    expect(windows.contains(r'Set-Content -LiteralPath \$failed'),isTrue);
+    expect(reject,greaterThan(launch));
+    expect(shutdown,greaterThan(reject));
+    expect(windows, isNot(contains('powershell.exe')));
+    expect(src,contains("'ShellExecuteW'"));
+    expect(src,contains("wide('runas')"));
+    expect(src,contains('stage=Platform.isWindows&&verified?UpdateStage.ready'));
+    expect(src,contains('Show downloaded installer'));
+    expect(src,contains('await sha256.bind(file.openRead()).first'));
   });
 }
