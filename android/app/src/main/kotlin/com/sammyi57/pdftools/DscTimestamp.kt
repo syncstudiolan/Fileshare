@@ -1,6 +1,7 @@
 package com.sammyi57.pdftools
 
 import org.bouncycastle.asn1.cms.ContentInfo
+import org.bouncycastle.asn1.ASN1InputStream
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cms.CMSSignedData
@@ -27,6 +28,16 @@ internal object DscTimestamp {
     val token = TimeStampToken(ContentInfo.getInstance(attribute.attrValues.getObjectAt(0)))
     check(token, signer.signature)
   }.getOrNull()
+
+  fun document(padded: ByteArray, covered: ByteArray): Evidence {
+    val input = padded.inputStream()
+    val obj = ASN1InputStream(input).use { it.readObject() ?: error("Empty timestamp") }
+    val consumed = padded.size - input.available()
+    require(consumed > 0 && (consumed until padded.size).all { padded[it] == 0.toByte() }) {
+      "Unexpected trailing timestamp bytes"
+    }
+    return check(TimeStampToken(ContentInfo.getInstance(obj)), covered)
+  }
 
   fun check(token: TimeStampToken, covered: ByteArray): Evidence {
     val info = token.timeStampInfo
