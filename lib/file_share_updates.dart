@@ -452,7 +452,7 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
                   final origin=render is RenderBox && render.hasSize
                     ?render.localToGlobal(Offset.zero)&render.size
                     :const Rect.fromLTWH(1,1,1,1);
-                  return updates.install(sharePositionOrigin:origin);
+                  unawaited(updates.install(sharePositionOrigin:origin));
                 },
                 icon:const Icon(Icons.install_mobile_outlined),
                 label:Text(Platform.isAndroid?'Install update':
