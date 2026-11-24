@@ -25,7 +25,7 @@ on:
 # Ordinary merges do not release. [release-now] is an explicit one-time
 # authorization for the initial migration; later use the Run workflow button.
 concurrency:
-  group: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-now]')) && 'fileshare-production-release' || github.run_id }}
+  group: ${{ (github.event_name == 'workflow_dispatch' || (contains(github.event.head_commit.message, '[release-now]') || contains(github.event.head_commit.message, '[android-dsc-test]'))) && 'fileshare-production-release' || github.run_id }}
   # A newer explicitly requested release supersedes a stale/queued older run.
   # Ordinary non-release pushes use a separate run-specific group.
   cancel-in-progress: true
@@ -36,7 +36,7 @@ permissions:
 jobs:
   release_preflight:
     name: Release preflight - LAN convergence and photo export
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[release-now]') || contains(github.event.head_commit.message, '[android-dsc-test]'))))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -62,9 +62,9 @@ jobs:
         shell: bash
         env:
           BUILD_ANDROID: ${{ github.event_name == 'push' || inputs.android }}
-          BUILD_WINDOWS: ${{ github.event_name == 'push' || inputs.windows }}
-          BUILD_IOS: ${{ github.event_name == 'push' || inputs.ios }}
-          BUILD_MACOS: ${{ github.event_name == 'push' || inputs.macos }}
+          BUILD_WINDOWS: ${{ (github.event_name == 'push' || inputs.windows) && !contains(github.event.head_commit.message, '[android-dsc-test]') }}
+          BUILD_IOS: ${{ (github.event_name == 'push' || inputs.ios) && !contains(github.event.head_commit.message, '[android-dsc-test]') }}
+          BUILD_MACOS: ${{ (github.event_name == 'push' || inputs.macos) && !contains(github.event.head_commit.message, '[android-dsc-test]') }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -427,6 +427,25 @@ jobs:
             --data '{"email":"nonexistent-smoke-test-835293@example.invalid"}')
           test "$code" = 404 || { echo "Directory resolve returned unexpected HTTP $code"; exit 1; }
           python3 -c "import json; d=json.load(open('/tmp/directory-unknown-email.json')); assert d.get('error') == 'Email address is not registered', d"
+      - name: Install Android DSC Rust toolchain and select NDK
+        if: matrix.group == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android
+          rustup default 1.95.0
+          cargo install cargo-ndk --locked
+          # Match the runner's installed NDK (or install the current supported NDK).
+          ndk="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          if [[ -z "$ndk" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
+            ndk="$ANDROID_HOME/ndk/28.2.13676358"
+          fi
+          test -d "$ndk/toolchains/llvm"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ORG_GRADLE_PROJECT_fileshareDscRust=true" >> "$GITHUB_ENV"
+          rustc --version
+          cargo ndk --version
       - name: Verify bundled Android native PDF Tools compile
         if: matrix.group == 'android'
         working-directory: android
@@ -487,6 +506,7 @@ jobs:
               abis=sorted({n.split('/')[1] for n in libraries})
               print('Native ABIs:', abis)
               assert abis == ['arm64-v8a'], f'Unexpected ABIs: {abis}'
+              assert 'lib/arm64-v8a/libfileshare_dsc.so' in libraries, 'Missing PDF Craft Rust DSC library'
           size=os.path.getsize(apk)
           print(f'APK size: {size/1048576:.1f} MiB')
           assert size < 160*1048576, 'APK exceeds 160 MiB test limit'
@@ -691,7 +711,7 @@ jobs:
   publish_release_set:
     name: Publish complete verified release and update manifest
     needs: [release_preflight, build]
-    if: ${{ success() && needs.build.result == 'success' }}
+    if: ${{ success() && needs.build.result == 'success' && !contains(github.event.head_commit.message, '[android-dsc-test]') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -709,3 +729,36 @@ jobs:
           set -euo pipefail
           version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
           python3 tool/publish_update_manifest.py --set "$version" "${{ github.run_number }}" release-artifacts "$SELECTED_PLATFORMS"
+
+  publish_android_dsc_test:
+    name: Publish signed Android DSC test APK (no auto-update)
+    needs: [release_preflight, build]
+    if: ${{ success() && needs.build.result == 'success' && contains(github.event.head_commit.message, '[android-dsc-test]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: file-share-android-signed-release-apk
+          path: release-test
+      - name: Publish verified signed Android test package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=release-test/FileShare-Android-ARM64-Release.apk
+          tag="fileshare-android-dsc-test-${{ github.run_number }}"
+          version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          python3 - "$apk" "${{ github.run_number }}" <<'PY'
+          import json,sys,zipfile
+          assert int(sys.argv[2]) > json.load(open("update_manifest.json"))["android"]["build"]
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              assert "lib/arm64-v8a/libfileshare_dsc.so" in z.namelist()
+              assert "assets/dsc/CCAIndia2022.pem" in z.namelist()
+          PY
+          sha256sum "$apk"
+          gh release create "$tag" "$apk" --target "$GITHUB_SHA" --prerelease --title "File Share Android DSC test $version (Build ${{ github.run_number }})" --notes "Signed Android ARM64 test package. PDF Craft Rust engine included; physical phone DSC testing pending. Production update manifest intentionally unchanged."
+          gh release view "$tag" --json tagName,isPrerelease,assets

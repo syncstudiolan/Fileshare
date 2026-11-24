@@ -20,6 +20,7 @@ android {
     defaultConfig {
         applicationId = "com.example.file_share"
         minSdk = maxOf(24, flutter.minSdkVersion)
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -93,8 +94,12 @@ dependencies {
     implementation("androidx.pdf:pdf-document-service:1.0.0-alpha18")
     implementation("com.google.android.gms:play-services-auth:22.0.0")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     // Android-only PDF processing; not included in Windows/macOS bundles.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // DSC revocation transport: enforce public DNS results on the actual socket.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("org.opencv:opencv:4.12.0")
 }
@@ -128,3 +133,20 @@ val verifyBundledDocAlignerModel = tasks.register("verifyBundledDocAlignerModel"
     }
 }
 tasks.named("preBuild") { dependsOn(verifyBundledDocAlignerModel) }
+
+// Explicit local NDK integration for the DSC draft. No workflow is triggered.
+// Enable with -PfileshareDscRust=true after installing Rust/cargo-ndk.
+val includeDscRust = providers.gradleProperty("fileshareDscRust").map { it == "true" }.orElse(false)
+if (includeDscRust.get()) {
+    val dscRustDir = layout.projectDirectory.dir("../dsc-rust")
+    val generatedDsc = layout.buildDirectory.dir("generated/dscRust/jniLibs")
+    val buildDscRust = tasks.register<Exec>("buildDscRust") {
+        workingDir(dscRustDir.asFile)
+        commandLine("bash", "build-android.sh", generatedDsc.get().asFile.absolutePath)
+        inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh", ".cargo/**") })
+        inputs.files(fileTree(rootProject.projectDir.parentFile.resolve("third_party/pdfcraft-dsc-reference/crates/sign")) { include("Cargo.toml", "src/**") })
+        outputs.dir(generatedDsc)
+    }
+    android.sourceSets.getByName("main").jniLibs.srcDir(generatedDsc)
+    tasks.named("preBuild") { dependsOn(buildDscRust) }
+}

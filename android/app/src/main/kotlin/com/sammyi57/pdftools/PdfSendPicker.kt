@@ -38,11 +38,13 @@ fun PdfSendPicker(
   pageCount: Int,
   toCart: Boolean,
   onClose: () -> Unit,
+  preserveSigned: Boolean = false,
+  expectedSignedHash: String? = null,
 ) {
   val scope = rememberCoroutineScope()
-  var selection by remember { mutableStateOf("current") }
+  var selection by remember(preserveSigned) { mutableStateOf(if (preserveSigned) "all" else "current") }
   var pages by remember { mutableStateOf("") }
-  var compressResult by remember { mutableStateOf(false) }
+  var compressResult by remember(preserveSigned) { mutableStateOf(false) }
   var busy by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf("") }
   AlertDialog(
@@ -50,19 +52,20 @@ fun PdfSendPicker(
     title = { Text(if (toCart) "Add PDF to File Share Cart" else "Share PDF") },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("current" to "Current page ($currentPage)", "all" to "Whole document ($pageCount pages)", "range" to "Choose pages").forEach { (id, label) ->
+        if (preserveSigned) Text("Signed or unverified PDF: the complete original file will be sent unchanged. Page extraction and compression are disabled.")
+        else listOf("current" to "Current page ($currentPage)", "all" to "Whole document ($pageCount pages)", "range" to "Choose pages").forEach { (id, label) ->
           Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = selection == id, onClick = { selection = id })
             Text(label)
           }
         }
-        if (selection == "range") OutlinedTextField(
+        if (!preserveSigned && selection == "range") OutlinedTextField(
           value = pages,
           onValueChange = { pages = it },
           label = { Text("Pages (example: 1, 3-5)") },
           singleLine = true,
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (!preserveSigned) Row(verticalAlignment = Alignment.CenterVertically) {
           Checkbox(checked = compressResult, onCheckedChange = { compressResult = it })
           Text("Compress before sending")
         }
@@ -74,7 +77,7 @@ fun PdfSendPicker(
         busy = true
         scope.launch {
           try {
-            val file = preparePdfSend(path, name, selection, currentPage, pages, compressResult)
+            val file = preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned, expectedSignedHash)
             if (toCart) {
               val app = appContext as FileShareApplication
               check(app.stagePdfFromTools(file, file.name)) { "Unable to stage this PDF in File Share" }
@@ -124,11 +127,22 @@ suspend fun preparePdfSend(
   currentPage: Int,
   range: String,
   compressResult: Boolean,
+  preserveSigned: Boolean = false,
+  expectedSignedHash: String? = null,
 ): File = withContext(Dispatchers.IO) {
   val source = File(path)
   require(source.isFile) { "PDF source unavailable" }
   val bytes = source.readBytes()
-  val result = PDDocument.load(bytes).use { pdf ->
+  if (expectedSignedHash != null) require(DscSignedBytes.sha256(bytes) == expectedSignedHash) {
+    "PDF changed since verification. Reopen and verify it again."
+  }
+  val result = if (preserveSigned) {
+    require(selection == "all" && !compressResult) { "Signed PDFs must be sent unchanged" }
+    bytes
+  } else PDDocument.load(bytes).use { pdf ->
+    require(pdf.signatureDictionaries.isEmpty() || (selection == "all" && !compressResult)) {
+      "This PDF contains a digital signature. Send the whole original PDF without compression."
+    }
     val selected = selectedPageIndices(selection, currentPage, range, pdf.numberOfPages)
     val all = selected.size == pdf.numberOfPages && selected.indices.all { selected[it] == it }
     val subset = if (all) bytes else PDDocument().use { extracted ->

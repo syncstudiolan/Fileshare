@@ -22,3 +22,6 @@
 # warning when such an image is encountered. Other PDF features remain intact.
 -dontwarn com.gemalto.jp2.JP2Decoder
 -dontwarn com.gemalto.jp2.JP2Encoder
+
+# JNI entry point name must remain stable.
+-keep class com.sammyi57.pdftools.DscRustBridge { *; }

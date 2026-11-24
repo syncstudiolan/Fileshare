@@ -12,6 +12,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +47,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.material3.Text
+import kotlin.math.roundToInt
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -104,6 +112,28 @@ fun PdfViewerScreen(path: String, name: String) {
   LaunchedEffect(Unit) { Incoming.shareOnce = false }
   var renameOpen by remember { mutableStateOf(false) }
   var importingForEdit by remember { mutableStateOf(false) }
+  var dsc by remember(path) { mutableStateOf<DscDocument?>(null) }
+  var dscError by remember(path) { mutableStateOf("") }
+  var dscBusy by remember(path) { mutableStateOf(false) }
+  var dscPanel by remember(path) { mutableStateOf(false) }
+  var selectedSignature by remember(path) { mutableStateOf<String?>(null) }
+  var dscRevision by remember(path) { mutableIntStateOf(0) }
+  LaunchedEffect(path, doc, password, dscRevision) {
+    if (doc == null) return@LaunchedEffect
+    dscBusy = true
+    dscError = ""
+    try {
+      dsc = withContext(Dispatchers.IO) {
+        val offline = DscVerifier.read(path, password)
+        if (offline.signatures.any { it.status == DscStatus.UNKNOWN && it.integrity &&
+              (!it.trusted || it.revocation == "Not established") }) {
+          DscVerifier.read(path, password, online = true)
+        } else offline
+      }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+      catch (e: Exception) { dsc = null; dscError = e.message ?: "Signature inspection unavailable" }
+    finally { dscBusy = false }
+  }
 
   LaunchedEffect(password) {
     try {
@@ -177,7 +207,7 @@ fun PdfViewerScreen(path: String, name: String) {
           Marquee(stem(name), Type.bold.copy(fontSize = Type.bold.fontSize * 1.1f), c.ink, Modifier.weight(1f).padding(horizontal = 4.dp))
           IconBtn(I.magnify, label = "Search", enabled = doc != null) { searching = true }
           IconBtn(I.fileDocumentEditOutline, label = "Edit PDF",
-            enabled = doc != null && !importingForEdit) {
+            enabled = doc != null && !importingForEdit && !dscBusy && dscError.isEmpty() && dsc?.signatures?.isEmpty() == true) {
             // Open the SAME scanner Review screen as camera-created PDFs.
             // Never route a card-imported PDF into the Organize tool.
             importingForEdit = true
@@ -191,6 +221,11 @@ fun PdfViewerScreen(path: String, name: String) {
               } finally {
                 importingForEdit = false
               }
+            }
+          }
+          if (dsc?.signatures?.isNotEmpty() == true || dscError.isNotEmpty()) {
+            IconBtn(I.fileDocumentEditOutline, label = "Digital signatures") {
+              selectedSignature = null; dscPanel = true
             }
           }
           IconBtn(I.pencilOutline, label = "Rename") { renameOpen = true }
@@ -215,6 +250,11 @@ fun PdfViewerScreen(path: String, name: String) {
         onUrlLinkClicked = { uri -> openUrl(uri.toString()); true },
       )
       SelectionHandles(state, c.accent)
+      if (!searching && !dscBusy) dsc?.let { result ->
+        DscSignatureOverlay(state, result) { id ->
+          selectedSignature = id; dscPanel = true
+        }
+      }
       if (doc != null) {
         // The page you're on, and the way to every other: tap the number to jump, the grid for thumbnails.
         Row(
@@ -243,8 +283,19 @@ fun PdfViewerScreen(path: String, name: String) {
     Thumbnails(path, pages, page - 1) { i -> thumbs = false; scope.launch { state.scrollToPage(i) } }
   }
 
+  if (dscPanel) {
+    val result = dsc
+    if (result != null) DscValidationPanel(result, selectedSignature, dscBusy,
+      onValidate = { dscRevision++ }, onClose = { dscPanel = false },
+      onCart = { dscPanel = false; sendMode = "cart" }, path = path, name = name)
+    else AppDialog({ dscPanel = false }, "Signature inspection", dscError.ifBlank { "Checking signatures…" }) {
+      Btn("Close", Modifier.fillMaxWidth()) { dscPanel = false }
+    }
+  }
   sendMode?.let { mode ->
-    PdfSendPicker(path, name, page, pages, mode == "cart", onClose = { sendMode = null })
+    PdfSendPicker(path, name, page, pages, mode == "cart", onClose = { sendMode = null },
+      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isEmpty() != true,
+      expectedSignedHash = dsc?.takeIf { it.signatures.isNotEmpty() }?.hash)
   }
   if (renameOpen) PromptDialog(
     "Rename PDF", stem(name), "File name", "New name", "Rename",
@@ -257,6 +308,34 @@ fun PdfViewerScreen(path: String, name: String) {
     if (target.path != path) nav.viewer(target.path, target.name)
   }
   if (asking) PasswordPrompt(name, wrong, onCancel = { nav.back() }) { password = it }
+}
+
+/** Signature hit targets use the viewer's own page-to-screen mapping. */
+@OptIn(ExperimentalPdfApi::class)
+@Composable
+private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, onTap: (String) -> Unit) {
+  val density = LocalDensity.current
+  state.zoom; state.firstVisiblePageOffset
+  Box(Modifier.fillMaxSize().clipToBounds()) {
+    for (sig in result.signatures) for (widget in sig.widgets) {
+      val a = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.left, widget.top)) ?: continue
+      val b = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.right, widget.bottom)) ?: continue
+      val width = kotlin.math.abs(b.x - a.x)
+      val height = kotlin.math.abs(b.y - a.y)
+      if (width < 1f || height < 1f) continue
+      val color = when (sig.status) {
+        DscStatus.VALID -> Color(0xff18834b)
+        DscStatus.UNKNOWN -> Color(0xffb57b13)
+        DscStatus.INVALID -> Color(0xffc33232)
+      }
+      Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
+        .size(with(density){width.toDp()}, with(density){height.toDp()})
+        .border(1.dp,color).clickable { onTap(sig.id) }) {
+        Text(when(sig.status) { DscStatus.VALID -> "✓"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
+          color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
+      }
+    }
+  }
 }
 
 /**
