@@ -95,6 +95,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // Android-only PDF processing; not included in Windows/macOS bundles.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // DSC revocation transport: enforce public DNS results on the actual socket.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("org.opencv:opencv:4.12.0")
 }
