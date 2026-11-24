@@ -1,35 +1,35 @@
 {
   "android": {
-    "build": 596,
-    "notes": "Fix Apple received-file Downloads destination and Windows installer wizard handoff (#19)",
-    "sha256": "e47f7ec572ff3ff1b625e83301646b24a9fa430f2baf9381bc1431be7416c10b",
-    "size": 114585797,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-android-v0.1.0-build-596/FileShare-Android-ARM64-Release.apk",
+    "build": 625,
+    "notes": "Production signed Android ARM64 APK; approve OS installation.",
+    "sha256": "24ca8c38fb69811287f82bd1b1d427bc6cdf92c317a2d8ec675eca4b7f7a4b6d",
+    "size": 114618441,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
-    "build": 596,
-    "notes": "Unsigned iOS release \u2014 re-sign with AppleJR using the original certificate/profile and bundle ID.",
-    "sha256": "d6ddfc90298ece5cbeb8703ce93b5ae9fa6beddbf7b67d4dd60e3df9c1cd5c4c",
-    "size": 21201393,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-ios-unsigned-build-596/FileShare-iOS-UNSIGNED.ipa",
+    "build": 625,
+    "notes": "Unsigned iOS IPA; sign externally with compatible original identity before installation.",
+    "sha256": "170385a198810208eab66ad88813de2b796299c14781a47f5684c4a1f430d3a6",
+    "size": 21190730,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-iOS-UNSIGNED.ipa",
     "version": "0.1.0"
   },
   "macos": {
-    "build": 611,
-    "notes": "macOS Bonjour LAN discovery and in-app Finder DMG updater",
-    "sha256": "54c8151f5ad8d5d3a0f393217f8f19fb9bd443adf7188b36251eab58b99491c3",
-    "size": 55565843,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-macos-arm64-c32b941f/FileShare-macOS-AppleSilicon.dmg",
+    "build": 625,
+    "notes": "Apple Silicon DMG; replace the app in Applications using Finder.",
+    "sha256": "cb27fd93803d091f08da23079e0837999d36d4a79f72ed6f7afc9cec51f9ead0",
+    "size": 55598606,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-macOS-AppleSilicon.dmg",
     "version": "0.1.0"
   },
   "schema": 1,
   "windows": {
-    "build": 619,
-    "notes": "Fix Windows LAN discovery recovery and release [windows-only]",
-    "sha256": "b072574747fc3d57d1dad4392186785025e023285b99bd8a9d91f442059f769f",
-    "size": 19170951,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-619/FileShare-Windows-Setup.exe",
+    "build": 625,
+    "notes": "Windows x64 Setup installer; approve UAC.",
+    "sha256": "430fccbe70f0004861b64056a2169ff7991a68c31e9aef10e4afad5757c9e1b3",
+    "size": 19179134,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
