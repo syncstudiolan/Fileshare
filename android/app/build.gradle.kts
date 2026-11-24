@@ -142,7 +142,7 @@ if (includeDscRust.get()) {
     val generatedDsc = layout.buildDirectory.dir("generated/dscRust/jniLibs")
     val buildDscRust = tasks.register<Exec>("buildDscRust") {
         workingDir(dscRustDir.asFile)
-        commandLine("bash", "build-android.sh")
+        commandLine("bash", "build-android.sh", generatedDsc.get().asFile.absolutePath)
         inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh", ".cargo/**") })
         inputs.files(fileTree(rootProject.projectDir.parentFile.resolve("third_party/pdfcraft-dsc-reference/crates/sign")) { include("Cargo.toml", "src/**") })
         outputs.dir(generatedDsc)
