@@ -12,7 +12,7 @@ from pathlib import Path
 # Older apksigner emits "Signer #1"; newer releases emit "V2 Signer"
 # (or V3/V3.1). Never match public-key or SHA-1/MD5 digests.
 CERT_LINE = re.compile(
-    r"^\s*(?:V\d+(?:\.\d+)?\s+)?Signer(?:\s+#\d+)?\s*"
+    r"^\s*(?:V\d+(?:\.\d+)?\s+)?Signer(?:\s+#\d+)?:?\s*"
     r"certificate SHA-256 digest:\s*([0-9a-f]{64})\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
