@@ -20,6 +20,7 @@ android {
     defaultConfig {
         applicationId = "com.example.file_share"
         minSdk = maxOf(24, flutter.minSdkVersion)
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -93,6 +94,8 @@ dependencies {
     implementation("androidx.pdf:pdf-document-service:1.0.0-alpha18")
     implementation("com.google.android.gms:play-services-auth:22.0.0")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     // Android-only PDF processing; not included in Windows/macOS bundles.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     // DSC revocation transport: enforce public DNS results on the actual socket.
@@ -140,7 +143,8 @@ if (includeDscRust.get()) {
     val buildDscRust = tasks.register<Exec>("buildDscRust") {
         workingDir(dscRustDir.asFile)
         commandLine("bash", "build-android.sh")
-        inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh") })
+        inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh", ".cargo/**") })
+        inputs.files(fileTree(rootProject.projectDir.parentFile.resolve("third_party/pdfcraft-dsc-reference/crates/sign")) { include("Cargo.toml", "src/**") })
         outputs.dir(generatedDsc)
     }
     android.sourceSets.getByName("main").jniLibs.srcDir(generatedDsc)
