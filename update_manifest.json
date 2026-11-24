@@ -25,11 +25,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 606,
-    "notes": "Fix File Share Windows taskbar FS icon and release [windows-only]",
-    "sha256": "567f96295e3e4285fc85e4e837ca408464987d5d47d08d5ed50803acf0fb0ff6",
-    "size": 19162502,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-606/FileShare-Windows-Setup.exe",
+    "build": 618,
+    "notes": "Fix Windows native Setup Wizard updater [windows-only]",
+    "sha256": "388ffbc8ade4d4450fc41b97e4256ea182dbb890931fd18a383dc4432505289e",
+    "size": 19165784,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-618/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
