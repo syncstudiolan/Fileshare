@@ -207,7 +207,7 @@ fun PdfViewerScreen(path: String, name: String) {
           Marquee(stem(name), Type.bold.copy(fontSize = Type.bold.fontSize * 1.1f), c.ink, Modifier.weight(1f).padding(horizontal = 4.dp))
           IconBtn(I.magnify, label = "Search", enabled = doc != null) { searching = true }
           IconBtn(I.fileDocumentEditOutline, label = "Edit PDF",
-            enabled = doc != null && !importingForEdit && !dscBusy && dscError.isEmpty() && dsc?.signatures?.isNotEmpty() != true) {
+            enabled = doc != null && !importingForEdit && !dscBusy && dscError.isEmpty() && dsc?.signatures?.isEmpty() == true) {
             // Open the SAME scanner Review screen as camera-created PDFs.
             // Never route a card-imported PDF into the Organize tool.
             importingForEdit = true
@@ -294,7 +294,8 @@ fun PdfViewerScreen(path: String, name: String) {
   }
   sendMode?.let { mode ->
     PdfSendPicker(path, name, page, pages, mode == "cart", onClose = { sendMode = null },
-      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isNotEmpty() == true)
+      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isEmpty() != true,
+      expectedSignedHash = dsc?.takeIf { it.signatures.isNotEmpty() }?.hash)
   }
   if (renameOpen) PromptDialog(
     "Rename PDF", stem(name), "File name", "New name", "Rename",
