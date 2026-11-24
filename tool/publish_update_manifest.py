@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -127,11 +128,158 @@ def publish(platform: str, version: str, build: int,
     raise RuntimeError("failed to update release manifest")
 
 
+# Central pipeline: a SINGLE public release contains all selected packages.
+# Until every build and every asset is verified, only a draft can exist.
+RELEASE_FILES = {
+    "android": ("file-share-android-signed-release-apk", "FileShare-Android-ARM64-Release.apk",
+                "Production signed Android ARM64 APK; approve OS installation."),
+    "windows": ("file-share-windows-installer", "FileShare-Windows-Setup.exe",
+                "Windows x64 Setup installer; approve UAC."),
+    "ios": ("file-share-ios-unsigned-ipa", "FileShare-iOS-UNSIGNED.ipa",
+            "Unsigned iOS IPA; sign externally with compatible original identity before installation."),
+    "macos": ("FileShare-macOS-AppleSilicon-DMG", "FileShare-macOS-AppleSilicon.dmg",
+              "Apple Silicon DMG; replace the app in Applications using Finder."),
+}
+
+
+def _merge_release_set(manifest: dict, entries: dict) -> dict:
+    """Validate every channel before changing ANY channel."""
+    updated = dict(manifest)
+    updated["schema"] = 1
+    for platform, entry in entries.items():
+        previous = manifest.get(platform)
+        if isinstance(previous, dict):
+            previous_build = int(previous.get("build", 0))
+            if previous_build > entry["build"]:
+                raise ValueError(f"refusing release downgrade for {platform}")
+            if previous_build == entry["build"] and (
+                    previous.get("sha256") != entry["sha256"] or
+                    previous.get("url") != entry["url"]):
+                raise ValueError(f"refusing to replace existing {platform} build")
+        updated[platform] = entry
+    return updated
+
+
+def _read_manifest():
+    existing = request("GET")
+    return json.loads(base64.b64decode(existing["content"])), existing["sha"]
+
+
+def _verify_release_set(release: dict, entries: dict, tag: str,
+                        source: str, *, draft: bool) -> None:
+    if (release.get("tag_name") != tag or
+            release.get("target_commitish") != source or
+            release.get("draft") is not draft):
+        raise ValueError("release tag, source or draft state mismatch")
+    assets = release.get("assets", [])
+    if len(assets) != len(entries):
+        raise ValueError("release asset set incomplete or unexpected")
+    by_name = {asset["name"]: asset for asset in assets}
+    for platform, entry in entries.items():
+        filename = RELEASE_FILES[platform][1]
+        remote = by_name.get(filename)
+        if not remote or remote.get("state") != "uploaded" or (
+                remote.get("size") != entry["size"] or
+                remote.get("digest") != "sha256:" + entry["sha256"] or
+                remote.get("browser_download_url") != entry["url"]):
+            raise ValueError(f"{platform}: GitHub asset URL/size/SHA-256 mismatch")
+
+
+def publish_set(version: str, build: int, root: Path, selected: list[str]) -> None:
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", version) or build < 1:
+        raise ValueError("invalid version or build")
+    if not selected or len(set(selected)) != len(selected) or any(
+            platform not in RELEASE_FILES for platform in selected):
+        raise ValueError("invalid selected platform set")
+    source = os.environ.get("GITHUB_SHA", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", source):
+        raise ValueError("missing exact source commit")
+    tag = f"fileshare-v{version}-build-{build}"
+    release_api = f"https://api.github.com/repos/{REPO}/releases"
+    entries, files = {}, []
+    for platform in selected:
+        directory, filename, notes = RELEASE_FILES[platform]
+        artifact = root / directory / filename
+        if not artifact.is_file() or artifact.stat().st_size < 1024:
+            raise ValueError(f"{platform}: verified build artifact missing")
+        with artifact.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        files.append(str(artifact))
+        entries[platform] = {
+            "version": version, "build": build, "size": artifact.stat().st_size,
+            "sha256": digest,
+            "url": f"https://github.com/{REPO}/releases/download/{tag}/{filename}",
+            "notes": notes,
+        }
+    current, _ = _read_manifest()
+    _merge_release_set(current, entries)  # no downgrade before release creation
+
+    # gh uploads all assets to a draft, which is invisible to update clients.
+    # No independent platform publish jobs can expose partial results.
+    subprocess.run(["gh", "release", "create", tag, *files,
+                    "--repo", REPO, "--target", source, "--draft",
+                    "--title", f"File Share {version} (Build {build})",
+                    "--notes", ("Verified release packages from source " + source +
+                                ". " + " ".join(entries[p]["notes"] for p in selected))],
+                   check=True)
+    release = None
+    for attempt in range(6):
+        releases = request("GET", url=release_api + "?per_page=100")
+        release = next((r for r in releases if r.get("tag_name") == tag), None)
+        if release and release.get("id"):
+            try:
+                _verify_release_set(release, entries, tag, source, draft=True)
+                break
+            except ValueError:
+                if attempt == 5:
+                    raise
+        time.sleep(min(2 ** attempt, 15))
+    if not release:
+        raise RuntimeError("draft release was not found")
+    _verify_release_set(release, entries, tag, source, draft=True)
+    release_url = release_api + "/" + str(release["id"])
+    # Recheck monotonicity immediately before the single publication action.
+    current, _ = _read_manifest()
+    _merge_release_set(current, entries)
+    request("PATCH", {"draft": False}, url=release_url)
+    published = request("GET", url=release_url)
+    _verify_release_set(published, entries, tag, source, draft=False)
+
+    # One optimistic-lock commit updates all selected platforms together.
+    # If publication or verification fails, none of the update entries change.
+    for attempt in range(8):
+        current, sha = _read_manifest()
+        manifest = _merge_release_set(current, entries)
+        change = {
+            "message": f"[skip ci] Publish File Share release set build {build}",
+            "branch": "main", "sha": sha,
+            "content": base64.b64encode(
+                (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+            ).decode(),
+        }
+        try:
+            request("PUT", change)
+            for platform, entry in entries.items():
+                print(f"Published {platform} build {build}, {entry['size']} bytes, "
+                      f"SHA-256 {entry['sha256']}: {entry['url']}")
+            return
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (409, 422) or attempt == 7:
+                raise
+            time.sleep(min(2 ** attempt, 15))
+    raise RuntimeError("failed to commit complete update manifest")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 7:
-        raise SystemExit(
-            "usage: publish_update_manifest.py PLATFORM VERSION BUILD TAG FILE NOTES")
     if not REPO or not TOKEN:
         raise SystemExit("GITHUB_REPOSITORY / GH_TOKEN not configured")
-    publish(sys.argv[1], sys.argv[2], int(sys.argv[3]),
-            sys.argv[4], Path(sys.argv[5]), sys.argv[6])
+    if len(sys.argv) == 6 and sys.argv[1] == "--set":
+        publish_set(sys.argv[2], int(sys.argv[3]), Path(sys.argv[4]),
+                    sys.argv[5].split(","))
+    elif len(sys.argv) == 7:
+        publish(sys.argv[1], sys.argv[2], int(sys.argv[3]),
+                sys.argv[4], Path(sys.argv[5]), sys.argv[6])
+    else:
+        raise SystemExit(
+            "usage: publish_update_manifest.py --set VERSION BUILD DIRECTORY PLATFORMS "
+            "or PLATFORM VERSION BUILD TAG FILE NOTES")
