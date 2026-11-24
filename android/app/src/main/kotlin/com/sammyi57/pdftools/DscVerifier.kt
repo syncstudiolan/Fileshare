@@ -1,6 +1,9 @@
 package com.sammyi57.pdftools
 
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.cos.COSString
+import com.tom_roush.pdfbox.cos.COSArray
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDSignatureField
 import org.bouncycastle.asn1.x509.CRLDistPoint
 import org.bouncycastle.asn1.x509.Extension
@@ -62,7 +65,7 @@ internal object DscTrust {
 internal object DscVerifier {
   private val provider = DscCms.provider
   private const val MAX_PDF = 64 * 1024 * 1024L
-  private val supported = setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached", "ETSI.RFC3161")
+  private val supported = setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached", "ETSI.RFC3161", "adbe.pkcs7.sha1", "adbe.x509.rsa_sha1")
 
   fun read(path: String, password: String?, online: Boolean = false): DscDocument {
     val file = File(path)
@@ -78,6 +81,7 @@ internal object DscVerifier {
       val fields = pdf.documentCatalog.acroForm?.fieldTree?.filterIsInstance<PDSignatureField>().orEmpty()
       val signatures = pdf.signatureDictionaries
       require(signatures.size <= 64) { "Too many signatures to check safely" }
+      val native = if (signatures.isNotEmpty()) DscRustBridge.inspect(bytes, password, trust + dss.certificates.filter(DscRoots::isPinned)) else emptyList()
       signatures.mapIndexed { index, sig ->
         val field = fields.firstOrNull { it.signature?.cosObject === sig.cosObject }
         val widgets = field?.widgets.orEmpty().mapNotNull { widget ->
@@ -133,7 +137,26 @@ internal object DscVerifier {
                   else "Timestamp integrity verified; trust, revision or revocation requires further evidence",
                 stamp.signer, chain, true, chain.isNotEmpty(), rev, widgets, trustedTime)
             }
-            val checked = DscCms.check(parts.signed, parts.cms, sig.subFilter == "ETSI.CAdES.detached")
+            if (sig.subFilter == "adbe.x509.rsa_sha1") {
+              val obj = sig.cosObject.getDictionaryObject(COSName.getPDFName("Cert"))
+              val rawCerts = when(obj) {
+                is COSString -> listOf(obj.bytes)
+                is COSArray -> (0 until obj.size()).mapNotNull { (obj.getObject(it) as? COSString)?.bytes }
+                else -> emptyList()
+              }
+              require(rawCerts.size in 1..32)
+              val pool = rawCerts.flatMap { DscTrust.parse(it) }
+              val cert = pool.first()
+              val intact = DscLegacy.verify(parts.signed, parts.cms, cert)
+              val chain = if(intact) buildChain(cert, pool + dss.certificates, trust) else emptyList()
+              return@mapIndexed DscResult(id, cert.subjectX500Principal.name,
+                if(intact) DscStatus.UNKNOWN else DscStatus.INVALID,
+                if(intact) "Legacy RSA/SHA-1 integrity verified; weak algorithm cannot establish current-policy validity"
+                else "Legacy RSA signature does not match signed bytes",
+                cert, chain, intact, chain.isNotEmpty(), widgets = widgets)
+            }
+            val checked = DscCms.check(parts.signed, parts.cms, sig.subFilter == "ETSI.CAdES.detached",
+              legacySha1 = sig.subFilter == "adbe.pkcs7.sha1")
             val cert = checked.cert
             val embedded = checked.embedded
             val cms = checked.cms
@@ -156,10 +179,23 @@ internal object DscVerifier {
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
                   val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
                   val strong = checked.strong
+                  val covered = sig.byteRange[2].toLong() + sig.byteRange[3].toLong()
+                  val nativeResult = native.singleOrNull {
+                    field != null && it.field == field.fullyQualifiedName &&
+                      it.length == covered && it.fingerprint == DscSignedBytes.sha256(cert.encoded)
+                  }
+                  // Only a matching native verdict and allowed revision classification
+                  // can relax the original whole-file requirement. A missing library,
+                  // unknown verdict or field mismatch never approves modifications.
+                  val revisionAccepted = parts.whole || (nativeResult?.status == "valid" &&
+                    nativeResult.modification == "allowed")
+                  val nativeRejected = nativeResult?.status == "invalid"
                   val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
-                    !parts.whole -> "Signed bytes intact; later revisions require DocMDP analysis"
+                    nativeRejected -> "PDF Craft rejected this signature or its later revisions"
+                    !revisionAccepted -> "Signed bytes intact; later revisions are not established as permitted"
+                    !parts.whole -> "Later revisions permitted by PDF Craft: " + nativeResult?.changes.orEmpty().joinToString(", ")
                     !signingUsage || !documentEku -> "Certificate key usage does not allow document signing"
                     !strong -> "Legacy or unsupported digest policy"
                     chain.isEmpty() -> "Certificate identity is not trusted or not currently valid"
@@ -167,8 +203,8 @@ internal object DscVerifier {
                     else -> "Original signed bytes, trusted certificate chain and revocation evidence verified"
                   }
                   val status = when {
-                    rev == "Revoked" -> DscStatus.INVALID
-                    parts.whole && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    rev == "Revoked" || nativeRejected -> DscStatus.INVALID
+                    revisionAccepted && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
