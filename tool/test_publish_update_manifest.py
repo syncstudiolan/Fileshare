@@ -32,13 +32,14 @@ class ReleaseSetTest(unittest.TestCase):
                                           size=len(content), url=url, notes=notes)
             self.assets.append(dict(name=filename, state="uploaded",
                                     size=len(content), digest="sha256:"+digest,
-                                    browser_download_url=url))
+                                    browser_download_url=url.replace(self.tag, "untagged-5f11d1ab6b626820d19d")))
         self.previous = {"schema": 1, **{
             platform: dict(build=622, url="old", sha256="old")
             for platform in self.platforms
         }}
         self.remote = dict(id=17, tag_name=self.tag, target_commitish=self.source,
                            draft=True, assets=self.assets)
+        self.keep_temporary_url = False
         self.calls = []
         self.payloads = []
 
@@ -56,6 +57,10 @@ class ReleaseSetTest(unittest.TestCase):
         if url.endswith("/17"):
             if method == "PATCH":
                 self.remote["draft"] = payload["draft"]
+                if not self.keep_temporary_url:
+                    for asset in self.remote["assets"]:
+                        asset["browser_download_url"] = asset["browser_download_url"].replace(
+                            "untagged-5f11d1ab6b626820d19d", self.tag)
             return self.remote
         raise AssertionError((method, url))
 
@@ -89,6 +94,20 @@ class ReleaseSetTest(unittest.TestCase):
             self.execute()
         self.assertTrue(self.remote["draft"])
         self.assertFalse(any(method in ("PATCH", "PUT") for method, _ in self.calls))
+
+    def test_untrusted_draft_url_prevents_publication(self):
+        self.assets[0]["browser_download_url"] = "https://example.org/other.apk"
+        with self.assertRaisesRegex(ValueError, "download URL mismatch"):
+            self.execute()
+        self.assertTrue(self.remote["draft"])
+        self.assertEqual(self.payloads, [])
+
+    def test_published_temporary_url_prevents_manifest_update(self):
+        self.keep_temporary_url = True
+        with self.assertRaisesRegex(ValueError, "download URL mismatch"):
+            self.execute()
+        self.assertEqual(self.payloads, [])
+        self.assertFalse(any(method == "PUT" for method, _ in self.calls))
 
     def test_previous_newer_platform_blocks_entire_release(self):
         self.previous["ios"]["build"] = 624
