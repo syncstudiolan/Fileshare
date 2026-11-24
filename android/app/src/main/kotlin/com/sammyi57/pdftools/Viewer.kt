@@ -122,7 +122,6 @@ fun PdfViewerScreen(path: String, name: String) {
     if (doc == null) return@LaunchedEffect
     dscBusy = true
     dscError = ""
-    dsc = null
     try {
       dsc = withContext(Dispatchers.IO) {
         val offline = DscVerifier.read(path, password)
@@ -132,7 +131,7 @@ fun PdfViewerScreen(path: String, name: String) {
         } else offline
       }
     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-      catch (e: Exception) { dscError = e.message ?: "Signature inspection unavailable" }
+      catch (e: Exception) { dsc = null; dscError = e.message ?: "Signature inspection unavailable" }
     finally { dscBusy = false }
   }
 
@@ -251,7 +250,7 @@ fun PdfViewerScreen(path: String, name: String) {
         onUrlLinkClicked = { uri -> openUrl(uri.toString()); true },
       )
       SelectionHandles(state, c.accent)
-      if (!searching) dsc?.let { result ->
+      if (!searching && !dscBusy) dsc?.let { result ->
         DscSignatureOverlay(state, result) { id ->
           selectedSignature = id; dscPanel = true
         }
