@@ -22,7 +22,7 @@ internal object DscCms {
   private val digests = mapOf("2.16.840.1.101.3.4.2.1" to "SHA-256",
     "2.16.840.1.101.3.4.2.2" to "SHA-384", "2.16.840.1.101.3.4.2.3" to "SHA-512")
 
-  fun check(signed: ByteArray, padded: ByteArray, pades: Boolean): Checked {
+  fun check(signed: ByteArray, padded: ByteArray, pades: Boolean, legacySha1: Boolean = false): Checked {
     // Read one CMS object, permitting only zero placeholder padding after it.
     // Keep its original encoding: do not rewrite the signed attributes.
     val stream = padded.inputStream()
@@ -33,17 +33,23 @@ internal object DscCms {
     }
     val encoded = padded.copyOf(consumed)
     val raw = CMSSignedData(encoded)
-    require(raw.isDetachedSignature && raw.signedContentTypeOID == CMSObjectIdentifiers.data.id) {
-      "Not a detached document signature"
+    require(raw.signedContentTypeOID == CMSObjectIdentifiers.data.id) { "Unsupported CMS content type" }
+    val legacyBinding = if(legacySha1) {
+      require(!raw.isDetachedSignature) { "Legacy SHA-1 digest is absent" }
+      val digest = raw.signedContent?.content as? ByteArray ?: error("Legacy digest is absent")
+      MessageDigest.isEqual(digest, MessageDigest.getInstance("SHA-1").digest(signed))
+    } else {
+      require(raw.isDetachedSignature) { "Not a detached document signature" }
+      true
     }
-    val cms = CMSSignedData(CMSProcessableByteArray(signed), encoded)
+    val cms = if(legacySha1) raw else CMSSignedData(CMSProcessableByteArray(signed), encoded)
     val signer = cms.signerInfos.signers.singleOrNull() ?: error("Unsupported CMS signer count")
     val holders = cms.certificates.getMatches(null).filterIsInstance<X509CertificateHolder>()
     val holder = holders.singleOrNull { signer.sid.match(it) } ?: error("Missing or ambiguous signer certificate")
     val converter = JcaX509CertificateConverter().setProvider(provider)
     val cert = converter.getCertificate(holder)
     val embedded = holders.map { converter.getCertificate(it) }
-    val intact = try {
+    val intact = legacyBinding && try {
       // Use the public key to check integrity separately from certificate dates.
       signer.verify(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(cert.publicKey))
     } catch (_: CMSSignerDigestMismatchException) { false }
@@ -57,7 +63,7 @@ internal object DscCms {
       first != null && algorithm != null &&
         MessageDigest.isEqual(first.certHash, MessageDigest.getInstance(algorithm).digest(cert.encoded))
     } else !pades && (ess == null || ess.size() == 0)
-    val strong = signer.digestAlgOID in digests && binding &&
+    val strong = !legacySha1 && signer.digestAlgOID in digests && binding &&
       ((cert.publicKey as? java.security.interfaces.RSAPublicKey)?.modulus?.bitLength() ?: 2048) >= 2048
     return Checked(cms, cert, embedded, intact, strong)
   }
