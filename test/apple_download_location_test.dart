@@ -71,7 +71,7 @@ void main() {
 
   test('Windows updater locks install, verifies SHA and allows retry', () async {
     final src=await File('lib/file_share_updates.dart').readAsString();
-    final install=src.substring(src.indexOf('Future<void> install()'),
+    final install=src.substring(src.indexOf('Future<void> install('),
       src.indexOf('Future<void> _installMacOS('));
     final lock=install.indexOf('stage=UpdateStage.installing');
     final hash=install.indexOf('sha256.bind(file.openRead())');

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file_share/file_share_updates.dart';
 
@@ -42,4 +43,26 @@ void main(){
     expect(UpdateRelease.fromJson(w,'windows'),isNotNull);
     expect(UpdateRelease.fromJson(w,'android'),isNull);
   });
+  test('iOS downloads and verifies IPA before opening a signing share sheet',(){
+    final source=File('lib/file_share_updates.dart').readAsStringSync();
+    expect(source,contains("Platform.isIOS?'ipa'"));
+    expect(source,contains('SharePlus.instance.share(ShareParams(files:[XFile(file.path)]'));
+    expect(source.indexOf('sha256.bind(file.openRead())'),
+        lessThan(source.indexOf('SharePlus.instance.share(ShareParams(files:[XFile(file.path)]')));
+    expect(source,contains('Share IPA to signing app'));
+  });
+
+  test('one release workflow selects platforms and reuses Mac builder',(){
+    final pipeline=File('.github/workflows/offline-validation.yml').readAsStringSync();
+    for(final platform in ['android','windows','ios','macos']){
+      expect(pipeline,contains('inputs.$platform'));
+    }
+    expect(pipeline,contains('[release-now]'));
+    expect(pipeline,contains('uses: ./.github/workflows/macos-apple-silicon-dmg.yml'));
+    expect(pipeline,contains(r'build: ${{ github.run_number }}'));
+    final mac=File('.github/workflows/macos-apple-silicon-dmg.yml').readAsStringSync();
+    expect(mac,contains('workflow_call:'));
+    expect(mac,contains('hdiutil verify'));
+  });
+
 }

@@ -28,6 +28,10 @@ class LanBonjourBridge(context: Context, messenger: BinaryMessenger) {
     private var ownId: String = ""
     private var ownName: String = "Android"
     private var ownPort: Int = 49311
+    private var generation = 0
+    private var resolving = false
+    private val pending = linkedMapOf<String, NsdServiceInfo>()
+    private val present = mutableSetOf<String>()
 
     init {
         channel.setMethodCallHandler { call, result ->
@@ -81,6 +85,7 @@ class LanBonjourBridge(context: Context, messenger: BinaryMessenger) {
             setPort(port)
             setAttribute("id", id)
             setAttribute("n", name)
+            setAttribute("v", "2")
         }
         registration = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {}
@@ -97,6 +102,7 @@ class LanBonjourBridge(context: Context, messenger: BinaryMessenger) {
             registration = null
         }
 
+        val session = generation
         discovery = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
@@ -105,28 +111,21 @@ class LanBonjourBridge(context: Context, messenger: BinaryMessenger) {
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
             override fun onDiscoveryStopped(serviceType: String) {}
             override fun onServiceFound(info: NsdServiceInfo) {
-                if (!info.serviceType.startsWith("_fileshare._tcp")) return
-                nsd.resolveService(info, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                        val peerId = serviceInfo.attributes["id"]?.toString(Charsets.UTF_8)
-                            ?: return
-                        if (peerId.isEmpty() || peerId == ownId) return
-                        val address = serviceInfo.host
-                        if (address !is Inet4Address) return
-                        val peerName = serviceInfo.attributes["n"]?.toString(Charsets.UTF_8)
-                            ?: serviceInfo.serviceName
-                        seen[serviceInfo.serviceName] = peerId
-                        emit("peer", mapOf(
-                            "id" to peerId, "name" to peerName,
-                            "address" to address.hostAddress, "port" to serviceInfo.port
-                        ))
-                    }
-                })
+                handler.post {
+                    if (session != generation || !info.serviceType.startsWith("_fileshare._tcp")) return@post
+                    present.add(info.serviceName)
+                    pending[info.serviceName] = info
+                    resolveNext()
+                }
             }
             override fun onServiceLost(info: NsdServiceInfo) {
-                val id = seen.remove(info.serviceName) ?: return
-                emit("lost", mapOf("id" to id))
+                handler.post {
+                    if (session != generation) return@post
+                    present.remove(info.serviceName)
+                    pending.remove(info.serviceName)
+                    val id = seen.remove(info.serviceName) ?: return@post
+                    emit("lost", mapOf("id" to id))
+                }
             }
         }
         try {
@@ -137,7 +136,62 @@ class LanBonjourBridge(context: Context, messenger: BinaryMessenger) {
         }
     }
 
+    // Older Android NSD permits only one outstanding resolve. Serialize
+    // callbacks instead of silently dropping two of three simultaneous peers.
+    private fun resolveNext() {
+        if (resolving || pending.isEmpty()) return
+        val entry = pending.entries.first()
+        val key = entry.key
+        val info = entry.value
+        pending.remove(key)
+        if (key !in present) { resolveNext(); return }
+        resolving = true
+        val session = generation
+        fun finished(resolved: NsdServiceInfo?) {
+            handler.post {
+                if (session != generation) return@post
+                resolving = false
+                if (key in present && resolved != null) {
+                    val peerId = resolved.attributes["id"]?.toString(Charsets.UTF_8)
+                    val address = resolved.host
+                    if (!peerId.isNullOrEmpty() && peerId != ownId &&
+                        address is Inet4Address && !address.isLoopbackAddress &&
+                        resolved.port in 1..65535) {
+                        val peerName = resolved.attributes["n"]?.toString(Charsets.UTF_8)
+                            ?: resolved.serviceName
+                        seen[key] = peerId
+                        emit("peer", mapOf(
+                            "id" to peerId, "name" to peerName,
+                            "address" to (address.hostAddress ?: ""),
+                            "port" to resolved.port,
+                            "v" to (resolved.attributes["v"]?.toString(Charsets.UTF_8) ?: "1")
+                        ))
+                    }
+                } else if (key in present) {
+                    // Back off; the other services still resolve immediately.
+                    handler.postDelayed({
+                        if (session == generation && key in present && key !in seen) {
+                            pending[key] = info
+                            resolveNext()
+                        }
+                    }, 3000)
+                }
+                resolveNext()
+            }
+        }
+        try {
+            nsd.resolveService(info, object : NsdManager.ResolveListener {
+                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = finished(null)
+                override fun onServiceResolved(serviceInfo: NsdServiceInfo) = finished(serviceInfo)
+            })
+        } catch (_: Exception) { finished(null) }
+    }
+
     private fun stop() {
+        generation++
+        resolving = false
+        pending.clear()
+        present.clear()
         discovery?.let { try { nsd.stopServiceDiscovery(it) } catch (_: Exception) {} }
         discovery = null
         registration?.let { try { nsd.unregisterService(it) } catch (_: Exception) {} }

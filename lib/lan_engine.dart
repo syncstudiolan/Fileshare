@@ -19,15 +19,23 @@ class LanPeer {
   final DateTime lastSeen;
 }
 
-/// Windows receives the same device through UDP and DNS-SD. A loss event
-/// from either transport must never erase a still-live alternative route.
+/// All platforms share one peer registry, independently tracking discovery
+/// sources. A loss on one transport must not erase another live route.
 @visibleForTesting
 class WindowsLanPeerSources {
   final _udp=<String,LanPeer>{};
   final _bonjour=<String,LanPeer>{};
+  final _native=<String,LanPeer>{};
+  final _verified=<String,LanPeer>{};
 
   bool get hasBonjourPeers=>_bonjour.isNotEmpty;
   void observeUdp(LanPeer peer)=>_udp[peer.id]=peer;
+  void observeNative(LanPeer peer)=>_native[peer.id]=peer;
+  void loseNative(String id)=>_native.remove(id);
+  void clearNative()=>_native.clear();
+  void observeVerified(LanPeer peer)=>_verified[peer.id]=peer;
+  Iterable<LanPeer> verified(DateTime now)=>_verified.values.where((p)=>
+      now.difference(p.lastSeen)<const Duration(seconds:30));
   void replaceBonjour(Iterable<LanPeer> snapshot) {
     _bonjour
       ..clear()
@@ -38,9 +46,10 @@ class WindowsLanPeerSources {
     _udp.removeWhere((_,p)=>p.lastSeen.isBefore(cutoff));
     // Prefer the fresh directly observed UDP address if available. DNS-SD
     // remains the route for iPhone and other Bonjour-only devices.
-    return {..._bonjour,..._udp};
+    _verified.removeWhere((_,p)=>now.difference(p.lastSeen)>=const Duration(seconds:30));
+    return {..._bonjour,..._native,..._udp,..._verified};
   }
-  void clear(){_udp.clear();_bonjour.clear();}
+  void clear(){_udp.clear();_bonjour.clear();_native.clear();_verified.clear();}
 }
 
 enum TransferState { queued, preparing, sending, receiving, delivered, failed }
@@ -149,7 +158,13 @@ class LanEngine extends ChangeNotifier {
   nsd.Discovery? _windowsDiscovery;
   final _windowsSources=WindowsLanPeerSources();
   bool _windowsRegistering=false, _windowsBrowsing=false, _windowsUdpBinding=false;
-  DateTime? _windowsBrowseStartedAt;
+  DateTime? _windowsBrowseStartedAt, _lastNativeRefresh;
+  bool _nativeStarting=false, _nativeRestartNeeded=false;
+  final _helloCandidates=<String,LanPeer>{};
+  final _helloAttempts=<String,DateTime>{};
+  final _helloActive=<String>{};
+  static const _helloProtocol='fileshare-peer-hello-v2';
+  static const _helloCap=32;
   Timer? _heartbeat, _cleanup, _listenerRetry;
   bool _bindingReceiver = false;
   int _listenerGeneration = 0;
@@ -222,46 +237,21 @@ class LanEngine extends ChangeNotifier {
     // firewall policies. Bonjour DNS-SD is shared by iOS, Android and macOS;
     // keep UDP v1 on desktops/Android only for older LAN clients.
     // Isolated unit tests need only the TCP queue/receiver.
-    if (testSupportDirectory == null && Platform.isWindows) {
-      // A broken UDP socket or DNS-SD registration must not block startup
-      // or disable the other independent discovery path.
+    if(testSupportDirectory==null && !Platform.isIOS) {
       unawaited(_ensureWindowsUdp());
     }
-    if (testSupportDirectory == null && !Platform.isIOS && !Platform.isWindows) try {
-      _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
-        discoveryPort, reuseAddress: true);
-      _discovery!.broadcastEnabled = true;
-      _discovery!.listen((event) {
-        if (event != RawSocketEvent.read) return;
-        Datagram? packet;
-        while ((packet = _discovery?.receive()) != null) {
-          _receiveAnnouncement(packet!);
-        }
-      });
-      refresh();
-      _heartbeat = Timer.periodic(const Duration(seconds: 5), (_) {
-        // UDP announce only. Restarting Bonjour every five seconds would
-        // repeatedly drop peers while NSNetServiceBrowser is resolving.
-        refresh(refreshBonjour: false);
-        _expirePeers();
-        _dispatchQueued();
-      });
-    } catch (e) { error = 'LAN broadcast unavailable: ' + e.toString(); }
     if (testSupportDirectory == null &&
         (Platform.isIOS || Platform.isAndroid || Platform.isMacOS)) {
-      await _startBonjour();
+      unawaited(_startBonjour());
     }
     if (testSupportDirectory == null && Platform.isWindows) {
       unawaited(_startWindowsBonjour());
-      _heartbeat=Timer.periodic(const Duration(seconds:5), (_) {
-        refresh(refreshBonjour:false);
-        _expirePeers();
-        _dispatchQueued();
-      });
     }
-    // Keep peer cleanup and queued delivery alive even on iOS without UDP.
-    _heartbeat ??= Timer.periodic(const Duration(seconds: 5), (_) {
+    // Identical cadence for every platform; native discovery remains running.
+    _heartbeat=Timer.periodic(const Duration(seconds:5), (_) {
+      if(testSupportDirectory==null)refresh(refreshBonjour: false);
       _expirePeers();
+      _pumpHello();
       _dispatchQueued();
     });
     _cleanup = Timer.periodic(const Duration(minutes: 1),
@@ -314,7 +304,7 @@ class LanEngine extends ChangeNotifier {
   // Windows UDP stays independent from native DNS-SD, including recovery
   // after a transient bind error or network/socket shutdown.
   Future<void> _ensureWindowsUdp() async {
-    if(!Platform.isWindows || _disposed || _windowsUdpBinding ||
+    if(Platform.isIOS || _disposed || _windowsUdpBinding ||
         _discovery!=null || testSupportDirectory!=null)return;
     _windowsUdpBinding=true;
     final generation=_listenerGeneration;
@@ -371,6 +361,7 @@ class LanEngine extends ChangeNotifier {
         txt:<String,Uint8List>{
           'id':Uint8List.fromList(utf8.encode(id)),
           'n':Uint8List.fromList(utf8.encode(Platform.localHostname)),
+          'v':Uint8List.fromList(utf8.encode('2')),
         },
       ));
       if(_disposed||generation!=_listenerGeneration){
@@ -438,7 +429,10 @@ class LanEngine extends ChangeNotifier {
       final nameBytes=service.txt?['n'];
       final name=nameBytes==null?(service.name??'Device'):
           utf8.decode(nameBytes,allowMalformed:true);
-      fresh.add(LanPeer(id,safeFileName(name),ipv4.first.address,port,DateTime.now()));
+      final peer=LanPeer(id,safeFileName(name),ipv4.first.address,port,DateTime.now());
+      fresh.add(peer);
+      final version=service.txt?['v'];
+      if(version!=null && utf8.decode(version,allowMalformed:true)=='2')_offerHello(peer);
     }
     _windowsSources.replaceBonjour(fresh);
     _publishWindowsPeers();
@@ -455,21 +449,27 @@ class LanEngine extends ChangeNotifier {
   /// iOS and macOS NetService, and Android NsdManager, advertise the same
   /// TCP receiver using stable device IDs in TXT records and IPv4 peers.
   Future<void> _startBonjour() async {
-    if (_bonjourStarted || _server == null || deviceId == null) return;
+    if (_bonjourStarted || _nativeStarting || _disposed || _server == null || deviceId == null) return;
+    _nativeStarting=true;
+    final generation=_listenerGeneration;
     _bonjour.setMethodCallHandler((call) async {
-      if (_disposed || !started && _starting == null) return;
+      if (_disposed || generation!=_listenerGeneration || !started && _starting == null) return;
       final data = call.arguments;
       if (data is! Map) return;
       if (call.method == 'lost') {
         final id = data['id'];
         if (id is String && _bonjourPeerIds.remove(id)) {
-          peers.remove(id);
-          _notify();
+          _windowsSources.loseNative(id);
+          _publishWindowsPeers();
         }
         return;
       }
       if (call.method == 'error') {
-        error = 'Nearby discovery: ${data['message'] ?? 'unavailable'}';
+        final message=data['message']?.toString()??'unavailable';
+        if(message.toLowerCase().contains('browse') || message.toLowerCase().contains('discovery failed') || message.toLowerCase().contains('advertis')) {
+          _nativeRestartNeeded=true;
+        }
+        error = 'Nearby discovery: $message';
         _notify();
         return;
       }
@@ -488,58 +488,88 @@ class LanEngine extends ChangeNotifier {
            error?.startsWith('LAN broadcast unavailable:') == true)) {
         error = null;
       }
-      peers[id] = LanPeer(id, safeFileName(name is String ? name : 'Device'),
-          address, port, DateTime.now());
-      _notify();
-      if (first) _dispatchQueued();
+      final peer=LanPeer(id,safeFileName(name is String?name:'Device'),address,port,DateTime.now());
+      _windowsSources.observeNative(peer);
+      if(data['v']=='2')_offerHello(peer);
+      _publishWindowsPeers();
+      if(first)_pumpHello();
     });
     try {
       await _bonjour.invokeMethod<void>('start', {
         'id': deviceId!, 'name': Platform.localHostname, 'port': _server!.port,
       });
+      if(generation!=_listenerGeneration||_disposed){
+        await _bonjour.invokeMethod<void>('stop');
+        return;
+      }
       _bonjourStarted = true;
+      _lastNativeRefresh=DateTime.now();
     } on PlatformException catch (e) {
       error = 'Bonjour discovery unavailable: ${e.message ?? e.code}';
       _notify();
     } on MissingPluginException {
       error = 'Nearby discovery module missing. Install the updated build.';
       _notify();
-    }
+    } finally {_nativeStarting=false;}
+  }
+
+  Future<void> _restartNativeBonjour() async {
+    if(_nativeStarting)return;
+    _nativeStarting=true;
+    try{await _bonjour.invokeMethod<void>('stop');}catch(_){}
+    finally{_nativeStarting=false;}
+    _bonjourPeerIds.clear();
+    _windowsSources.clearNative();
+    _publishWindowsPeers();
+    if(!_disposed&&(started||_starting!=null))await _startBonjour();
   }
 
   Future<void> retryReceiver() => _bindReceiver();
 
   void refresh({bool refreshBonjour = true}) {
-    // Manual refresh must work on iOS/macOS through native Bonjour. Heartbeat
-    // calls this with refreshBonjour:false to avoid tearing down the browser.
-    if (refreshBonjour && _bonjourStarted &&
-        (Platform.isIOS || Platform.isMacOS)) {
-      unawaited(_bonjour.invokeMethod<void>('refresh').catchError((Object e) {
-        error = 'Nearby refresh failed: $e';
-        _notify();
-      }));
-    }
-    if(Platform.isWindows && testSupportDirectory==null){
-      unawaited(_ensureWindowsUdp());
+    if(testSupportDirectory!=null || _disposed)return;
+    if(!Platform.isIOS)unawaited(_ensureWindowsUdp());
+    if(Platform.isWindows){
       unawaited(_startWindowsBonjour());
       if(refreshBonjour && _windowsDiscovery!=null){
         _readWindowsBonjour(_windowsDiscovery!);
       }
+    }else if(Platform.isIOS||Platform.isAndroid||Platform.isMacOS){
+      final now=DateTime.now();
+      final canRefresh=_lastNativeRefresh==null ||
+        now.difference(_lastNativeRefresh!)>=const Duration(seconds:30);
+      if(_nativeRestartNeeded && canRefresh && !_nativeStarting){
+        _nativeRestartNeeded=false;
+        _bonjourStarted=false;
+        _lastNativeRefresh=now;
+        unawaited(_restartNativeBonjour());
+        return;
+      }
+      if(!_bonjourStarted){
+        unawaited(_startBonjour());
+      }else if(canRefresh && (refreshBonjour||peers.isEmpty)){
+        _lastNativeRefresh=now;
+        unawaited(_bonjour.invokeMethod<void>('refresh').catchError((Object e){
+          debugPrint('Nearby refresh failed: $e');
+          _nativeRestartNeeded=true;
+        }));
+      }
     }
     _sendAnnouncement();
+    _pumpHello();
   }
 
   void _sendAnnouncement({InternetAddress? destination}) {
-    if (_discovery == null) return;
-    // Only advertise a receiver that actually owns its TCP port on Windows.
-    if(Platform.isWindows && _server==null)return;
-    final bytes = utf8.encode(jsonEncode({
-      'app': 'fileshare-lan-v1', 'id': deviceId,
-      'name': Platform.localHostname, 'port': tcpPort,
+    final socket=_discovery;
+    final receiver=_server;
+    if(socket==null || receiver==null || deviceId==null)return;
+    final bytes=utf8.encode(jsonEncode({
+      'app':'fileshare-lan-v1','id':deviceId,
+      'name':Platform.localHostname,'port':receiver.port,'v':'2',
     }));
-    try {
-      _discovery!.send(bytes, destination??InternetAddress('255.255.255.255'), discoveryPort);
-    } catch (e) { error = 'Discovery broadcast failed: ' + e.toString(); }
+    try{
+      socket.send(bytes,destination??InternetAddress('255.255.255.255'),discoveryPort);
+    }catch(e){debugPrint('LAN announcement failed: $e');}
   }
 
   void _receiveAnnouncement(Datagram packet) {
@@ -551,36 +581,159 @@ class LanEngine extends ChangeNotifier {
       final id = obj['id'] as String;
       if (id.length > 100) return;
       final firstSeen = !peers.containsKey(id);
-      if(Platform.isWindows && testSupportDirectory==null){
-        if(id.isEmpty || (obj['port'] as int)>65535 || packet.address.isLoopback ||
-            packet.address.address=='0.0.0.0')return;
-        _windowsSources.observeUdp(LanPeer(id,
-          safeFileName((obj['name'] as String?)??'Device'),
-          packet.address.address,obj['port'] as int,DateTime.now()));
-        _publishWindowsPeers();
-        // Unicast a reply to a newly seen peer, even if the default broadcast
-        // route points to another network adapter. No reply loop.
-        if(firstSeen)_sendAnnouncement(destination:packet.address);
-        return;
-      }
-      peers[id] = LanPeer(id, safeFileName((obj['name'] as String?) ?? 'Device'),
-        packet.address.address, obj['port'] as int, DateTime.now());
-      _notify();
-      if(firstSeen)refresh();
-      _dispatchQueued();
+      if(id.isEmpty || (obj['port'] as int)>65535 || packet.address.isLoopback ||
+          packet.address.address=='0.0.0.0')return;
+      final peer=LanPeer(id,safeFileName((obj['name'] as String?)??'Device'),
+          packet.address.address,obj['port'] as int,DateTime.now());
+      _windowsSources.observeUdp(peer);
+      if(obj['v']=='2')_offerHello(peer);
+      _publishWindowsPeers();
+      if(firstSeen)_sendAnnouncement(destination:packet.address);
     } catch (_) {}
   }
 
   void _expirePeers() {
-    if(Platform.isWindows && testSupportDirectory==null){
-      _publishWindowsPeers();
+    if(testSupportDirectory!=null && _helloCandidates.isEmpty && _windowsSources.verified(DateTime.now()).isEmpty){
+      final cutoff=DateTime.now().subtract(const Duration(seconds:22));
+      peers.removeWhere((_,p)=>p.lastSeen.isBefore(cutoff));
+      _notify();
       return;
     }
-    final cutoff = DateTime.now().subtract(const Duration(seconds: 22));
-    peers.removeWhere((key, peer) =>
-      !_bonjourPeerIds.contains(key) &&
-      peer.lastSeen.isBefore(cutoff));
-    _notify();
+    _publishWindowsPeers();
+  }
+
+  // Only known v2 File Share advertisements and verified same-subnet hints
+  // can seed this control exchange. No scanning or relaying file payloads.
+  bool _validHelloPeer(LanPeer p) {
+    final ip=InternetAddress.tryParse(p.address);
+    return p.id.isNotEmpty && p.id!=deviceId && p.id.length<=100 &&
+      ip!=null && ip.type==InternetAddressType.IPv4 &&
+      (!ip.isLoopback || testSupportDirectory!=null) &&
+      !ip.isMulticast && ip.address!='0.0.0.0' &&
+      p.port>0 && p.port<=65535 &&
+      (testSupportDirectory!=null||p.port==tcpPort);
+  }
+
+  bool _sameLocalSubnet(String address,String local) {
+    final ip=InternetAddress.tryParse(address);
+    final own=InternetAddress.tryParse(local);
+    if(ip==null||own==null||ip.type!=InternetAddressType.IPv4||
+        own.type!=InternetAddressType.IPv4)return false;
+    if(testSupportDirectory!=null)return ip.isLoopback&&own.isLoopback;
+    if(ip.isLoopback||own.isLoopback)return false;
+    // Conservative /24 hint boundary: direct UDP/Bonjour still supports
+    // larger networks. Do not follow arbitrary addresses advertised by peers.
+    final x=ip.rawAddress,y=own.rawAddress;
+    return x[0]==y[0]&&x[1]==y[1]&&x[2]==y[2]&&
+      x[3]!=0&&x[3]!=255&&address!=local;
+  }
+
+  void _offerHello(LanPeer peer) {
+    if(_disposed||!_validHelloPeer(peer))return;
+    final now=DateTime.now();
+    _helloCandidates.removeWhere((_,p)=>now.difference(p.lastSeen)>const Duration(seconds:45));
+    if(!_helloCandidates.containsKey(peer.id)&&_helloCandidates.length>=_helloCap)return;
+    _helloCandidates[peer.id]=peer;
+    _pumpHello();
+  }
+
+  @visibleForTesting
+  void seedHelloPeerForTest(LanPeer peer) {
+    if(testSupportDirectory==null)throw StateError('Test discovery only');
+    _offerHello(peer);
+  }
+
+  @visibleForTesting
+  int? get receiverPortForTest=>testSupportDirectory==null?null:_server?.port;
+
+  void _pumpHello(){
+    if(_disposed||_server==null||deviceId==null)return;
+    final now=DateTime.now();
+    _helloCandidates.removeWhere((_,p)=>now.difference(p.lastSeen)>const Duration(seconds:45));
+    _helloAttempts.removeWhere((id,time)=>!_helloCandidates.containsKey(id)&&
+        now.difference(time)>const Duration(seconds:45));
+    for(final peer in _helloCandidates.values.toList()){
+      if(_helloActive.length>=4)break;
+      final last=_helloAttempts[peer.id];
+      if(last!=null&&now.difference(last)<const Duration(seconds:10))continue;
+      if(!_helloActive.add(peer.id))continue;
+      _helloAttempts[peer.id]=now;
+      unawaited(_probeHello(peer).whenComplete(()=>_helloActive.remove(peer.id)));
+    }
+  }
+
+  Map<String,Object?> _helloIdentity()=>{'id':deviceId,'name':Platform.localHostname,
+      'port':_server!.port};
+  LanPeer? _parseHelloPeer(Object? value,String address){
+    if(value is! Map)return null;
+    final id=value['id'],name=value['name'],port=value['port'];
+    if(id is! String||name is! String||port is! int)return null;
+    final p=LanPeer(id,safeFileName(name),address,port,DateTime.now());
+    return _validHelloPeer(p)?p:null;
+  }
+
+  Future<Map?> _readHelloLine(Socket socket) async{
+    final bytes=<int>[];
+    await for(final chunk in socket.timeout(const Duration(seconds:3))){
+      final end=chunk.indexOf(10);
+      bytes.addAll(end<0?chunk:chunk.sublist(0,end));
+      if(bytes.length>8192)return null;
+      if(end>=0){
+        final value=jsonDecode(utf8.decode(bytes));
+        return value is Map?value:null;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _probeHello(LanPeer candidate) async{
+    final generation=_listenerGeneration;
+    Socket? socket;
+    try{
+      socket=await Socket.connect(candidate.address,candidate.port,
+          timeout:const Duration(seconds:2));
+      if(generation!=_listenerGeneration||_disposed||_server==null)return;
+      socket.add(utf8.encode(jsonEncode({'protocol':_helloProtocol,..._helloIdentity()})+'\n'));
+      await socket.flush().timeout(const Duration(seconds:2));
+      final local=socket.address.address;
+      final remote=socket.remoteAddress.address;
+      final response=await _readHelloLine(socket);
+      if(generation!=_listenerGeneration||_disposed||response==null||
+          response['protocol']!=_helloProtocol)return;
+      final confirmed=_parseHelloPeer(response,remote);
+      if(confirmed==null||confirmed.id!=candidate.id||confirmed.port!=candidate.port)return;
+      _windowsSources.observeVerified(confirmed);
+      _helloCandidates[confirmed.id]=confirmed;
+      _publishWindowsPeers();
+      final hints=response['peers'];
+      if(hints is List){
+        for(final hint in hints.take(_helloCap)){
+          if(hint is! Map||hint['address'] is! String)continue;
+          final address=hint['address'] as String;
+          if(!_sameLocalSubnet(address,local))continue;
+          final p=_parseHelloPeer(hint,address);
+          if(p!=null&&!_helloCandidates.containsKey(p.id))_offerHello(p);
+        }
+      }
+    }catch(_){/* transient discovery failure: heartbeat retries */}
+    finally{socket?.destroy();}
+  }
+
+  Future<void> _answerHello(Socket socket,Map meta) async{
+    if(_server==null||deviceId==null)return;
+    final sender=_parseHelloPeer(meta,socket.remoteAddress.address);
+    if(sender==null)return;
+    final local=socket.address.address;
+    if(!_sameLocalSubnet(sender.address,local))return;
+    // Only directly checked peers are shared; each recipient must verify the
+    // advertised identity itself before adding the hinted device to its list.
+    final hints=_windowsSources.verified(DateTime.now()).where((p)=>
+      p.id!=sender.id&&_sameLocalSubnet(p.address,local)).take(12)
+      .map((p)=>{'id':p.id,'name':p.name,'address':p.address,'port':p.port}).toList();
+    socket.add(utf8.encode(jsonEncode({'protocol':_helloProtocol,
+      ..._helloIdentity(),'peers':hints})+'\n'));
+    await socket.flush().timeout(const Duration(seconds:2));
+    _offerHello(sender);
   }
 
   Future<void> _restore() async {
@@ -818,6 +971,7 @@ class LanEngine extends ChangeNotifier {
     // A socket's end-of-stream is NOT required to finish a file. Android
     // clients may keep TCP open for an ACK, so read exactly the framed size.
     final reader = StreamIterator<List<int>>(socket);
+    var control=false;
     try {
       final header = <int>[];
       var ready = false, got = 0, expected = -1;
@@ -857,6 +1011,12 @@ class LanEngine extends ChangeNotifier {
             throw const FormatException('Header too long');
           }
           final meta = jsonDecode(utf8.decode(header));
+          if(meta is Map && meta['protocol']==_helloProtocol){
+            control=true;
+            await _answerHello(socket,meta);
+            await Future<void>.delayed(const Duration(milliseconds:100));
+            return;
+          }
           if (meta is! Map || meta['protocol'] != 'fileshare-file-v1' ||
               meta['size'] is! int || (meta['size'] as int) < 0 ||
               meta['name'] is! String) {
@@ -928,7 +1088,7 @@ class LanEngine extends ChangeNotifier {
         record.state = TransferState.failed;
         record.error = e.toString();
       }
-      error = 'Receive failed: $e';
+      if(!control)error = 'Receive failed: $e';
       try {
         socket.add(utf8.encode('ERR\n'));
         await socket.flush();
@@ -942,7 +1102,7 @@ class LanEngine extends ChangeNotifier {
       }
       await reader.cancel();
       socket.destroy();
-      _update(save: true);
+      if(!control)_update(save: true);
     }
   }
 
@@ -1016,6 +1176,11 @@ class LanEngine extends ChangeNotifier {
     }
     _windowsBrowseStartedAt=null;
     _windowsSources.clear();
+    _helloCandidates.clear();
+    _helloAttempts.clear();
+    _helloActive.clear();
+    _lastNativeRefresh=null;
+    _nativeRestartNeeded=false;
     peers.clear();
     await _server?.close();
     _server = null;

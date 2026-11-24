@@ -2,14 +2,8 @@ name: Android latest ARM64 APK release
 
 # Android-only release requested after PR #18 merge.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/android-pr6-compact-release.yml'
-      - 'test/photo_enhancer_preflight_test.dart'
-      - 'android/app/src/main/AndroidManifest.xml'
-      - 'android/app/src/main/res/drawable/**'
-      - 'android/app/src/main/res/drawable-v21/**'
+  # Legacy debug-key test builds are manual only. Production updates are
+  # exclusively published by File Share Release Pipeline.
   workflow_dispatch:
 
 permissions:
