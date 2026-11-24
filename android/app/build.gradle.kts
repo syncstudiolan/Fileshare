@@ -130,3 +130,19 @@ val verifyBundledDocAlignerModel = tasks.register("verifyBundledDocAlignerModel"
     }
 }
 tasks.named("preBuild") { dependsOn(verifyBundledDocAlignerModel) }
+
+// Explicit local NDK integration for the DSC draft. No workflow is triggered.
+// Enable with -PfileshareDscRust=true after installing Rust/cargo-ndk.
+val includeDscRust = providers.gradleProperty("fileshareDscRust").map { it == "true" }.orElse(false)
+if (includeDscRust.get()) {
+    val dscRustDir = layout.projectDirectory.dir("../dsc-rust")
+    val generatedDsc = layout.buildDirectory.dir("generated/dscRust/jniLibs")
+    val buildDscRust = tasks.register<Exec>("buildDscRust") {
+        workingDir(dscRustDir.asFile)
+        commandLine("bash", "build-android.sh")
+        inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh") })
+        outputs.dir(generatedDsc)
+    }
+    android.sourceSets.getByName("main").jniLibs.srcDir(generatedDsc)
+    tasks.named("preBuild") { dependsOn(buildDscRust) }
+}
