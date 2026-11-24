@@ -28,6 +28,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
   val scope = rememberCoroutineScope()
   var trusted by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
   var imported by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
+  var confirmedFingerprints by remember { mutableStateOf<Map<String,String>>(emptyMap()) }
   var message by remember { mutableStateOf("") }
   var managing by remember { mutableStateOf(false) }
   var saving by remember { mutableStateOf(false) }
@@ -62,20 +63,21 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
       if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
       val signatures = document.signatures.sortedBy { if (it.id == selected) 0 else 1 }
       for (sig in signatures) {
-        val statusColor = when(sig.status) {
+        val displayStatus = if(busy) DscStatus.UNKNOWN else sig.status
+        val statusColor = when(displayStatus) {
           DscStatus.VALID -> Color(0xff18834b)
           DscStatus.UNKNOWN -> Color(0xffb57b13)
           DscStatus.INVALID -> Color(0xffc33232)
         }
         Column(Modifier.fillMaxWidth().border(1.dp, statusColor).padding(12.dp),
           verticalArrangement = Arrangement.spacedBy(5.dp)) {
-          Text(when(sig.status) {
+          Text(when(displayStatus) {
             DscStatus.VALID -> "✓ Signature valid"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
           }, color = statusColor, style = MaterialTheme.typography.titleMedium)
           Text(sig.name, color = c.ink)
-          Text(sig.detail, color = c.sub)
+          Text(if(busy) "Rechecking — previous verdict is not current" else sig.detail, color = c.sub)
           Text("Integrity: " + if(sig.integrity) "Verified" else "Not established", color = c.sub)
           Text("Trust: " + if(sig.trusted) "Trusted chain" else "Not established", color = c.sub)
           Text("Revocation: ${sig.revocation}", color = c.sub)
@@ -106,13 +108,19 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         Text("Confirm the root fingerprint through CCA (verifyroot@cca.gov.in) before importing.", color = c.sub)
         OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }) { Text("Import CER / CRT / PEM") }
         for (cert in imported) {
+          val fingerprint = DscSignedBytes.sha256(cert.encoded)
           Text(cert.subjectX500Principal.name, color = c.ink)
-          Text("SHA-256: ${DscSignedBytes.sha256(cert.encoded)}", color = c.sub)
+          Text("SHA-256: $fingerprint", color = c.sub)
+          OutlinedTextField(value = confirmedFingerprints[fingerprint].orEmpty(),
+            onValueChange = { confirmedFingerprints = confirmedFingerprints + (fingerprint to it.take(128)) },
+            label = { Text("Independently verified SHA-256 fingerprint") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth())
           Text("Issuer: ${cert.issuerX500Principal.name}", color = c.sub)
-          Button(enabled = cert.basicConstraints >= 0 && !busy, onClick = {
+          Button(enabled = cert.basicConstraints >= 0 && !busy &&
+              confirmedFingerprints[fingerprint].orEmpty().replace(Regex("[ :\\s]"), "").equals(fingerprint, ignoreCase = true), onClick = {
             scope.launch {
               try {
-                withContext(Dispatchers.IO) { DscTrust.add(cert) }
+                withContext(Dispatchers.IO) { DscTrust.add(cert, confirmedFingerprints[fingerprint].orEmpty()) }
                 imported = imported.filterNot { it == cert }
                 trusted = withContext(Dispatchers.IO) { DscTrust.load() }
                 message = "CA added. Rechecking the actual signature."
