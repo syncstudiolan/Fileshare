@@ -173,7 +173,8 @@ class LanEngine extends ChangeNotifier {
   File? _db, _queueDb;
   String? deviceId, error;
   bool started = false, _disposed = false;
-  Future<void>? _starting;
+  Future<void>? _starting, _stopping;
+  final _incomingConnections=<Socket,Future<void>>{};
   Future<void> Function(LanFile)? onReceived;
   Future<void> _writes = Future<void>.value();
 
@@ -191,6 +192,9 @@ class LanEngine extends ChangeNotifier {
   // The UI and the cached background FlutterEngine can request start together.
   // Use one server/UDP listener rather than racing for the same ports.
   Future<void> start() {
+    if(_disposed)return Future<void>.value();
+    final stopping=_stopping;
+    if(stopping!=null)return stopping.then((_)=>start());
     if (started) return Future<void>.value();
     return _starting ??= _startOnce().whenComplete(() => _starting = null);
   }
@@ -275,7 +279,17 @@ class LanEngine extends ChangeNotifier {
         return;
       }
       _server = socket;
-      socket.listen((connection) => unawaited(_accept(connection)),
+      socket.listen((connection) {
+        if(generation!=_listenerGeneration||_disposed||_stopping!=null){
+          connection.destroy();
+          return;
+        }
+        final task=_accept(connection).catchError((Object e){
+          debugPrint('LAN receive cleanup: $e');
+        }).whenComplete(()=>_incomingConnections.remove(connection));
+        _incomingConnections[connection]=task;
+        unawaited(task);
+      },
         onError: (Object e) {
           error = 'LAN receive connection error: $e';
           _notify();
@@ -842,7 +856,7 @@ class LanEngine extends ChangeNotifier {
     }
   }
   void _dispatchQueued(){
-    if(!started||queuedBatches.isEmpty||peers.isEmpty)return;
+    if(!started||_stopping!=null||queuedBatches.isEmpty||peers.isEmpty)return;
     for(final peer in peers.values.toList()){
       if(_activePeers.add(peer.id)){
         unawaited(_deliverToPeer(peer).whenComplete(()=>_activePeers.remove(peer.id)));
@@ -1128,7 +1142,7 @@ class LanEngine extends ChangeNotifier {
           if (part != null && await part.exists()) await part.delete();
         } catch (_) {}
       }
-      await reader.cancel();
+      try{await reader.cancel();}catch(_){}
       socket.destroy();
       if(!control)_update(save: true);
     }
@@ -1180,7 +1194,12 @@ class LanEngine extends ChangeNotifier {
     } catch (e) { error = 'Orphan cleanup: ' + e.toString(); }
   }
 
-  Future<void> stop() async {
+  Future<void> stop() => _stopping ??= _stopOnce().whenComplete(()=>_stopping=null);
+
+  Future<void> _stopOnce() async {
+    final starting=_starting;
+    if(starting!=null){try{await starting;}catch(_){}}
+    started=false;
     _listenerGeneration++;
     _listenerRetry?.cancel();
     _listenerRetry = null;
@@ -1210,10 +1229,17 @@ class LanEngine extends ChangeNotifier {
     _lastNativeRefresh=null;
     _nativeRestartNeeded=false;
     peers.clear();
-    await _server?.close();
-    _server = null;
-    _discovery = null;
-    started = false;
+    final server=_server;
+    _server=null;
+    await server?.close();
+    _discovery=null;
+    // The receiver persists its final history after the ACK grace period.
+    // Closing ServerSocket alone does not close accepted sockets or join
+    // those tasks. Wait for their cleanup before the final history flush,
+    // especially on Windows where an open file prevents directory removal.
+    final active=Map<Socket,Future<void>>.of(_incomingConnections);
+    for(final connection in active.keys){connection.destroy();}
+    await Future.wait(active.values);
     _notify();
     await _writes;
   }
