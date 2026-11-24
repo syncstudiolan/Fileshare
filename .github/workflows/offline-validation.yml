@@ -25,7 +25,7 @@ on:
 # Ordinary merges do not release. [release-now] is an explicit one-time
 # authorization for the initial migration; later use the Run workflow button.
 concurrency:
-  group: fileshare-production-release
+  group: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-now]')) && 'fileshare-production-release' || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -157,6 +157,27 @@ jobs:
           assert size < 160*1048576, 'APK exceeds 160 MiB test limit'
           PY
           cp "$apk" build/app/outputs/flutter-apk/FileShare-Android-ARM64-Release.apk
+      - name: Verify production signing identity matches the previous published APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(python3 -c 'import json; print(json.load(open("update_manifest.json"))["android"]["url"])')"
+          prefix="https://github.com/$GITHUB_REPOSITORY/releases/download/"
+          [[ "$url" == "$prefix"* ]]
+          rest="${url#"$prefix"}"
+          tag="${rest%%/*}"
+          asset="${rest#*/}"
+          [[ -n "$tag" && "$asset" == *.apk && "$asset" != */* ]]
+          previous="$RUNNER_TEMP/previous-production-apk"
+          mkdir -p "$previous"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$previous"
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          old="$("$signer" verify --print-certs "$previous/$asset" | grep -E '^Signer #[0-9]+ certificate SHA-256 digest:' | sort)"
+          new="$("$signer" verify --print-certs build/app/outputs/flutter-apk/FileShare-Android-ARM64-Release.apk | grep -E '^Signer #[0-9]+ certificate SHA-256 digest:' | sort)"
+          test -n "$old" && test "$old" = "$new" || { echo "::error::Android production signing identity differs from the previous published APK. Restore the original keystore."; exit 1; }
+          echo "Android signing identity matches the previous production APK."
       - uses: actions/upload-artifact@v4
         with:
           name: file-share-android-signed-release-apk
