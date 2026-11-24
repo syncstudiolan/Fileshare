@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'main.dart' show FileTheme, WindowsBackground;
 
@@ -72,6 +73,7 @@ class FileShareUpdates extends ChangeNotifier {
   String _currentVersion='0.1.0';
   String get currentLabel=>'$_currentVersion (build $_currentBuild)';
   bool get supported=>Platform.isAndroid||Platform.isWindows||Platform.isIOS||Platform.isMacOS;
+  String get _extension=>Platform.isAndroid?'apk':Platform.isIOS?'ipa':Platform.isMacOS?'dmg':'exe';
 
   void initializeVersion(String version,int build){
     _currentVersion=version;
@@ -109,7 +111,7 @@ class FileShareUpdates extends ChangeNotifier {
         final cached=downloaded;
         final matchingCache=cached!=null &&
             cached.path.endsWith('-${parsed.build}.' +
-              (Platform.isAndroid?'apk':Platform.isMacOS?'dmg':'exe'));
+              _extension);
         if(!matchingCache) downloaded=null;
         stage=matchingCache && await cached!.exists()
           ?UpdateStage.ready:UpdateStage.available;
@@ -136,7 +138,7 @@ class FileShareUpdates extends ChangeNotifier {
     final next=release;
     // AppleJR-installed unsigned IPAs cannot be installed by an iOS app.
     // Signing and installation must happen outside the iOS sandbox.
-    if(Platform.isIOS||next==null||_downloading)return;
+    if(!supported||next==null||_downloading||_checking||stage==UpdateStage.installing)return;
     _downloading=true;
     showPopup=false;
     stage=UpdateStage.downloading;progress=0;error=null;
@@ -147,8 +149,8 @@ class FileShareUpdates extends ChangeNotifier {
       final directory=await getApplicationSupportDirectory();
       final folder=Directory('${directory.path}${Platform.pathSeparator}updates');
       await folder.create(recursive:true);
-      final extension=Platform.isAndroid?'apk':Platform.isMacOS?'dmg':'exe';
-      final name='FileShare-${Platform.isAndroid?'Android':Platform.isMacOS?'macOS':'Windows'}-${next.build}.$extension';
+      final extension=_extension;
+      final name='FileShare-${Platform.isAndroid?'Android':Platform.isIOS?'iOS':Platform.isMacOS?'macOS':'Windows'}-${next.build}.$extension';
       final file=File('${folder.path}${Platform.pathSeparator}$name');
       partial=File('${file.path}.download');
       if(await partial.exists())await partial.delete();
@@ -185,8 +187,7 @@ class FileShareUpdates extends ChangeNotifier {
     }
   }
 
-  Future<void> install() async {
-    if(Platform.isIOS)return;
+  Future<void> install({Rect? sharePositionOrigin}) async {
     final file=downloaded;
     if(stage!=UpdateStage.ready||file==null)return;
     // Lock the install action before any await: no duplicate UAC prompts.
@@ -202,7 +203,14 @@ class FileShareUpdates extends ChangeNotifier {
         error='Downloaded installer failed final SHA-256 verification. Download again.';
         downloaded=null;notifyListeners();return;
       }
-      if(Platform.isAndroid) {
+      if(Platform.isIOS) {
+        // A verified unsigned IPA can be exported to Files or a compatible
+        // signing app. The iOS share sheet does not sign or install it.
+        await SharePlus.instance.share(ShareParams(files:[XFile(file.path)],
+          sharePositionOrigin:sharePositionOrigin));
+        stage=UpdateStage.ready;
+        notifyListeners();
+      } else if(Platform.isAndroid) {
         // PackageInstaller is the only supported user-approved sideload path;
         // the operating system shows an Install confirmation.
         await androidChannel.invokeMethod<void>(
@@ -216,6 +224,7 @@ class FileShareUpdates extends ChangeNotifier {
       // Keep the verified Windows download available for a retry if UAC or
       // the Shell rejects launch. The existing app remains running.
       stage=Platform.isWindows?UpdateStage.ready:UpdateStage.failed;
+      if(Platform.isIOS)stage=UpdateStage.ready;
       error='Could not open installer: $e';
       notifyListeners();
     }
@@ -428,20 +437,26 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
                 color:Theme.of(context).colorScheme.error)),
             const SizedBox(height:14),
             if(stage==UpdateStage.available)
-              Platform.isIOS
-              ?FilledButton.icon(
-                onPressed:()=>_copyIosSigningLink(context,release),
-                icon:const Icon(Icons.copy_rounded),
-                label:const Text('Copy IPA link for AppleJR signing'))
-              :FilledButton.icon(onPressed:updates.download,
+              FilledButton.icon(onPressed:updates.download,
                 icon:const Icon(Icons.download_rounded),
-                label:const Text('Download now')),
+                label:Text(Platform.isIOS?'Download IPA':'Download now')),
+            if(Platform.isIOS && release!=null && stage!=UpdateStage.downloading &&
+                stage!=UpdateStage.installing)
+              OutlinedButton.icon(onPressed:()=>_copyIosSigningLink(context,release),
+                icon:const Icon(Icons.copy_rounded),
+                label:const Text('Copy IPA link for AppleJR signing')),
             if(stage==UpdateStage.ready)
               FilledButton.icon(
-                onPressed:Platform.isMacOS?_confirmMacInstall:updates.install,
+                onPressed:Platform.isMacOS?_confirmMacInstall:() {
+                  final render=context.findRenderObject();
+                  final origin=render is RenderBox && render.hasSize
+                    ?render.localToGlobal(Offset.zero)&render.size
+                    :const Rect.fromLTWH(1,1,1,1);
+                  return updates.install(sharePositionOrigin:origin);
+                },
                 icon:const Icon(Icons.install_mobile_outlined),
                 label:Text(Platform.isAndroid?'Install update':
-                  Platform.isMacOS?'Open DMG installer and quit':'Install and restart')),
+                  Platform.isIOS?'Share IPA to signing app':Platform.isMacOS?'Open DMG installer and quit':'Install and restart')),
             if(stage==UpdateStage.installing)
               Text(Platform.isMacOS
                 ?'Opening the verified DMG in Finder and closing File Share. Drag File Share.app into Applications, choose Replace, then reopen File Share from Applications.'
@@ -454,7 +469,7 @@ class _FileShareUpdatePageState extends State<FileShareUpdatePage> {
                 label:const Text('Check for updates')),
             const SizedBox(height:10),
             Text(Platform.isIOS
-              ?'iOS: this GitHub IPA is UNSIGNED. AppleJR must sign the new build using the same certificate, provisioning profile and bundle ID before installing it over the current app. File Share cannot silently install an IPA on iOS.'
+              ?'iOS: download and verify the unsigned IPA, then share it to Files or a compatible signing app. Use your existing valid Apple signing identity and compatible profile with the original bundle ID. Install over File Share; do not uninstall it first. File Share cannot sign or silently install the IPA.'
               :Platform.isMacOS
                 ?'macOS uses a verified DMG: tap Open DMG installer and quit. In Finder, drag File Share.app to Applications, choose Replace, and reopen the updated app. The menu-bar background process closes for replacement. Your files and settings stay in macOS Application Support. Unsigned apps may require approval in Privacy & Security.'
                 :'Android needs an OS install confirmation. Windows may request administrator approval. Only verified GitHub Releases are installed.',
@@ -514,10 +529,10 @@ class FileShareUpdateBanner extends StatelessWidget {
                       updater.later();
                       fileShareNavigatorKey.currentState?.push(MaterialPageRoute<void>(
                         builder:(_)=>const FileShareUpdatePage()));
-                      if(!Platform.isIOS)unawaited(updater.download());
+                      unawaited(updater.download());
                     },
-                    icon:Icon(Platform.isIOS?Icons.info_outline_rounded:Icons.download_rounded,size:18),
-                    label:Text(Platform.isIOS?'View AppleJR signing steps':'Download now')),
+                    icon:const Icon(Icons.download_rounded,size:18),
+                    label:Text(Platform.isIOS?'Download IPA':'Download now')),
                   TextButton(onPressed:updater.later,
                     child:const Text('Install update later')),
                 ]),
