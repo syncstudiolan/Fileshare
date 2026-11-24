@@ -79,6 +79,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           Text("Integrity: " + if(sig.integrity) "Verified" else "Not established", color = c.sub)
           Text("Trust: " + if(sig.trusted) "Trusted chain" else "Not established", color = c.sub)
           Text("Revocation: ${sig.revocation}", color = c.sub)
+          Text("Validation time: " + (sig.trustedTime?.toString() ?: "Current device time; no trusted timestamp"), color = c.sub)
           sig.certificate?.let { cert ->
             Text("Issued by: ${cert.issuerX500Principal.name}", color = c.sub)
             Text("Serial: ${cert.serialNumber.toString(16)}", color = c.sub)
@@ -101,6 +102,8 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             onValidate()
           } }) { Text("Remove trust") }
         }
+        TextButton(onClick = { openUrl("https://cca.gov.in/root_certificate.html") }) { Text("Official Indian CCA root certificates") }
+        Text("Confirm the root fingerprint through CCA (verifyroot@cca.gov.in) before importing.", color = c.sub)
         OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }) { Text("Import CER / CRT / PEM") }
         for (cert in imported) {
           Text(cert.subjectX500Principal.name, color = c.ink)
