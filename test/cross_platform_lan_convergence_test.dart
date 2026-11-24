@@ -4,10 +4,11 @@ import 'dart:io';
 import 'package:file_share/lan_engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Future<void> until(bool Function() done, Duration timeout) async {
+Future<void> until(bool Function() done, Duration timeout,
+    {required String Function() diagnostics}) async {
   final deadline=DateTime.now().add(timeout);
   while(!done()){
-    if(DateTime.now().isAfter(deadline))throw StateError('LAN condition timed out');
+    if(DateTime.now().isAfter(deadline))throw StateError('LAN condition timed out: ${diagnostics()}');
     await Future<void>.delayed(const Duration(milliseconds:100));
   }
 }
@@ -32,7 +33,8 @@ void main(){
         engines.first.seedHelloPeerForTest(LanPeer(other.deviceId!,other.deviceId!,
           '127.0.0.1',other.receiverPortForTest!,DateTime.now()));
       }
-      await until(()=>engines.every((e)=>e.peers.length==3),const Duration(seconds:35));
+      await until(()=>engines.every((e)=>e.peers.length==3),const Duration(seconds:35),
+        diagnostics:()=>engines.map((e)=>'${e.deviceId}: ${e.peers.keys.join(',')} error=${e.error}').join('; '));
       for(final engine in engines){
         expect(engine.peers.keys.toSet(),ids.where((id)=>id!=engine.deviceId).toSet());
         expect(engine.files,isEmpty,reason:'control traffic cannot create transfer cards');
@@ -43,7 +45,8 @@ void main(){
       }
       await Future.wait(engines.map((e)=>e.send([payloads[e.deviceId]!],e.peers.values)));
       await until(()=>engines.every((e)=>e.files.where((f)=>f.incoming &&
-        f.state==TransferState.delivered).length==3),const Duration(seconds:15));
+        f.state==TransferState.delivered).length==3),const Duration(seconds:15),
+        diagnostics:()=>engines.map((e)=>'${e.deviceId}: ${e.files.map((f)=>f.state.name).join(',')} error=${e.error}').join('; '));
       for(final e in engines){
         final received=e.files.where((f)=>f.incoming).toList();
         expect(received.length,3);

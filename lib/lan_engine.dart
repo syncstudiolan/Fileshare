@@ -628,6 +628,25 @@ class LanEngine extends ChangeNotifier {
       x[3]!=0&&x[3]!=255&&address!=local;
   }
 
+  // Dart's accepted Socket.address can be the listener's wildcard address
+  // (0.0.0.0); an outbound Socket.address may be the destination address.
+  // Neither is a reliable interface address. Use the OS interface list
+  // and the actual TCP remote address for the same-subnet security boundary.
+  Future<String?> _localHelloInterfaceFor(String remote) async {
+    try {
+      final interfaces=await NetworkInterface.list(
+        type:InternetAddressType.IPv4,includeLoopback:testSupportDirectory!=null);
+      for(final interface in interfaces){
+        for(final address in interface.addresses){
+          if(_sameLocalSubnet(remote,address.address))return address.address;
+        }
+      }
+    }catch(e){
+      debugPrint('LAN interface lookup failed: $e');
+    }
+    return null;
+  }
+
   void _offerHello(LanPeer peer) {
     if(_disposed||!_validHelloPeer(peer))return;
     final now=DateTime.now();
@@ -695,7 +714,6 @@ class LanEngine extends ChangeNotifier {
       if(generation!=_listenerGeneration||_disposed||_server==null)return;
       socket.add(utf8.encode(jsonEncode({'protocol':_helloProtocol,..._helloIdentity()})+'\n'));
       await socket.flush().timeout(const Duration(seconds:2));
-      final local=socket.address.address;
       final remote=socket.remoteAddress.address;
       final response=await _readHelloLine(socket);
       if(generation!=_listenerGeneration||_disposed||response==null||
@@ -705,6 +723,8 @@ class LanEngine extends ChangeNotifier {
       _windowsSources.observeVerified(confirmed);
       _helloCandidates[confirmed.id]=confirmed;
       _publishWindowsPeers();
+      final local=await _localHelloInterfaceFor(remote);
+      if(generation!=_listenerGeneration||_disposed||local==null)return;
       final hints=response['peers'];
       if(hints is List){
         for(final hint in hints.take(_helloCap)){
@@ -715,7 +735,11 @@ class LanEngine extends ChangeNotifier {
           if(p!=null&&!_helloCandidates.containsKey(p.id))_offerHello(p);
         }
       }
-    }catch(_){/* transient discovery failure: heartbeat retries */}
+    }catch(e){
+      // Keep routine production retries quiet, but expose real socket failure
+      // details in CI instead of leaving a bare convergence timeout.
+      if(testSupportDirectory!=null)debugPrint('LAN hello $deviceId -> ${candidate.id}: $e');
+    }
     finally{socket?.destroy();}
   }
 
@@ -723,8 +747,12 @@ class LanEngine extends ChangeNotifier {
     if(_server==null||deviceId==null)return;
     final sender=_parseHelloPeer(meta,socket.remoteAddress.address);
     if(sender==null)return;
-    final local=socket.address.address;
-    if(!_sameLocalSubnet(sender.address,local))return;
+    final generation=_listenerGeneration;
+    final local=await _localHelloInterfaceFor(sender.address);
+    if(local==null||generation!=_listenerGeneration||_disposed||_server==null){
+      if(testSupportDirectory!=null)debugPrint('LAN hello rejected: no local interface for ${sender.address}');
+      return;
+    }
     // Only directly checked peers are shared; each recipient must verify the
     // advertised identity itself before adding the hinted device to its list.
     final hints=_windowsSources.verified(DateTime.now()).where((p)=>
@@ -733,7 +761,7 @@ class LanEngine extends ChangeNotifier {
     socket.add(utf8.encode(jsonEncode({'protocol':_helloProtocol,
       ..._helloIdentity(),'peers':hints})+'\n'));
     await socket.flush().timeout(const Duration(seconds:2));
-    _offerHello(sender);
+    if(generation==_listenerGeneration&&!_disposed)_offerHello(sender);
   }
 
   Future<void> _restore() async {
