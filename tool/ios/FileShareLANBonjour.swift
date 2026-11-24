@@ -61,7 +61,7 @@ final class FileShareLANBonjour: NSObject, NetServiceBrowserDelegate, NetService
                                  name: instance, port: Int32(port))
         service.delegate = self
         service.setTXTRecord(NetService.data(fromTXTRecord: [
-            "id": Data(id.utf8), "n": Data(name.utf8)
+            "id": Data(id.utf8), "n": Data(name.utf8), "v": Data("2".utf8)
         ]))
         advertiser = service
         service.publish()
@@ -84,6 +84,7 @@ final class FileShareLANBonjour: NSObject, NetServiceBrowserDelegate, NetService
             channel.invokeMethod("lost", arguments: ["id": id])
         }
         browser.stop()
+        found.values.forEach { $0.stop() }
         found.removeAll()
         resolvedIds.removeAll()
         browser.searchForServices(ofType: "_fileshare._tcp.", inDomain: "local.")
@@ -106,18 +107,21 @@ final class FileShareLANBonjour: NSObject, NetServiceBrowserDelegate, NetService
     }
 
     func netServiceDidResolveAddress(_ service: NetService) {
-        guard let txt = service.txtRecordData() else { return }
+        guard found[service.name] === service, let txt = service.txtRecordData() else { return }
         let fields = NetService.dictionary(fromTXTRecord: txt)
         guard let idData = fields["id"],
               let id = String(data: idData, encoding: .utf8),
               !id.isEmpty, id != ownId else { return }
         let name = fields["n"].flatMap { String(data: $0, encoding: .utf8) }
             ?? service.name
-        let address = (service.addresses ?? []).compactMap(ipv4).first
+        let candidates = (service.addresses ?? []).compactMap(ipv4)
+        let address = candidates.first { !$0.hasPrefix("127.") && !$0.hasPrefix("169.254.") }
+            ?? candidates.first { !$0.hasPrefix("127.") }
         guard let ip = address, service.port > 0 else { return }
         resolvedIds[service.name] = id
         channel.invokeMethod("peer", arguments: [
-            "id": id, "name": name, "address": ip, "port": service.port
+            "id": id, "name": name, "address": ip, "port": service.port,
+            "v": fields["v"].flatMap { String(data: $0, encoding: .utf8) } ?? "1"
         ])
     }
 
