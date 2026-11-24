@@ -17,7 +17,7 @@ import org.bouncycastle.cert.jcajce.JcaCertStore
 import org.bouncycastle.cert.jcajce.JcaCRLStore
 import org.bouncycastle.cert.jcajce.JcaX509CRLConverter
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
-import org.bouncycastle.cert.jcajce.JcaX509v2CRLBuilder
+import org.bouncycastle.cert.X509v2CRLBuilder
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.cms.CMSProcessableByteArray
 import org.bouncycastle.cms.CMSSignedDataGenerator
@@ -75,7 +75,7 @@ class DscDeviceTest {
       .addExtension(Extension.keyUsage,true,KeyUsage(KeyUsage.digitalSignature))
       .build(rootSigner()))
     val crl = JcaX509CRLConverter().setProvider(p).getCRL(
-      JcaX509v2CRLBuilder(rootName,Date(now-60000)).setNextUpdate(Date(now+300000)).build(rootSigner()))
+      X509v2CRLBuilder(rootName,Date(now-60000)).setNextUpdate(Date(now+300000)).build(rootSigner()))
     val input = File.createTempFile("dsc-device-original-", ".pdf", appContext.cacheDir)
     val signed = File.createTempFile("dsc-device-signed-", ".pdf", appContext.cacheDir)
     val changed = File.createTempFile("dsc-device-tampered-", ".pdf", appContext.cacheDir)
@@ -108,8 +108,9 @@ class DscDeviceTest {
       assertTrue("Native signature discovery and certificate binding must work",
         native.any { it.fingerprint == DscSignedBytes.sha256(leaf.encoded) && it.status != "invalid" })
       val hash = DscSignedBytes.sha256(signed.readBytes())
-      cart = preparePdfSend(signed.path,"signed.pdf","all",1,"",false,true,hash)
-      assertArrayEquals(signed.readBytes(),cart.readBytes())
+      val staged = preparePdfSend(signed.path,"signed.pdf","all",1,"",false,true,hash)
+      cart = staged
+      assertArrayEquals(signed.readBytes(),staged.readBytes())
       val bytes = signed.readBytes()
       // Change only the header version digit, keeping offsets and PDF parsing intact.
       assertTrue(String(bytes.copyOfRange(0,5), Charsets.US_ASCII) == "%PDF-")
