@@ -58,8 +58,10 @@ void main(){
       expect(pipeline,contains('inputs.$platform'));
     }
     expect(pipeline,contains('[release-now]'));
-    expect(pipeline,contains('uses: ./.github/workflows/macos-apple-silicon-dmg.yml'));
-    expect(pipeline,contains(r'build: ${{ github.run_number }}'));
+    expect(pipeline,contains('  macos:'));
+    expect(pipeline,contains('runs-on: macos-15-intel'));
+    expect(pipeline,contains('hdiutil verify'));
+    expect(pipeline,contains(r'--build-number="${{ github.run_number }}"'));
     final mac=File('.github/workflows/macos-apple-silicon-dmg.yml').readAsStringSync();
     expect(mac,contains('workflow_call:'));
     expect(mac,contains('hdiutil verify'));
