@@ -297,7 +297,13 @@ suspend fun saveToDevice(f: Saved): String {
   val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
   withContext(Dispatchers.IO) {
     val doc = DocumentsContract.createDocument(cr, parent, mimeOf(f.name), f.name) ?: error("Couldn't save there. Pick another folder.")
-    cr.openOutputStream(doc)?.use { out -> File(f.path).inputStream().use { it.copyTo(out) } }
+    try {
+      val output = cr.openOutputStream(doc) ?: error("Unable to open destination PDF")
+      output.use { out -> File(f.path).inputStream().use { it.copyTo(out) } }
+    } catch (e: Exception) {
+      runCatching { DocumentsContract.deleteDocument(cr, doc) }
+      throw e
+    }
   }
   return Uri.decode(tree.toString()).split('/', ':').lastOrNull { it.isNotEmpty() } ?: "your folder" // …/tree/primary:Download -> Download
 }
