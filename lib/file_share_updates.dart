@@ -2,6 +2,8 @@ import 'app_top_notice.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ffi' as ffi;
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
@@ -78,7 +80,7 @@ class FileShareUpdates extends ChangeNotifier {
 
   /// New session: clear a previous "Update later" only when the app restarts.
   Future<void> check({bool startup=false}) async {
-    if(!supported||_checking||_downloading)return;
+    if(!supported||_checking||_downloading||stage==UpdateStage.installing)return;
     _checking=true;
     stage=UpdateStage.checking;error=null;notifyListeners();
     final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
@@ -186,18 +188,20 @@ class FileShareUpdates extends ChangeNotifier {
   Future<void> install() async {
     if(Platform.isIOS)return;
     final file=downloaded;
-    if(stage!=UpdateStage.ready||file==null||!await file.exists())return;
-    // Revalidate immediately before install; another process may have touched the file.
-    final selected=release;
-    if(selected==null || await file.length()!=selected.size ||
-        (await sha256.bind(file.openRead()).first).toString().toLowerCase()!=
-            selected.sha256){
-      stage=UpdateStage.failed;
-      error='Downloaded installer failed final SHA-256 verification. Download again.';
-      downloaded=null;notifyListeners();return;
-    }
+    if(stage!=UpdateStage.ready||file==null)return;
+    // Lock the install action before any await: no duplicate UAC prompts.
     stage=UpdateStage.installing;error=null;notifyListeners();
     try {
+      // Revalidate immediately before install; another process may have touched the file.
+      final selected=release;
+      if(selected==null || !await file.exists() ||
+          await file.length()!=selected.size ||
+          (await sha256.bind(file.openRead()).first).toString().toLowerCase()!=
+              selected.sha256){
+        stage=UpdateStage.failed;
+        error='Downloaded installer failed final SHA-256 verification. Download again.';
+        downloaded=null;notifyListeners();return;
+      }
       if(Platform.isAndroid) {
         // PackageInstaller is the only supported user-approved sideload path;
         // the operating system shows an Install confirmation.
@@ -209,7 +213,9 @@ class FileShareUpdates extends ChangeNotifier {
         await _installMacOS(file);
       }
     }catch(e) {
-      stage=UpdateStage.failed;
+      // Keep the verified Windows download available for a retry if UAC or
+      // the Shell rejects launch. The existing app remains running.
+      stage=Platform.isWindows?UpdateStage.ready:UpdateStage.failed;
       error='Could not open installer: $e';
       notifyListeners();
     }
@@ -236,109 +242,106 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   Future<void> _installWindows(File installer) async {
-    // The window's X button only hides File Share in the tray.
-    // Start a separate, observable hand-off BEFORE shutting down LAN/tray.
-    // A real elevated Setup Wizard must launch BEFORE the app exits.
-    // Its helper then waits for this PID to disappear before finishing setup.
-    final oldPid=pid;
-    final installedExe=Platform.resolvedExecutable;
-    final support=await getApplicationSupportDirectory();
-    final folder=Directory('${support.path}${Platform.pathSeparator}updater');
-    await folder.create(recursive:true);
-    final basename='fileshare-${release!.build}';
-    final helper=File('${folder.path}${Platform.pathSeparator}${basename}.ps1');
-    final ready=File('${folder.path}${Platform.pathSeparator}${basename}.ready');
-    final failed=File('${folder.path}${Platform.pathSeparator}${basename}.failed');
-    final log=File('${folder.path}${Platform.pathSeparator}${basename}.log');
-    if(await ready.exists())await ready.delete();
-    if(await failed.exists())await failed.delete();
-    String quote(String value)=>"'"+value.replaceAll("'","''")+"'";
-    final script="""
-\$ErrorActionPreference='Stop'
-\$oldPid=$oldPid
-\$installer=${quote(installer.path)}
-\$installedExe=${quote(installedExe)}
-\$ready=${quote(ready.path)}
-\$failed=${quote(failed.path)}
-\$log=${quote(log.path)}
-try {
-  if (-not (Test-Path -LiteralPath \$installer)) {
-    throw 'Downloaded installer is missing.'
-  }
-  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Requesting visible Windows Setup/UAC approval")
-  # Show the REAL elevated Inno wizard before telling Dart to close LAN/tray.
-  # Previously 'ready' was sent before Start-Process, even if UAC failed.
-  # Stable Inno AppId remembers the installed folder (no fragile /DIR quoting).
-  \$arguments=@('/NORESTART','/CLOSEAPPLICATIONS','/LOG')
-  \$setup=Start-Process -FilePath \$installer -Verb RunAs -ArgumentList \$arguments -PassThru
-  if (\$null -eq \$setup) { throw 'Windows could not launch the Setup Wizard.' }
-  Start-Sleep -Milliseconds 350
-  if (\$setup.HasExited -and \$setup.ExitCode -ne 0) {
-    throw "Installer exited before the wizard opened (code \$(\$setup.ExitCode))."
-  }
-  Set-Content -LiteralPath \$ready -Value 'installer-started' -Encoding ASCII
-  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Installer launched; waiting for File Share to exit")
-  \$deadline=(Get-Date).AddSeconds(90)
-  while (Get-Process -Id \$oldPid -ErrorAction SilentlyContinue) {
-    if ((Get-Date) -ge \$deadline) {
-      throw 'File Share did not fully exit for installer within 90 seconds.'
-    }
-    Start-Sleep -Milliseconds 250
-  }
-  # The user's ordinary Next / Install / Finish flow stays interactive.
-  \$setup.WaitForExit()
-  if (\$setup.ExitCode -ne 0) {
-    throw "Setup cancelled or failed (code \$(\$setup.ExitCode))."
-  }
-  if (-not (Test-Path -LiteralPath \$installedExe)) {
-    throw 'Updated File Share was not found in the original installation folder.'
-  }
-  Add-Content -LiteralPath \$log -Value ("\$(Get-Date -Format o) Setup complete; relaunching File Share")
-  Start-Process -FilePath \$installedExe
-} catch {
-  \$message = "\$(Get-Date -Format o) \$(\$_.Exception.Message)"
-  Add-Content -LiteralPath \$log -Value \$message
-  # Denied UAC must not terminate File Share: tell the app why it failed.
-  if (-not (Test-Path -LiteralPath \$ready)) {
-    Set-Content -LiteralPath \$failed -Value \$_.Exception.Message
-  }
-  # Keep failure visible instead of silently losing the running application.
-  Add-Type -AssemblyName PresentationFramework
-  [System.Windows.MessageBox]::Show(
-    ("File Share update failed: " + \$_.Exception.Message +
-       [Environment]::NewLine + "Details: " + \$log),
-    'File Share Update','OK','Error') | Out-Null
-  if ((Test-Path -LiteralPath \$ready) -and
-      (Test-Path -LiteralPath \$installedExe)) {
-    Start-Process -FilePath \$installedExe
-  }
-}
-""";
-    await helper.writeAsString(script,flush:true);
-    final process=await Process.start('powershell.exe',[
-      '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass',
-      '-WindowStyle','Hidden','-File',helper.path,
-    ],mode:ProcessStartMode.detached);
-    if(process.pid<=0)throw StateError('Updater helper failed to start.');
-    // Keep the tray process alive while Windows shows UAC. Shut down only
-    // after Start-Process succeeded, not merely when PowerShell starts.
-    var acknowledged=false;
-    for(var attempt=0;attempt<360;attempt++){
-      if(await ready.exists()){
-        acknowledged=(await ready.readAsString()).trim()=='installer-started';
-        if(acknowledged)break;
-      }
-      if(await failed.exists()){
-        final details=await failed.readAsString();
-        throw StateError('Windows blocked or cancelled installer: $details');
-      }
-      await Future<void>.delayed(const Duration(milliseconds:250));
-    }
-    if(!acknowledged){
-      throw StateError('Setup Wizard could not be started. File Share remains '
-        'running; check updater log: ${log.path}');
-    }
+    // Use the Windows Shell directly rather than a hidden PowerShell script
+    // and a fragile file-based acknowledgement. Run UAC on a worker isolate
+    // so the Flutter UI stays responsive while the user approves elevation.
+    final installerPath=installer.path;
+    await _requestWindowsSetup(installerPath);
+    // The native Shell accepted the launch. Only now release LAN/tray and
+    // the installed executable. Inno's normal Finish page offers relaunch.
     await WindowsBackground.instance.exitCompletely();
+  }
+
+}
+
+// SHELLEXECUTEINFOW: pointer-sized fields preserve the native x64 layout.
+final class _WindowsShellExecuteInfo extends ffi.Struct {
+  @ffi.Uint32()
+  external int cbSize;
+  @ffi.Uint32()
+  external int fMask;
+  external ffi.Pointer<ffi.Void> hwnd;
+  external ffi.Pointer<ffi.Uint16> lpVerb;
+  external ffi.Pointer<ffi.Uint16> lpFile;
+  external ffi.Pointer<ffi.Uint16> lpParameters;
+  external ffi.Pointer<ffi.Uint16> lpDirectory;
+  @ffi.Int32()
+  external int nShow;
+  external ffi.Pointer<ffi.Void> hInstApp;
+  external ffi.Pointer<ffi.Void> lpIDList;
+  external ffi.Pointer<ffi.Uint16> lpClass;
+  external ffi.Pointer<ffi.Void> hkeyClass;
+  @ffi.Uint32()
+  external int dwHotKey;
+  external ffi.Pointer<ffi.Void> hIconOrMonitor;
+  external ffi.Pointer<ffi.Void> hProcess;
+}
+
+Future<void> _requestWindowsSetup(String path) =>
+    Isolate.run(() => _launchWindowsSetup(path));
+
+void _launchWindowsSetup(String path) {
+  if(!Platform.isWindows)throw UnsupportedError('Windows Setup requires Windows.');
+  final ole=ffi.DynamicLibrary.open('ole32.dll');
+  final shell=ffi.DynamicLibrary.open('shell32.dll');
+  final kernel=ffi.DynamicLibrary.open('kernel32.dll');
+  final allocate=ole.lookupFunction<
+    ffi.Pointer<ffi.Void> Function(ffi.IntPtr),
+    ffi.Pointer<ffi.Void> Function(int)>('CoTaskMemAlloc');
+  final free=ole.lookupFunction<
+    ffi.Void Function(ffi.Pointer<ffi.Void>),
+    void Function(ffi.Pointer<ffi.Void>)>('CoTaskMemFree');
+  final initialize=ole.lookupFunction<
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>,ffi.Uint32),
+    int Function(ffi.Pointer<ffi.Void>,int)>('CoInitializeEx');
+  final uninitialize=ole.lookupFunction<ffi.Void Function(),void Function()>(
+    'CoUninitialize');
+  final execute=shell.lookupFunction<
+    ffi.Int32 Function(ffi.Pointer<_WindowsShellExecuteInfo>),
+    int Function(ffi.Pointer<_WindowsShellExecuteInfo>)>('ShellExecuteExW');
+  final getError=kernel.lookupFunction<ffi.Uint32 Function(),int Function()>(
+    'GetLastError');
+  final closeHandle=kernel.lookupFunction<
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>),
+    int Function(ffi.Pointer<ffi.Void>)>('CloseHandle');
+  final allocations=<ffi.Pointer<ffi.Void>>[];
+  ffi.Pointer<ffi.Void> memory(int size) {
+    final pointer=allocate(size);
+    if(pointer.address==0)throw StateError('Could not allocate Windows installer parameters.');
+    allocations.add(pointer);
+    pointer.cast<ffi.Uint8>().asTypedList(size).fillRange(0,size,0);
+    return pointer;
+  }
+  ffi.Pointer<ffi.Uint16> wide(String value) {
+    final units=value.codeUnits;
+    final pointer=memory((units.length+1)*2).cast<ffi.Uint16>();
+    pointer.asTypedList(units.length).setAll(0,units);
+    return pointer;
+  }
+  // Shell extensions may require a single-threaded COM apartment.
+  final initialized=initialize(ffi.nullptr,0x2);
+  if(initialized<0)throw StateError('Could not initialize Windows Shell (HRESULT ${initialized.toUnsigned(32)}).');
+  try {
+    final info=memory(ffi.sizeOf<_WindowsShellExecuteInfo>())
+      .cast<_WindowsShellExecuteInfo>();
+    info.ref
+      ..cbSize=ffi.sizeOf<_WindowsShellExecuteInfo>()
+      ..fMask=0x00000100 | 0x00000040 // NOASYNC | NOCLOSEPROCESS
+      ..lpVerb=wide('runas')
+      ..lpFile=wide(path)
+      ..lpParameters=wide('/NORESTART /CLOSEAPPLICATIONS /LOG')
+      ..lpDirectory=wide(File(path).parent.path)
+      ..nShow=1; // SW_SHOWNORMAL: keep the normal wizard interactive.
+    final started=execute(info);
+    final error=started==0?getError():0;
+    if(info.ref.hProcess.address!=0)closeHandle(info.ref.hProcess);
+    if(started==0) {
+      if(error==1223)throw StateError('Windows administrator approval was cancelled. Retry Install and choose Yes.');
+      throw StateError('Windows could not start Setup (Win32 error $error). Retry or run the verified installer manually.');
+    }
+  } finally {
+    for(final pointer in allocations.reversed){free(pointer);}
+    uninitialize();
   }
 }
 
