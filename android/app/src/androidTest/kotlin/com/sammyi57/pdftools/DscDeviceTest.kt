@@ -79,6 +79,7 @@ class DscDeviceTest {
     val input = File.createTempFile("dsc-device-original-", ".pdf", appContext.cacheDir)
     val signed = File.createTempFile("dsc-device-signed-", ".pdf", appContext.cacheDir)
     val changed = File.createTempFile("dsc-device-tampered-", ".pdf", appContext.cacheDir)
+    val revision = File.createTempFile("dsc-device-revision-", ".pdf", appContext.cacheDir)
     var cart: File? = null
     try {
       DscTrust.add(root,DscSignedBytes.sha256(root.encoded))
@@ -107,6 +108,20 @@ class DscDeviceTest {
       val native = DscRustBridge.inspect(signed.readBytes(),null,listOf(root))
       assertTrue("Native signature discovery and certificate binding must work",
         native.any { it.fingerprint == DscSignedBytes.sha256(leaf.encoded) && it.status != "invalid" })
+      // A page insertion is a new revision, not a change to signed bytes.
+      // The native classifier must reject this unauthorized structural change.
+      PDDocument.load(signed).use { pdf ->
+        pdf.addPage(PDPage())
+        pdf.pages.cosObject.setNeedToBeUpdated(true)
+        pdf.documentCatalog.cosObject.setNeedToBeUpdated(true)
+        revision.outputStream().use { pdf.saveIncremental(it) }
+      }
+      PDDocument.load(revision).use { assertEquals(2, it.numberOfPages) }
+      val revised = DscRustBridge.inspect(revision.readBytes(), null, listOf(root))
+      assertTrue("Native revision classification must reject a page insertion",
+        revised.any { it.fingerprint == DscSignedBytes.sha256(leaf.encoded) &&
+          it.modification == "disallowed" && it.status == "invalid" })
+      assertEquals(DscStatus.INVALID, DscVerifier.read(revision.path,null).signatures.single().status)
       val hash = DscSignedBytes.sha256(signed.readBytes())
       val staged = preparePdfSend(signed.path,"signed.pdf","all",1,"",false,true,hash)
       cart = staged
@@ -121,7 +136,7 @@ class DscDeviceTest {
       assertTrue(runCatching { preparePdfSend(changed.path,"changed.pdf","all",1,"",false,true,hash) }.isFailure)
     } finally {
       DscTrust.remove(root)
-      input.delete(); signed.delete(); changed.delete(); cart?.delete()
+      input.delete(); signed.delete(); changed.delete(); revision.delete(); cart?.delete()
     }
   }
 }
