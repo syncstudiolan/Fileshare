@@ -50,6 +50,8 @@ jobs:
           cache: true
       - name: Resolve Flutter dependencies
         run: flutter pub get
+      - name: Verify atomic release publisher contracts
+        run: python3 -m unittest discover -s tool -p 'test_publish_update_manifest.py' -v
       - name: Prove reciprocal LAN and photo Cart format before compiling
         run: flutter test --reporter expanded --timeout 2m test/cross_platform_lan_convergence_test.dart test/image_editing_test.dart test/file_share_updates_test.dart
 
@@ -105,9 +107,12 @@ jobs:
         if: matrix.group == 'apple' && matrix.ios
       - uses: subosito/flutter-action@v2
         if: matrix.group == 'apple' && matrix.ios
+        env:
+          PUB_CACHE: ${{ runner.temp }}/fileshare-ios-pub-cache
         with:
           channel: stable
           cache: true
+          pub-cache: false
       - name: Generate iOS Runner from existing Flutter application
         if: matrix.group == 'apple' && matrix.ios
         run: |
@@ -239,6 +244,10 @@ jobs:
           path: release/FileShare-iOS-UNSIGNED.ipa
           if-no-files-found: error
           retention-days: 30
+      - name: Switch to clean Mac pub cache after isolated iOS build
+        if: matrix.group == 'apple' && matrix.ios && matrix.macos
+        shell: bash
+        run: echo "PUB_CACHE=$HOME/.pub-cache" >> "$GITHUB_ENV"
       - name: Restore clean source for macOS after iOS packaging
         if: matrix.group == 'apple' && matrix.macos
         uses: actions/checkout@v4
