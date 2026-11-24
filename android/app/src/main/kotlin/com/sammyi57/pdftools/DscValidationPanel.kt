@@ -113,7 +113,11 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             onValidate()
           } }) { Text("Remove trust") }
         }
-        TextButton(onClick = { openUrl("https://cca.gov.in/root_certificate.html") }) { Text("Official Indian CCA root certificates") }
+        TextButton(onClick = {
+          runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse("https://cca.gov.in/root_certificate.html"))) }
+            .onFailure { message = "Unable to open CCA website" }
+        }) { Text("Official Indian CCA root certificates") }
         Text("Confirm the root fingerprint through CCA (verifyroot@cca.gov.in) before importing.", color = c.sub)
         OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }) { Text("Import CER / CRT / PEM") }
         for (cert in imported) {
