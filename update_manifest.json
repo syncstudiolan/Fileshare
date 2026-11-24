@@ -25,11 +25,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 618,
-    "notes": "Fix Windows native Setup Wizard updater [windows-only]",
-    "sha256": "388ffbc8ade4d4450fc41b97e4256ea182dbb890931fd18a383dc4432505289e",
-    "size": 19165784,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-618/FileShare-Windows-Setup.exe",
+    "build": 619,
+    "notes": "Fix Windows LAN discovery recovery and release [windows-only]",
+    "sha256": "b072574747fc3d57d1dad4392186785025e023285b99bd8a9d91f442059f769f",
+    "size": 19170951,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-windows-v0.1.0-build-619/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
