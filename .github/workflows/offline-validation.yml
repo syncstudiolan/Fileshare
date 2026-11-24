@@ -26,13 +26,32 @@ on:
 # authorization for the initial migration; later use the Run workflow button.
 concurrency:
   group: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-now]')) && 'fileshare-production-release' || github.run_id }}
-  cancel-in-progress: false
+  # A newer explicitly requested release supersedes a stale/queued older run.
+  # Ordinary non-release pushes use a separate run-specific group.
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
+  release_preflight:
+    name: Release preflight - LAN convergence and photo export
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+      - name: Prove reciprocal LAN and photo Cart format before compiling
+        run: flutter test --reporter expanded --timeout 2m test/cross_platform_lan_convergence_test.dart test/image_editing_test.dart test/file_share_updates_test.dart
+
   android:
+    needs: [release_preflight]
     if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.android) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -185,6 +204,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: [release_preflight]
     # Still produce the Windows installer if Android signing secrets are missing.
     # The needs edge serializes Windows after Android; no parallel release builds.
     if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.windows) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
@@ -420,6 +440,7 @@ jobs:
 
   # Four platform releases from the same main commit in this one workflow run.
   ios_unsigned:
+    needs: [release_preflight]
     if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.ios) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
     name: iOS ONLY - macOS Xcode compile and IPA packaging
     runs-on: macos-latest
@@ -601,6 +622,7 @@ jobs:
 
 
   macos:
+    needs: [release_preflight]
     name: macOS Apple Silicon DMG
     if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.macos) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
     # Separate ARM64 runner queue repeatedly cancelled before any step started.
