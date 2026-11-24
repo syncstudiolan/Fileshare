@@ -61,5 +61,7 @@ class DscAdvancedEvidenceTest {
   val token=generator.generate(req,BigInteger.ONE,now)
   check(DscTimestamp.check(token,data).signer==tsaCert)
   check(runCatching{DscTimestamp.check(token,"tampered".toByteArray())}.isFailure)
+  check(DscTimestamp.document(token.encoded+ByteArray(32),data).signer==tsaCert)
+  check(runCatching{DscTimestamp.document(token.encoded+byteArrayOf(1),data)}.isFailure)
  }
 }
