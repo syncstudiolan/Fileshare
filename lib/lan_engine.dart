@@ -19,6 +19,29 @@ class LanPeer {
   final DateTime lastSeen;
 }
 
+/// Windows receives the same device through UDP and DNS-SD. A loss event
+/// from either transport must never erase a still-live alternative route.
+@visibleForTesting
+class WindowsLanPeerSources {
+  final _udp=<String,LanPeer>{};
+  final _bonjour=<String,LanPeer>{};
+
+  void observeUdp(LanPeer peer)=>_udp[peer.id]=peer;
+  void replaceBonjour(Iterable<LanPeer> snapshot) {
+    _bonjour
+      ..clear()
+      ..addEntries(snapshot.map((p)=>MapEntry(p.id,p)));
+  }
+  Map<String,LanPeer> snapshot(DateTime now) {
+    final cutoff=now.subtract(const Duration(seconds:22));
+    _udp.removeWhere((_,p)=>p.lastSeen.isBefore(cutoff));
+    // Prefer the fresh directly observed UDP address if available. DNS-SD
+    // remains the route for iPhone and other Bonjour-only devices.
+    return {..._bonjour,..._udp};
+  }
+  void clear(){_udp.clear();_bonjour.clear();}
+}
+
 enum TransferState { queued, preparing, sending, receiving, delivered, failed }
 
 class LanFile {
@@ -123,7 +146,9 @@ class LanEngine extends ChangeNotifier {
   bool _bonjourStarted = false;
   nsd.Registration? _windowsRegistration;
   nsd.Discovery? _windowsDiscovery;
-  final Set<String> _windowsPeerIds = <String>{};
+  final _windowsSources=WindowsLanPeerSources();
+  bool _windowsRegistering=false, _windowsBrowsing=false, _windowsUdpBinding=false;
+  DateTime? _windowsBrowseStartedAt;
   Timer? _heartbeat, _cleanup, _listenerRetry;
   bool _bindingReceiver = false;
   int _listenerGeneration = 0;
@@ -186,9 +211,8 @@ class LanEngine extends ChangeNotifier {
             !_bonjourStarted) {
           await _startBonjour();
         }
-        if (testSupportDirectory == null && Platform.isWindows &&
-            _windowsDiscovery == null) {
-          await _startWindowsBonjour();
+        if (testSupportDirectory == null && Platform.isWindows) {
+          unawaited(_startWindowsBonjour());
         }
       }));
     });
@@ -197,7 +221,12 @@ class LanEngine extends ChangeNotifier {
     // firewall policies. Bonjour DNS-SD is shared by iOS, Android and macOS;
     // keep UDP v1 on desktops/Android only for older LAN clients.
     // Isolated unit tests need only the TCP queue/receiver.
-    if (testSupportDirectory == null && !Platform.isIOS) try {
+    if (testSupportDirectory == null && Platform.isWindows) {
+      // A broken UDP socket or DNS-SD registration must not block startup
+      // or disable the other independent discovery path.
+      unawaited(_ensureWindowsUdp());
+    }
+    if (testSupportDirectory == null && !Platform.isIOS && !Platform.isWindows) try {
       _discovery = await RawDatagramSocket.bind(InternetAddress.anyIPv4,
         discoveryPort, reuseAddress: true);
       _discovery!.broadcastEnabled = true;
@@ -222,7 +251,12 @@ class LanEngine extends ChangeNotifier {
       await _startBonjour();
     }
     if (testSupportDirectory == null && Platform.isWindows) {
-      await _startWindowsBonjour();
+      unawaited(_startWindowsBonjour());
+      _heartbeat=Timer.periodic(const Duration(seconds:5), (_) {
+        refresh(refreshBonjour:false);
+        _expirePeers();
+        _dispatchQueued();
+      });
     }
     // Keep peer cleanup and queued delivery alive even on iOS without UDP.
     _heartbeat ??= Timer.periodic(const Duration(seconds: 5), (_) {
@@ -276,55 +310,145 @@ class LanEngine extends ChangeNotifier {
     }
   }
 
-  // Windows 10 1903+ native DNS-SD browsing/registration. UDP v1 stays
-  // enabled to interoperate with existing Android/Windows installations.
-  Future<void> _startWindowsBonjour() async {
-    if (!Platform.isWindows || deviceId == null || _server == null ||
-        _windowsDiscovery != null) return;
+  // Windows UDP stays independent from native DNS-SD, including recovery
+  // after a transient bind error or network/socket shutdown.
+  Future<void> _ensureWindowsUdp() async {
+    if(!Platform.isWindows || _disposed || _windowsUdpBinding ||
+        _discovery!=null || testSupportDirectory!=null)return;
+    _windowsUdpBinding=true;
+    final generation=_listenerGeneration;
+    RawDatagramSocket? socket;
     try {
-      final instance = 'FileShare-${deviceId!.substring(0, 8)}';
-      _windowsRegistration = await nsd.register(nsd.Service(
-        name: instance, type: '_fileshare._tcp', port: _server!.port,
-        txt: <String, Uint8List>{
-          'id': Uint8List.fromList(utf8.encode(deviceId!)),
-          'n': Uint8List.fromList(utf8.encode(Platform.localHostname)),
+      final bound=await RawDatagramSocket.bind(InternetAddress.anyIPv4,
+          discoveryPort,reuseAddress:true);
+      socket=bound;
+      if(_disposed||generation!=_listenerGeneration){bound.close();return;}
+      bound.broadcastEnabled=true;
+      _discovery=bound;
+      void lost() {
+        if(identical(_discovery,bound)){
+          _discovery=null;
+          bound.close();
+        }
+      }
+      bound.listen((event) {
+        if(event!=RawSocketEvent.read)return;
+        Datagram? packet;
+        while((packet=bound.receive())!=null){_receiveAnnouncement(packet!);}
+      },onError:(Object e){
+        debugPrint('Windows LAN UDP listener: $e');
+        lost();
+      },onDone:lost);
+      _sendAnnouncement();
+    }catch(e){
+      if(identical(_discovery,socket))_discovery=null;
+      socket?.close();
+      if(!_disposed&&generation==_listenerGeneration){
+        debugPrint('Windows LAN UDP bind failed; retrying: $e');
+      }
+    }finally{_windowsUdpBinding=false;}
+  }
+
+  // Windows 10 1903+ native DNS-SD. Registering this device and browsing
+  // others are independent operations; a failure in one cannot stop the
+  // other or permanently disable discovery while TCP is already healthy.
+  Future<void> _startWindowsBonjour() async {
+    if(!Platform.isWindows||deviceId==null||_server==null||_disposed||
+        testSupportDirectory!=null)return;
+    await Future.wait([_ensureWindowsRegistration(),_ensureWindowsBrowser()]);
+  }
+
+  Future<void> _ensureWindowsRegistration() async {
+    if(_windowsRegistration!=null||_windowsRegistering)return;
+    _windowsRegistering=true;
+    final generation=_listenerGeneration;
+    try{
+      final id=deviceId!;
+      final instance='FileShare-${id.substring(0,min(8,id.length))}';
+      final registration=await nsd.register(nsd.Service(
+        name:instance,type:'_fileshare._tcp',port:_server!.port,
+        txt:<String,Uint8List>{
+          'id':Uint8List.fromList(utf8.encode(id)),
+          'n':Uint8List.fromList(utf8.encode(Platform.localHostname)),
         },
       ));
-      final discovery = await nsd.startDiscovery(
-        '_fileshare._tcp', ipLookupType: nsd.IpLookupType.any);
-      _windowsDiscovery = discovery;
-      discovery.addListener(() {
-        if (_disposed) return;
-        final fresh = <String>{};
-        for (final service in discovery.services) {
-          final idBytes = service.txt?['id'];
-          final id = idBytes == null ? null : utf8.decode(idBytes,
-              allowMalformed: true);
-          if (id == null || id.isEmpty || id == deviceId ||
-              id.length > 100 || service.port == null) continue;
-          final hosts = service.addresses ?? const <InternetAddress>[];
-          final ipv4 = hosts.where((a) => a.type == InternetAddressType.IPv4);
-          if (ipv4.isEmpty) continue;
-          final nameBytes = service.txt?['n'];
-          final name = nameBytes == null
-              ? (service.name ?? 'Device')
-              : utf8.decode(nameBytes, allowMalformed: true);
-          fresh.add(id);
-          _windowsPeerIds.add(id);
-          peers[id] = LanPeer(id, safeFileName(name), ipv4.first.address,
-              service.port!, DateTime.now());
+      if(_disposed||generation!=_listenerGeneration){
+        await nsd.unregister(registration);
+        return;
+      }
+      _windowsRegistration=registration;
+    }catch(e){debugPrint('Windows LAN DNS-SD registration failed; retrying: $e');}
+    finally{_windowsRegistering=false;}
+  }
+
+  Future<void> _ensureWindowsBrowser() async {
+    if(_windowsBrowsing)return;
+    final existing=_windowsDiscovery;
+    // Recover a silent empty browser, without restarting healthy sessions.
+    if(existing!=null &&
+        (existing.services.isNotEmpty || _windowsBrowseStartedAt==null ||
+         DateTime.now().difference(_windowsBrowseStartedAt!)<
+             const Duration(seconds:30)))return;
+    _windowsBrowsing=true;
+    final generation=_listenerGeneration;
+    try{
+      if(existing!=null){
+        // Keep the old reference if stopping fails; avoid duplicate native
+        // browser handles. Its callbacks are ignored only after successful stop.
+        await nsd.stopDiscovery(existing);
+        if(identical(_windowsDiscovery,existing)){
+          _windowsDiscovery=null;
+          _windowsSources.replaceBonjour(const []);
+          _publishWindowsPeers();
         }
-        for (final id in _windowsPeerIds.difference(fresh)) {
-          peers.remove(id);
-          _windowsPeerIds.remove(id);
-        }
-        _notify();
-        _dispatchQueued();
-      });
-    } catch (e) {
-      error = 'Windows Bonjour discovery unavailable: $e';
-      _notify();
+      }
+      if(_disposed||generation!=_listenerGeneration)return;
+      final discovery=await nsd.startDiscovery('_fileshare._tcp',
+          ipLookupType:nsd.IpLookupType.v4);
+      if(_disposed||generation!=_listenerGeneration){
+        await nsd.stopDiscovery(discovery);
+        return;
+      }
+      _windowsDiscovery=discovery;
+      _windowsBrowseStartedAt=DateTime.now();
+      void update(){
+        if(_disposed||generation!=_listenerGeneration||
+            !identical(_windowsDiscovery,discovery))return;
+        _readWindowsBonjour(discovery);
+      }
+      discovery.addListener(update);
+      update(); // Include results that arrived before the listener was added.
+    }catch(e){debugPrint('Windows LAN DNS-SD browser failed; retrying: $e');}
+    finally{_windowsBrowsing=false;}
+  }
+
+  void _readWindowsBonjour(nsd.Discovery discovery) {
+    final fresh=<LanPeer>[];
+    for(final service in discovery.services){
+      final idBytes=service.txt?['id'];
+      final id=idBytes==null?null:utf8.decode(idBytes,allowMalformed:true);
+      final port=service.port;
+      if(id==null||id.isEmpty||id==deviceId||id.length>100||
+          port==null||port<1||port>65535)continue;
+      final addresses=service.addresses??const <InternetAddress>[];
+      final ipv4=addresses.where((a)=>a.type==InternetAddressType.IPv4 &&
+          !a.isLoopback && a.address!='0.0.0.0' && a.address!='255.255.255.255');
+      if(ipv4.isEmpty)continue;
+      final nameBytes=service.txt?['n'];
+      final name=nameBytes==null?(service.name??'Device'):
+          utf8.decode(nameBytes,allowMalformed:true);
+      fresh.add(LanPeer(id,safeFileName(name),ipv4.first.address,port,DateTime.now()));
     }
+    _windowsSources.replaceBonjour(fresh);
+    _publishWindowsPeers();
+  }
+
+  void _publishWindowsPeers(){
+    if(_disposed)return;
+    final next=_windowsSources.snapshot(DateTime.now());
+    peers..clear()..addAll(next);
+    _notify();
+    _dispatchQueued();
   }
 
   /// iOS and macOS NetService, and Android NsdManager, advertise the same
@@ -394,13 +518,26 @@ class LanEngine extends ChangeNotifier {
         _notify();
       }));
     }
+    if(Platform.isWindows && testSupportDirectory==null){
+      unawaited(_ensureWindowsUdp());
+      unawaited(_startWindowsBonjour());
+      if(refreshBonjour && _windowsDiscovery!=null){
+        _readWindowsBonjour(_windowsDiscovery!);
+      }
+    }
+    _sendAnnouncement();
+  }
+
+  void _sendAnnouncement({InternetAddress? destination}) {
     if (_discovery == null) return;
+    // Only advertise a receiver that actually owns its TCP port on Windows.
+    if(Platform.isWindows && _server==null)return;
     final bytes = utf8.encode(jsonEncode({
       'app': 'fileshare-lan-v1', 'id': deviceId,
       'name': Platform.localHostname, 'port': tcpPort,
     }));
     try {
-      _discovery!.send(bytes, InternetAddress('255.255.255.255'), discoveryPort);
+      _discovery!.send(bytes, destination??InternetAddress('255.255.255.255'), discoveryPort);
     } catch (e) { error = 'Discovery broadcast failed: ' + e.toString(); }
   }
 
@@ -413,6 +550,18 @@ class LanEngine extends ChangeNotifier {
       final id = obj['id'] as String;
       if (id.length > 100) return;
       final firstSeen = !peers.containsKey(id);
+      if(Platform.isWindows && testSupportDirectory==null){
+        if(id.isEmpty || (obj['port'] as int)>65535 || packet.address.isLoopback ||
+            packet.address.address=='0.0.0.0')return;
+        _windowsSources.observeUdp(LanPeer(id,
+          safeFileName((obj['name'] as String?)??'Device'),
+          packet.address.address,obj['port'] as int,DateTime.now()));
+        _publishWindowsPeers();
+        // Unicast a reply to a newly seen peer, even if the default broadcast
+        // route points to another network adapter. No reply loop.
+        if(firstSeen)_sendAnnouncement(destination:packet.address);
+        return;
+      }
       peers[id] = LanPeer(id, safeFileName((obj['name'] as String?) ?? 'Device'),
         packet.address.address, obj['port'] as int, DateTime.now());
       _notify();
@@ -422,9 +571,13 @@ class LanEngine extends ChangeNotifier {
   }
 
   void _expirePeers() {
+    if(Platform.isWindows && testSupportDirectory==null){
+      _publishWindowsPeers();
+      return;
+    }
     final cutoff = DateTime.now().subtract(const Duration(seconds: 22));
     peers.removeWhere((key, peer) =>
-      !_bonjourPeerIds.contains(key) && !_windowsPeerIds.contains(key) &&
+      !_bonjourPeerIds.contains(key) &&
       peer.lastSeen.isBefore(cutoff));
     _notify();
   }
@@ -860,7 +1013,8 @@ class LanEngine extends ChangeNotifier {
     if (registration != null) {
       try { await nsd.unregister(registration); } catch (_) {}
     }
-    _windowsPeerIds.clear();
+    _windowsBrowseStartedAt=null;
+    _windowsSources.clear();
     peers.clear();
     await _server?.close();
     _server = null;
