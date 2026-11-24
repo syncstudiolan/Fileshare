@@ -42,7 +42,7 @@ void main() {
     expect(engine, contains(
         'void refresh({bool refreshBonjour = true})'));
     expect(engine, contains(
-        '(Platform.isIOS || Platform.isMacOS)'));
+        'Platform.isIOS||Platform.isAndroid||Platform.isMacOS'));
     // TCP listener retry has to restore advertisement after a blocked port.
     expect(engine, contains('if (_server == null || _disposed) return;'));
     expect(engine, contains('!_bonjourStarted'));
