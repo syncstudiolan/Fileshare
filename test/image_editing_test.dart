@@ -191,4 +191,77 @@ void main(){
     expect(image.getPixel(70,30).a,255);
   });
 
+  test('Cart PNG/JPG uses edited geometry and exact applied size',()async{
+    final edited=await ImageEditingEngine.edit(example(),'crop',{
+      'x':.25,'y':.2,'w':.5,'h':.6,
+    });
+    final png=await ImageEditingEngine.cartExport(edited,'PNG',targetKb:20);
+    final jpg=await ImageEditingEngine.cartExport(edited,'JPEG',targetKb:20);
+    expect(png.length,20*1024);
+    expect(jpg.length,20*1024);
+    expect(ImageEditingEngine.isPng(png),isTrue);
+    expect(ImageEditingEngine.isJpeg(jpg),isTrue);
+    for(final data in [png,jpg]){
+      final decoded=img.decodeImage(data)!;
+      expect(decoded.width,40);
+      expect(decoded.height,30);
+    }
+    expect(await ImageEditingEngine.cartExport(png,'PNG',targetKb:20),png);
+    expect(await ImageEditingEngine.cartExport(jpg,'JPEG',targetKb:20),jpg);
+  });
+
+  test('Cart PNG keeps alpha while JPG explicitly flattens on white',()async{
+    final mask=Uint8List.fromList(List<int>.generate(80*50,
+      (index)=>index%80<30?0:255));
+    final cutout=await ImageEditingEngine.edit(example(),'background',{
+      'mask':mask,'maskWidth':80,'maskHeight':50,
+    });
+    final png=img.decodePng(await ImageEditingEngine.cartExport(cutout,'PNG',targetKb:10))!;
+    final jpg=img.decodeJpg(await ImageEditingEngine.cartExport(cutout,'JPEG',targetKb:10))!;
+    expect(png.getPixel(2,2).a,0);
+    expect(jpg.getPixel(2,2).r,greaterThan(225));
+    expect(jpg.getPixel(2,2).g,greaterThan(225));
+    expect(jpg.width,png.width);
+    expect(jpg.height,png.height);
+  });
+
+  test('Cart conversion cannot silently shrink geometry to fit a target',()async{
+    final noisy=img.Image(width:128,height:128,numChannels:3);
+    var seed=1;
+    for(var y=0;y<128;y++){
+      for(var x=0;x<128;x++){
+        seed=(seed*1664525+1013904223)&0xffffffff;
+        noisy.setPixelRgb(x,y,seed&255,(seed>>>8)&255,(seed>>>16)&255);
+      }
+    }
+    final data=Uint8List.fromList(img.encodePng(noisy));
+    await expectLater(ImageEditingEngine.cartExport(data,'PNG',targetKb:1),throwsStateError);
+  });
+
+  test('Applied compression is distinct from uncommitted size input',(){
+    expect(ImageEditingEngine.appliedTargetKb(['crop','Compress 20 KB (PNG)','filter']),20);
+    expect(ImageEditingEngine.appliedTargetKb(['crop','Compress 20 KB (PNG)','Compress 5 KB (JPEG)']),5);
+    expect(ImageEditingEngine.appliedTargetKb(['crop']),isNull);
+  });
+
+  testWidgets('Cart chooser has PNG, JPG and Cancel without changing editor', (tester)async{
+    String? chosen;
+    await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(
+      body:TextButton(onPressed:()async{
+        chosen=await chooseImageCartFormat(context,targetKb:20);
+      },child:const Text('Open Cart chooser')),
+    ))));
+    await tester.tap(find.text('Open Cart chooser'));
+    await tester.pumpAndSettle();
+    expect(find.text('Applied size: 20 KB (exact)'),findsOneWidget);
+    await tester.tap(find.text('JPG'));
+    await tester.pumpAndSettle();
+    expect(chosen,'JPEG');
+    await tester.tap(find.text('Open Cart chooser'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(chosen,isNull);
+  });
+
 }

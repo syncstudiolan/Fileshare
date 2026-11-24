@@ -255,6 +255,127 @@ class ImageEditingEngine {
     return Uint8List.fromList(img.encodePng(output,level:1));
   }
 
+  /// Cart exports are snapshots, not edits. Keep the edited raster size and
+  /// reuse its encoded bytes whenever possible. A selected target is exact,
+  /// using valid format metadata padding only after a real encode fits.
+  static Future<Uint8List> cartExport(Uint8List bytes,String format,
+      {int? targetKb,int quality=85})=>compute(_cartExportOperation,{
+        'bytes':bytes,'format':format,'targetKb':targetKb,'quality':quality,
+      });
+
+  static bool isJpeg(List<int> bytes)=>bytes.length>=2 &&
+      bytes[0]==0xff && bytes[1]==0xd8;
+  static bool isPng(List<int> bytes)=>bytes.length>=8 &&
+      bytes[0]==137 && bytes[1]==80 && bytes[2]==78 && bytes[3]==71 &&
+      bytes[4]==13 && bytes[5]==10 && bytes[6]==26 && bytes[7]==10;
+
+  static int? appliedTargetKb(Iterable<String> steps){
+    for(final step in steps.toList().reversed){
+      final match=RegExp(r'^Compress (\d+) KB \((JPEG|PNG)\)$').firstMatch(step);
+      if(match!=null)return int.tryParse(match.group(1)!);
+    }
+    return null;
+  }
+
+  static Uint8List _cartExportOperation(Map<String,Object?> request){
+    final bytes=request['bytes'] as Uint8List;
+    final format=request['format'] as String;
+    if(format!='JPEG'&&format!='PNG')throw ArgumentError('Unsupported output format');
+    final png=format=='PNG';
+    final targetKb=request['targetKb'] as int?;
+    if(targetKb!=null && (targetKb<1||targetKb>500000)){
+      throw ArgumentError('Invalid compression target');
+    }
+    final target=targetKb==null?null:targetKb*1024;
+    final same=png?isPng(bytes):isJpeg(bytes);
+    final decoded=img.decodeImage(bytes);
+    if(decoded==null)throw const FormatException('Invalid image snapshot');
+    if(same && target==null)return bytes;
+    if(same && target!=null){
+      final padded=_padCartImage(bytes,target,png);
+      if(padded!=null)return padded;
+    }
+    var source=decoded;
+    if(!png && source.numChannels==4){
+      final white=img.Image(width:source.width,height:source.height,numChannels:3);
+      img.fill(white,color:img.ColorRgb8(255,255,255));
+      img.compositeImage(white,source);
+      source=white;
+    }
+    final quality=(request['quality'] as int).clamp(5,100).toInt();
+    if(png){
+      // Different DEFLATE levels may avoid a 1–11 byte padding gap.
+      for(final level in [9,8,7,6,5,4,3,2,1,0]){
+        final result=Uint8List.fromList(img.encodePng(source,level:level));
+        if(target==null)return result;
+        final exact=_padCartImage(result,target,true);
+        if(exact!=null)return exact;
+      }
+    }else{
+      if(target==null)return Uint8List.fromList(img.encodeJpg(source,quality:quality));
+      // Keep geometry, avoid silent destructive resizing. Try lower quality
+      // only when required by the explicitly selected byte target.
+      for(var q=quality;q>=math.min(68,quality);q--){
+        final result=Uint8List.fromList(img.encodeJpg(source,quality:q));
+        final exact=_padCartImage(result,target,false);
+        if(exact!=null)return exact;
+      }
+    }
+    throw StateError('This format cannot fit the applied size without changing the edited dimensions. Choose the original format or apply a larger compression target.');
+  }
+
+  static Uint8List? _padCartImage(Uint8List bytes,int target,bool png){
+    final extra=target-bytes.length;
+    if(extra==0)return bytes;
+    if(extra< (png?12:4))return null;
+    // Do not allocate hundreds of MB of empty metadata merely to inflate
+    // a tiny photo. Report the limit instead of risking a mobile OOM.
+    if(extra>32*1024*1024)throw StateError('Exact-size padding exceeds 32 MB; select a smaller target');
+    final output=BytesBuilder(copy:false);
+    if(png){
+      if(!isPng(bytes)||bytes.length<20||
+          String.fromCharCodes(bytes.sublist(bytes.length-8,bytes.length-4))!='IEND')return null;
+      // Private, ancillary, safe-to-copy PNG chunk, immediately before IEND.
+      // A real CRC32 is required for strict PNG readers.
+      final type=<int>[102,115,80,97]; // fsPa
+      final length=extra-12;
+      final data=Uint8List(length);
+      var crc=0xffffffff;
+      for(final b in type){crc=_cartCrcByte(crc,b);}
+      for(var j=0;j<length;j++){crc=_cartCrcByte(crc,0);}
+      crc=(crc^0xffffffff)&0xffffffff;
+      List<int> be(int n)=>[(n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255];
+      output.add(bytes.sublist(0,bytes.length-12));
+      output.add(be(length));output.add(type);output.add(data);output.add(be(crc));
+      output.add(bytes.sublist(bytes.length-12));
+    }else{
+      if(!isJpeg(bytes)||bytes.length<4||bytes[bytes.length-2]!=0xff||bytes.last!=0xd9)return null;
+      output.add(bytes.sublist(0,2));
+      var remaining=extra;
+      while(remaining>0){
+        var chunk=math.min(remaining,65537);
+        if(remaining-chunk>0&&remaining-chunk<4)chunk=remaining-4;
+        if(chunk<4)return null;
+        final size=chunk-2;
+        output.add([0xff,0xfe,(size>>>8)&255,size&255]);
+        output.add(Uint8List(chunk-4));
+        remaining-=chunk;
+      }
+      output.add(bytes.sublist(2));
+    }
+    final result=output.takeBytes();
+    if(result.length!=target)throw StateError('Exact export length verification failed');
+    return result;
+  }
+
+  static int _cartCrcByte(int crc,int b){
+    var value=crc^b;
+    for(var i=0;i<8;i++){
+      value=(value>>>1)^((value&1)!=0?0xedb88320:0);
+    }
+    return value;
+  }
+
   static Future<Uint8List> compress(Uint8List bytes,
       {int targetKb = 500, int quality = 85, String format = 'JPEG'}) =>
     compute(_compressOperation, <String, Object?>{

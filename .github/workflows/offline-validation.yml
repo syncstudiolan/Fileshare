@@ -418,7 +418,7 @@ jobs:
             "fileshare-windows-v${version}-build-${{ github.run_number }}" \
             release/FileShare-Windows-Setup.exe "$notes"
 
-  # Three platform releases from the same main commit in this one workflow run.
+  # Four platform releases from the same main commit in this one workflow run.
   ios_unsigned:
     if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.ios) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
     name: iOS ONLY - macOS Xcode compile and IPA packaging
@@ -603,7 +603,121 @@ jobs:
   macos:
     name: macOS Apple Silicon DMG
     if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.macos) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release-now]')))
-    uses: ./.github/workflows/macos-apple-silicon-dmg.yml
-    with:
-      build: ${{ github.run_number }}
-    secrets: inherit
+    # Separate ARM64 runner queue repeatedly cancelled before any step started.
+    # Xcode Release builds a universal binary on an Intel Mac; verify arm64 below.
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate macOS runner and branded background-launch support
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          xcodebuild -version
+          flutter config --enable-macos-desktop
+          # The ONNX CocoaPods binary host currently presents a TLS
+          # certificate for the wrong hostname; DO NOT disable verification.
+          # SPM retrieves the verified ONNX package through GitHub instead.
+          flutter config --enable-swift-package-manager
+          flutter create --project-name file_share --platforms=macos .
+          # macos-latest uses Homebrew Python with PEP 668 protection;
+          # install Pillow in a dedicated environment, never system-wide.
+          python3 -m venv .macos-build-venv
+          .macos-build-venv/bin/python -m pip install --quiet Pillow
+          .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
+          flutter pub get
+      - name: Fix macOS 14 deployment target before ONNX SwiftPM resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          project=Path('macos/Runner.xcodeproj/project.pbxproj')
+          source=project.read_text()
+          updated,count=re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
+              'MACOSX_DEPLOYMENT_TARGET = 14.0;',source)
+          if count<1:
+              raise SystemExit('No macOS Runner deployment target found')
+          project.write_text(updated)
+          podfile=Path('macos/Podfile')
+          contents=podfile.read_text()
+          contents,n=re.subn(r"^#?\s*platform\s*:osx,\s*'[^']+'",
+                            "platform :osx, '14.0'",contents,flags=re.M)
+          if n==0:
+              contents="platform :osx, '14.0'\n"+contents
+          podfile.write_text(contents)
+          # Flutter may generate SwiftPM with its older 12.0 baseline.
+          # Align the umbrella package with the app and ONNX requirement.
+          packages=list(Path('macos').glob('**/FlutterGeneratedPluginSwiftPackage/Package.swift'))
+          if not packages:
+              raise SystemExit('Expected generated SwiftPM package is missing; cannot fix macOS 12.0 baseline')
+          for package in packages:
+              original=package.read_text()
+              adjusted,n=re.subn(r'\.macOS\("[0-9.]+"\)', '.macOS("14.0")',original)
+              if not n:
+                  raise SystemExit('Unknown macOS SwiftPM package schema: '+str(package))
+              package.write_text(adjusted)
+              print('Patched generated SwiftPM package platform to macOS 14:', package)
+          print('Verified macOS 14 minimum for Runner and Flutter plugin package')
+          PY
+      - name: Validate Dart and build Apple Silicon app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter test --reporter expanded --timeout 2m
+          version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          test -n "$version"
+          echo "MAC_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "MAC_RELEASE_BUILD=${{ github.run_number }}" >> "$GITHUB_ENV"
+          flutter build macos --release \
+            --build-name="$version" --build-number="${{ github.run_number }}" \
+            --dart-define=FILE_SHARE_VERSION="$version" \
+            --dart-define=FILE_SHARE_BUILD_NUMBER="${{ github.run_number }}"
+          app="build/macos/Build/Products/Release/file_share.app"
+          if [[ ! -d "$app" ]]; then
+            app=$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -type d | head -1)
+          fi
+          test -n "$app" && test -d "$app"
+          executable=$(find "$app/Contents/MacOS" -maxdepth 1 -type f | head -1)
+          test -n "$executable"
+          lipo -info "$executable"
+          lipo -archs "$executable" | tr " " "\\n" | grep -qx arm64
+          mkdir -p release/dmg-root
+          ditto "$app" "release/dmg-root/File Share.app"
+          ln -s /Applications release/dmg-root/Applications
+          hdiutil create -volname "File Share" -srcfolder release/dmg-root -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
+          test -s release/FileShare-macOS-AppleSilicon.dmg
+          hdiutil verify release/FileShare-macOS-AppleSilicon.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileShare-macOS-AppleSilicon-DMG
+          path: release/FileShare-macOS-AppleSilicon.dmg
+          if-no-files-found: error
+      - name: Publish unsigned Apple Silicon prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "fileshare-macos-arm64-v${MAC_RELEASE_VERSION}-build-${MAC_RELEASE_BUILD}" release/FileShare-macOS-AppleSilicon.dmg \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "File Share macOS Apple Silicon DMG" \
+            --notes "Unsigned/unnotarized macOS 14+ ARM64-compatible DMG with Bonjour LAN discovery and macOS in-app update check/download. For this first upgrade from an older Mac build, install the DMG once in Finder; later updates can be downloaded and opened inside File Share. Gatekeeper approval and real LAN testing may be required." --prerelease
+      - name: Publish verified macOS update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="fileshare-macos-arm64-v${MAC_RELEASE_VERSION}-build-${MAC_RELEASE_BUILD}"
+          python3 tool/publish_update_manifest.py macos "$MAC_RELEASE_VERSION" \
+            "$MAC_RELEASE_BUILD" "$tag" \
+            release/FileShare-macOS-AppleSilicon.dmg \
+            "Unified LAN discovery and verified Finder DMG updater"
