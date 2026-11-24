@@ -11,8 +11,12 @@ import org.bouncycastle.cert.jcajce.JcaX509CRLConverter
 import org.bouncycastle.cms.CMSSignedData
 import java.io.File
 import java.net.InetAddress
-import java.net.URL
-import javax.net.ssl.HttpsURLConnection
+import java.net.Proxy
+import java.util.concurrent.TimeUnit
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
 
@@ -58,6 +62,7 @@ internal object DscVerifier {
     val bytes = file.readBytes()
     require(bytes.size.toLong() <= MAX_PDF) { "PDF exceeds DSC verification safety limit" }
     val trust = DscTrust.load()
+    val fetchedCrls = mutableMapOf<String, X509CRL?>()
     val results = PDDocument.load(bytes, password.orEmpty()).use { pdf ->
       val fields = pdf.documentCatalog.acroForm?.fieldTree?.filterIsInstance<PDSignatureField>().orEmpty()
       val signatures = pdf.signatureDictionaries
@@ -109,7 +114,7 @@ internal object DscVerifier {
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
                   val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
                   val strong = checked.strong
-                  val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, online)
+                  val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, online, fetchedCrls)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     !parts.whole -> "Signed bytes intact; later revisions require DocMDP analysis"
@@ -153,7 +158,7 @@ internal object DscVerifier {
     path.certPath.certificates.filterIsInstance<X509Certificate>() + path.trustAnchor.trustedCert
   }.getOrDefault(emptyList())
 
-  private fun checkRevocation(chain: List<X509Certificate>, cms: CMSSignedData, online: Boolean): String {
+  private fun checkRevocation(chain: List<X509Certificate>, cms: CMSSignedData, online: Boolean, fetched: MutableMap<String, X509CRL?>): String {
     val now = Date()
     val crls = cms.getCRLs().getMatches(null).mapNotNull { holder ->
       runCatching { JcaX509CRLConverter().setProvider(provider).getCRL(holder) }.getOrNull()
@@ -163,7 +168,12 @@ internal object DscVerifier {
       val evidence = crls.toMutableList()
       if (online) {
         for (url in crlUrls(cert).take(2)) {
-          fetchCrl(url)?.let(evidence::add)
+          if (url in fetched) fetched[url]?.let(evidence::add)
+          else if (fetched.size < 4) {
+            val crl = fetchCrl(url)
+            fetched[url] = crl
+            crl?.let(evidence::add)
+          }
         }
       }
       val valid = evidence.filter { crl ->
@@ -193,25 +203,45 @@ internal object DscVerifier {
     }.distinct()
   }.getOrDefault(emptyList())
 
-  // Only after an explicitly trusted PKIX path is built. Never follow redirects,
-  // send a PDF, use private LAN hosts, or downgrade to HTTP.
-  private fun fetchCrl(address: String): X509CRL? = runCatching {
-    val url = URL(address)
-    require(url.protocol == "https" && url.userInfo == null && url.port in listOf(-1,443))
-    require(url.host.contains('.') && InetAddress.getAllByName(url.host).all {
-      !it.isAnyLocalAddress && !it.isLoopbackAddress && !it.isLinkLocalAddress &&
-        !it.isSiteLocalAddress && !it.isMulticastAddress && it.address.size == 4 &&
-        (it.address[0].toInt() and 255) !in listOf(0, 100, 127, 169, 192, 198, 203)
+  // Restrict the *actual* connection's DNS answers (not a separate
+  // preflight lookup), no redirect/proxy, and cap requests per document.
+  private fun publicIpv4(ip: InetAddress): Boolean {
+    if(ip.address.size != 4 || ip.isAnyLocalAddress || ip.isLoopbackAddress ||
+      ip.isLinkLocalAddress || ip.isSiteLocalAddress || ip.isMulticastAddress) return false
+    val a = ip.address[0].toInt() and 255
+    val b = ip.address[1].toInt() and 255
+    // Conservatively exclude special-use, documentation and carrier-grade ranges.
+    return a in 1..223 && a !in listOf(10,127,169,192,198,203) &&
+      !(a == 100 && b in 64..127) && !(a == 172 && b in 16..31)
+  }
+
+  private val http = OkHttpClient.Builder()
+    .dns(object : Dns {
+      override fun lookup(hostname: String): List<InetAddress> {
+        require(hostname.contains('.')) { "Public CA host required" }
+        val ips = Dns.SYSTEM.lookup(hostname)
+        require(ips.isNotEmpty() && ips.all(::publicIpv4)) { "Non-public CA address refused" }
+        return ips
+      }
     })
-    val connection = url.openConnection() as HttpsURLConnection
-    try {
-      connection.instanceFollowRedirects = false
-      connection.connectTimeout = 5000
-      connection.readTimeout = 5000
-      require(connection.responseCode == 200)
-      require(connection.contentLengthLong <= 4L * 1024 * 1024)
+    .proxy(Proxy.NO_PROXY)
+    .followRedirects(false).followSslRedirects(false)
+    .connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS)
+    .callTimeout(7, TimeUnit.SECONDS).retryOnConnectionFailure(false)
+    .build()
+
+  private fun fetchCrl(address: String): X509CRL? = runCatching {
+    val url = address.toHttpUrl()
+    require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() &&
+      url.port == 443 && url.host.contains('.'))
+    // Only endpoints from a certificate on an already trusted path;
+    // no PDF bytes or certificate secret keys leave the app.
+    http.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+      require(response.isSuccessful)
+      val body = response.body ?: error("Empty CRL")
+      require(body.contentLength() <= 4L * 1024 * 1024)
       val out = java.io.ByteArrayOutputStream()
-      connection.inputStream.use { input ->
+      body.byteStream().use { input ->
         val buffer = ByteArray(8192)
         while (true) {
           val n = input.read(buffer)
@@ -221,6 +251,6 @@ internal object DscVerifier {
         }
       }
       CertificateFactory.getInstance("X.509").generateCRL(out.toByteArray().inputStream()) as X509CRL
-    } finally { connection.disconnect() }
+    }
   }.getOrNull()
 }
