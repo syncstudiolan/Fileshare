@@ -39,6 +39,7 @@ fun PdfSendPicker(
   toCart: Boolean,
   onClose: () -> Unit,
   preserveSigned: Boolean = false,
+  expectedSignedHash: String? = null,
 ) {
   val scope = rememberCoroutineScope()
   var selection by remember(preserveSigned) { mutableStateOf(if (preserveSigned) "all" else "current") }
@@ -76,7 +77,7 @@ fun PdfSendPicker(
         busy = true
         scope.launch {
           try {
-            val file = preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned)
+            val file = preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned, expectedSignedHash)
             if (toCart) {
               val app = appContext as FileShareApplication
               check(app.stagePdfFromTools(file, file.name)) { "Unable to stage this PDF in File Share" }
@@ -127,10 +128,14 @@ suspend fun preparePdfSend(
   range: String,
   compressResult: Boolean,
   preserveSigned: Boolean = false,
+  expectedSignedHash: String? = null,
 ): File = withContext(Dispatchers.IO) {
   val source = File(path)
   require(source.isFile) { "PDF source unavailable" }
   val bytes = source.readBytes()
+  if (expectedSignedHash != null) require(DscSignedBytes.sha256(bytes) == expectedSignedHash) {
+    "PDF changed since verification. Reopen and verify it again."
+  }
   val result = if (preserveSigned) {
     require(selection == "all" && !compressResult) { "Signed PDFs must be sent unchanged" }
     bytes
