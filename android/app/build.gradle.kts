@@ -139,14 +139,19 @@ tasks.named("preBuild") { dependsOn(verifyBundledDocAlignerModel) }
 val includeDscRust = providers.gradleProperty("fileshareDscRust").map { it == "true" }.orElse(false)
 if (includeDscRust.get()) {
     val dscRustDir = layout.projectDirectory.dir("../dsc-rust")
-    val generatedDsc = layout.buildDirectory.dir("generated/dscRust/jniLibs")
+    // AGP 9 rejects Provider objects in the legacy SourceSet API. Resolve
+    // the Flutter-redirected build directory to a File, and wire dependencies explicitly.
+    val generatedDsc = layout.buildDirectory.dir("generated/dscRust/jniLibs").get().asFile
     val buildDscRust = tasks.register<Exec>("buildDscRust") {
         workingDir(dscRustDir.asFile)
-        commandLine("bash", "build-android.sh", generatedDsc.get().asFile.absolutePath)
+        commandLine("bash", "build-android.sh", generatedDsc.absolutePath)
         inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh", ".cargo/**") })
         inputs.files(fileTree(rootProject.projectDir.parentFile.resolve("third_party/pdfcraft-dsc-reference/crates/sign")) { include("Cargo.toml", "src/**") })
         outputs.dir(generatedDsc)
     }
     android.sourceSets.getByName("main").jniLibs.srcDir(generatedDsc)
     tasks.named("preBuild") { dependsOn(buildDscRust) }
+    tasks.matching { it.name.startsWith("merge") &&
+        (it.name.endsWith("JniLibFolders") || it.name.endsWith("NativeLibs"))
+    }.configureEach { dependsOn(buildDscRust) }
 }
