@@ -209,40 +209,58 @@ internal object DscVerifier {
     var complete = true
     for ((cert, issuer) in chain.zipWithNext()) {
       val evidence = (crls + dss.crls).toMutableList()
-      if (online) {
-        for (url in crlUrls(cert).take(2)) {
-          if (url in fetched) fetched[url]?.let(evidence::add)
-          else if (fetched.size < 4) {
-            val crl = fetchCrl(url)
-            fetched[url] = crl
-            crl?.let(evidence::add)
-          }
+      val identity = DscSignedBytes.sha256(cert.encoded) + ":" + DscSignedBytes.sha256(issuer.encoded)
+      val crlEndpoints = crlUrls(cert).take(2)
+      val ocspEndpoints = aiaUrls(cert, AccessDescription.id_ad_ocsp).take(2)
+      fun validCrl(crl: X509CRL): Boolean = runCatching {
+        crl.issuerX500Principal == issuer.subjectX500Principal &&
+          crl.getExtensionValue("2.5.29.27") == null &&
+          crl.getExtensionValue("2.5.29.28") == null &&
+          !crl.hasUnsupportedCriticalExtension() &&
+          (issuer.keyUsage?.getOrElse(6){false} ?: true) &&
+          crl.thisUpdate <= at && crl.thisUpdate <= now &&
+          crl.nextUpdate?.let { it >= at } == true &&
+          run { crl.verify(issuer.publicKey, provider); true }
+      }.getOrDefault(false)
+      for (url in crlEndpoints) {
+        DscEvidenceCache.read("crl", identity + ":" + url, 4 * 1024 * 1024)?.let { bytes ->
+          runCatching { CertificateFactory.getInstance("X.509").generateCRL(bytes.inputStream()) as X509CRL }
+            .getOrNull()?.let(evidence::add)
         }
       }
-      val valid = evidence.filter { crl ->
-        runCatching {
-          // Only complete direct CRLs, not delta/indirect/scope-limited CRLs.
-          crl.issuerX500Principal == issuer.subjectX500Principal &&
-            crl.getExtensionValue("2.5.29.27") == null &&
-            crl.getExtensionValue("2.5.29.28") == null &&
-            !crl.hasUnsupportedCriticalExtension() &&
-            (issuer.keyUsage?.getOrElse(6){false} ?: true) &&
-            crl.thisUpdate <= at && crl.thisUpdate <= now && crl.nextUpdate?.let { it >= at } == true &&
-            run { crl.verify(issuer.publicKey, provider); true }
-        }.getOrDefault(false)
-      }
-      if (valid.any { it.getRevokedCertificate(cert)?.revocationDate?.let { date -> date <= at } == true }) return "Revoked"
       val ocsp = dss.ocsps.map { DscOcsp.check(it, cert, issuer, at, now) }.toMutableList()
+      for (url in ocspEndpoints) {
+        DscEvidenceCache.read("ocsp", identity + ":" + url, 1024 * 1024)?.let {
+          ocsp.add(DscOcsp.check(it, cert, issuer, at, now))
+        }
+      }
+      var valid = evidence.filter(::validCrl)
+      if (valid.any { it.getRevokedCertificate(cert)?.revocationDate?.let { date -> date <= at } == true } ||
+          DscOcsp.Verdict.REVOKED in ocsp) return "Revoked"
       if (online && valid.isEmpty() && DscOcsp.Verdict.GOOD !in ocsp) {
-        for (url in aiaUrls(cert, AccessDescription.id_ad_ocsp).take(2)) {
-          val key = url + ":" + DscSignedBytes.sha256(cert.encoded)
+        for (url in ocspEndpoints) {
+          val key = url + ":" + identity
           if (key !in ocspCache && ocspCache.size < 4) {
             ocspCache[key] = fetchEvidence(url, 1024 * 1024, DscOcsp.request(cert, issuer))
           }
-          ocspCache[key]?.let { ocsp.add(DscOcsp.check(it, cert, issuer, at, now)) }
+          ocspCache[key]?.let { raw ->
+            val verdict = DscOcsp.check(raw, cert, issuer, at, now)
+            ocsp.add(verdict)
+            if (verdict != DscOcsp.Verdict.UNKNOWN)
+              DscEvidenceCache.write("ocsp", identity + ":" + url, raw, 1024 * 1024)
+          }
         }
+        if (DscOcsp.Verdict.REVOKED in ocsp) return "Revoked"
+        if (DscOcsp.Verdict.GOOD !in ocsp) for (url in crlEndpoints) {
+          if (url !in fetched && fetched.size < 4) fetched[url] = fetchCrl(url)
+          fetched[url]?.takeIf(::validCrl)?.let {
+            evidence.add(it)
+            DscEvidenceCache.write("crl", identity + ":" + url, it.encoded, 4 * 1024 * 1024)
+          }
+        }
+        valid = evidence.filter(::validCrl)
       }
-      if (DscOcsp.Verdict.REVOKED in ocsp) return "Revoked"
+      if (valid.any { it.getRevokedCertificate(cert)?.revocationDate?.let { date -> date <= at } == true }) return "Revoked"
       if (valid.isEmpty() && DscOcsp.Verdict.GOOD !in ocsp) complete = false
     }
     return if (complete) "Good" else "Not established"
