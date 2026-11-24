@@ -77,7 +77,7 @@ final class FileShareMacLANBonjour: NSObject,
     service.delegate = self
     service.setTXTRecord(NetService.data(fromTXTRecord: [
       "id": Data(id.utf8),
-      "n": Data(name.utf8)
+      "n": Data(name.utf8), "v": Data("2".utf8)
     ]))
     publisher = service
     isRunning = true
@@ -128,7 +128,7 @@ final class FileShareMacLANBonjour: NSObject,
   }
 
   func netServiceDidResolveAddress(_ sender: NetService) {
-    guard isRunning else { return }
+    guard isRunning, found[sender.name] === sender else { return }
     let fields = sender.txtRecordData()
       .map { NetService.dictionary(fromTXTRecord: $0) } ?? [:]
     guard let bytes = fields["id"],
@@ -147,7 +147,8 @@ final class FileShareMacLANBonjour: NSObject,
       ?? sender.name
     resolvedIds[sender.name] = id
     channel?.invokeMethod("peer", arguments: [
-      "id": id, "name": name, "address": ip, "port": sender.port
+      "id": id, "name": name, "address": ip, "port": sender.port,
+      "v": fields["v"].flatMap { String(data: $0, encoding: .utf8) } ?? "1"
     ])
   }
 
