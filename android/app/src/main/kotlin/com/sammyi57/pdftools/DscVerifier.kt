@@ -62,7 +62,7 @@ internal object DscTrust {
 internal object DscVerifier {
   private val provider = DscCms.provider
   private const val MAX_PDF = 64 * 1024 * 1024L
-  private val supported = setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached")
+  private val supported = setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached", "ETSI.RFC3161")
 
   fun read(path: String, password: String?, online: Boolean = false): DscDocument {
     val file = File(path)
@@ -113,6 +113,26 @@ internal object DscVerifier {
           try {
             // Bind the excluded raw bytes to the parsed signature dictionary.
             require(parts.cms.contentEquals(sig.contents)) { "Signature dictionary does not match the excluded contents" }
+            if (sig.subFilter == "ETSI.RFC3161") {
+              val stamp = DscTimestamp.document(parts.cms, parts.signed)
+              var chain = buildChain(stamp.signer, stamp.certificates + dss.certificates, trust, stamp.time)
+              if(chain.isEmpty() && online && trust.isNotEmpty()) {
+                val extra = discoverIssuers(stamp.signer, stamp.certificates + dss.certificates, trust, fetchedIssuers)
+                chain = buildChain(stamp.signer, extra, trust, stamp.time)
+              }
+              val rev = if(chain.size >= 2) checkRevocation(chain, stamp.cms, dss, online,
+                fetchedCrls, fetchedOcsp, stamp.time) else "Not established"
+              val trustedTime = if(rev == "Good" && chain.size >= 2) stamp.time else null
+              val status = when {
+                rev == "Revoked" -> DscStatus.INVALID
+                trustedTime != null && parts.whole -> DscStatus.VALID
+                else -> DscStatus.UNKNOWN
+              }
+              return@mapIndexed DscResult(id, "Document timestamp: " + stamp.signer.subjectX500Principal.name,
+                status, if(status == DscStatus.VALID) "Trusted RFC3161 timestamp covers this document"
+                  else "Timestamp integrity verified; trust, revision or revocation requires further evidence",
+                stamp.signer, chain, true, chain.isNotEmpty(), rev, widgets, trustedTime)
+            }
             val checked = DscCms.check(parts.signed, parts.cms, sig.subFilter == "ETSI.CAdES.detached")
             val cert = checked.cert
             val embedded = checked.embedded
