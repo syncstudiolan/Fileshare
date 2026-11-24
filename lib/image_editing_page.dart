@@ -22,6 +22,28 @@ import 'universal_tool_switcher.dart';
 import 'image_editing_windows_ai.dart';
 import 'photo_enhancer_engine.dart';
 
+/// A format choice for the already-rendered snapshot. Cancel never adds a
+/// file, and choosing JPG explicitly acknowledges the alpha limitation.
+Future<String?> chooseImageCartFormat(BuildContext context,{int? targetKb})=>
+    showDialog<String>(context:context,builder:(dialogContext)=>AlertDialog(
+      title:const Text('Choose photo format'),
+      content:Column(mainAxisSize:MainAxisSize.min,
+        crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Your current edited photo will be added to Cart.'),
+          if(targetKb!=null)Padding(padding:const EdgeInsets.only(top:8),
+            child:Text('Applied size: $targetKb KB (exact)')),
+          const SizedBox(height:12),
+          const Text('PNG preserves transparency. JPG uses a white background for transparent areas.'),
+        ]),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('Cancel')),
+        OutlinedButton(onPressed:()=>Navigator.pop(dialogContext,'PNG'),
+          child:const Text('PNG')),
+        FilledButton(onPressed:()=>Navigator.pop(dialogContext,'JPEG'),
+          child:const Text('JPG')),
+      ],
+    ));
+
 /// File Share's native-feeling editing workspace. The main canvas, transition
 /// animations and controls are Flutter GPU rendered; expensive file encodes and
 /// pixel operations happen on a worker isolate.
@@ -53,7 +75,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
   String? _draftId;
   late String _name;
   final List<Uint8List> _undo=[], _redo=[];
-  final List<String> _steps=[];
+  final List<String> _steps=[],_redoSteps=[];
   double _ratio=1, _brightness=1, _contrast=1,_saturation=1,_exposure=0;
   double _eraseRadius=.035,_softness=.45, _tolerance=42;
   Rect _crop=const Rect.fromLTWH(.06,.06,.88,.88);
@@ -240,7 +262,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _name=name??'image.png';
         _format=_name.toLowerCase().endsWith('.png')?'PNG':'JPEG';
         _draftId=DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-        _undo.clear();_redo.clear();_steps.clear();
+        _undo.clear();_redo.clear();_steps.clear();_redoSteps.clear();
         _pendingFilter=null;_selectedFilter=null;_pendingBackgroundColor=null;
         _crop=const Rect.fromLTWH(.06,.06,.88,.88);
       _cropDirty=false;
@@ -373,7 +395,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
         _undo.fold<int>(0,(sum,bytes)=>sum+bytes.length)>48*1024*1024){
       _undo.removeAt(0);
     }
-    _redo.clear();
+    _redo.clear();_redoSteps.clear();
     _steps.add(step);
     if(!step.startsWith('Photo enhance')){
       _enhanceBefore=null;
@@ -395,7 +417,7 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     final geometryChanged=step.toLowerCase().contains('crop') ||
       step.toLowerCase().contains('straighten') ||
       step.toLowerCase().contains('rotate') ||
-      step.toLowerCase().contains('resize');
+      step.toLowerCase().contains('resize') || step.startsWith('Compress ');
     final dimensions=geometryChanged
       ?await ImageEditingEngine.dimensions(next):null;
     if(!mounted)return;
@@ -425,7 +447,8 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     if(source.isEmpty||current==null||_busy)return;
     final next=source.removeLast();
     (undo?_redo:_undo).add(current);
-    if(_steps.isNotEmpty && undo)_steps.removeLast();
+    if(undo && _steps.isNotEmpty)_redoSteps.add(_steps.removeLast());
+    if(!undo && _redoSteps.isNotEmpty)_steps.add(_redoSteps.removeLast());
     final size=await ImageEditingEngine.dimensions(next);
     if(!mounted)return;
     setState((){
@@ -660,15 +683,21 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
     setState(()=>_busy=true);
     try{
       final source=await _visibleExportBytes();
-      final result=await ImageEditingEngine.compress(source,
-        targetKb:_targetKb,quality:_quality,format:_format);
-      if(_format=='JPEG')_name=_name.replaceAll(
+      final target=_targetKb,format=_format,quality=_quality;
+      final compressed=await ImageEditingEngine.compress(source,
+        targetKb:target,quality:quality,format:format);
+      final result=await ImageEditingEngine.cartExport(compressed,format,
+        targetKb:target,quality:quality);
+      if(format=='JPEG')_name=_name.replaceAll(
         RegExp(r'\.[^.]+$'),'.jpg');
-      if(_format=='PNG')_name=_name.replaceAll(
+      if(format=='PNG')_name=_name.replaceAll(
         RegExp(r'\.[^.]+$'),'.png');
-      await _commit(bytes,result,'Compress $_targetKb KB ($_format)');
-      _pendingBackgroundColor=null;
-      _cutoutBytes=null; // Compression already includes the visible composite.
+      await _commit(bytes,result,'Compress $target KB ($format)');
+      if(mounted)setState((){
+        // The encoded snapshot already includes all visible live edits.
+        _pendingBackgroundColor=null;_cutoutBytes=null;_pendingFilter=null;
+        _fineAngle=0;_brightness=1;_contrast=1;_saturation=1;_exposure=0;
+      });
       _message('Exported ${(result.length/1024).toStringAsFixed(1)} KB');
     }catch(e){_message('Compression failed: $e');}
     finally{
@@ -742,8 +771,18 @@ class _ImageEditingPageState extends State<ImageEditingPage> {
       // could block export indefinitely. Preserve a genuine active brush.
       if(_tool=='Erase'&&_stroke.isNotEmpty)_finishGesture();
       if(_tool=='Erase')await _eraseQueue;
-      final data=await _visibleExportBytes();
+      final target=ImageEditingEngine.appliedTargetKb(_steps);
+      final quality=_quality;
+      var data=await _visibleExportBytes();
       if(action=='cart'){
+        if(!mounted)return;
+        final format=await chooseImageCartFormat(context,targetKb:target);
+        if(format==null||!mounted)return;
+        // Never mutate _bytes, _steps, compression controls, or the draft
+        // merely because the user chooses a different Cart file format.
+        data=await ImageEditingEngine.cartExport(data,format,
+          targetKb:target,quality:quality);
+        if(!mounted)return;
         unawaited(_saveDraft().catchError((Object _) {}));
         unawaited(_saveSession().catchError((Object _) {}));
       }
@@ -2307,10 +2346,15 @@ class _ImageEditingHistoryPageState extends State<ImageEditingHistoryPage> {
   }
   Future<void> _cart(ImageEditingDraft draft)async{
     // History's Cart always sends the saved edited stage, not import bytes.
-    final original=File(draft.filePath);
-    final isJpg=draft.filePath.toLowerCase().endsWith('.jpg');
-    final name='edited_${DateTime.now().microsecondsSinceEpoch}.${isJpg?'jpg':'png'}';
-    await ImageEditingCart.instance.addEditedFile(original,name);
+    final snapshot=await File(draft.filePath).readAsBytes();
+    final target=ImageEditingEngine.appliedTargetKb(draft.steps);
+    if(!mounted)return;
+    final format=await chooseImageCartFormat(context,targetKb:target);
+    if(format==null||!mounted)return;
+    final data=await ImageEditingEngine.cartExport(snapshot,format,targetKb:target);
+    if(!mounted)return;
+    final name='edited_${DateTime.now().microsecondsSinceEpoch}.${format=='JPEG'?'jpg':'png'}';
+    await ImageEditingCart.instance.addEditedBytes(data,name);
     if(mounted)FileShareTopNotice.show(context,'Added to File Share Cart');
   }
   Future<void> _historyAction(ImageEditingDraft entry,String action)async{
