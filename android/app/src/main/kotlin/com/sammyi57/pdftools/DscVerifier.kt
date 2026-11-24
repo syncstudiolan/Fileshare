@@ -2,7 +2,6 @@ package com.sammyi57.pdftools
 
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.interactive.form.PDSignatureField
-import com.tom_roush.pdfbox.cos.COSName
 import org.bouncycastle.asn1.ASN1InputStream
 import org.bouncycastle.asn1.x509.CRLDistPoint
 import org.bouncycastle.asn1.x509.Extension
@@ -14,6 +13,7 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509CRLConverter
 import org.bouncycastle.cms.CMSProcessableByteArray
 import org.bouncycastle.cms.CMSSignedData
+import org.bouncycastle.cms.CMSSignerDigestMismatchException
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.File
@@ -118,18 +118,21 @@ internal object DscVerifier {
                 val converter = JcaX509CertificateConverter().setProvider(provider)
                 val cert = converter.getCertificate(holder)
                 val embedded = cms.certificates.getMatches(null).filterIsInstance<X509CertificateHolder>().map { converter.getCertificate(it) }
-                val intact = signer.verify(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(holder))
+                val intact = try { signer.verify(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(holder)) }
+                  catch (_: CMSSignerDigestMismatchException) { false }
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
                   val chain = buildChain(cert, embedded, trust)
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
-                  val strong = signer.digestAlgOID in strongDigests
+                  val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
+                  val strong = signer.digestAlgOID in strongDigests &&
+                    ((cert.publicKey as? java.security.interfaces.RSAPublicKey)?.modulus?.bitLength() ?: 2048) >= 2048
                   val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, online)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     !parts.whole -> "Signed bytes intact; later revisions require DocMDP analysis"
-                    !signingUsage -> "Certificate key usage does not allow document signing"
+                    !signingUsage || !documentEku -> "Certificate key usage does not allow document signing"
                     !strong -> "Legacy or unsupported digest policy"
                     chain.isEmpty() -> "Certificate identity is not trusted or not currently valid"
                     rev != "Good" -> "Integrity and trust verified; current revocation status not established"
@@ -137,7 +140,7 @@ internal object DscVerifier {
                   }
                   val status = when {
                     rev == "Revoked" -> DscStatus.INVALID
-                    parts.whole && signingUsage && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    parts.whole && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
