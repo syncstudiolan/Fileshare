@@ -5,4 +5,12 @@
     <domain includeSubdomains="false">localhost</domain>
     <domain includeSubdomains="false">127.0.0.1</domain>
   </domain-config>
+  <!-- Only official signed PKI evidence endpoints; no global HTTP opt-in. -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="false">cca.gov.in</domain>
+    <domain includeSubdomains="false">www.cca.gov.in</domain>
+    <domain includeSubdomains="false">ocvs.gov.in</domain>
+    <domain includeSubdomains="false">ca.igcar.gov.in</domain>
+    <domain includeSubdomains="false">crl.care4sign.com</domain>
+  </domain-config>
 </network-security-config>
