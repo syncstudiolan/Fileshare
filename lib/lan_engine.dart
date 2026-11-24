@@ -32,6 +32,7 @@ class WindowsLanPeerSources {
   void observeUdp(LanPeer peer)=>_udp[peer.id]=peer;
   void observeNative(LanPeer peer)=>_native[peer.id]=peer;
   void loseNative(String id)=>_native.remove(id);
+  void clearNative()=>_native.clear();
   void observeVerified(LanPeer peer)=>_verified[peer.id]=peer;
   Iterable<LanPeer> verified(DateTime now)=>_verified.values.where((p)=>
       now.difference(p.lastSeen)<const Duration(seconds:30));
@@ -452,7 +453,7 @@ class LanEngine extends ChangeNotifier {
     _nativeStarting=true;
     final generation=_listenerGeneration;
     _bonjour.setMethodCallHandler((call) async {
-      if (_disposed || !started && _starting == null) return;
+      if (_disposed || generation!=_listenerGeneration || !started && _starting == null) return;
       final data = call.arguments;
       if (data is! Map) return;
       if (call.method == 'lost') {
@@ -517,6 +518,9 @@ class LanEngine extends ChangeNotifier {
     _nativeStarting=true;
     try{await _bonjour.invokeMethod<void>('stop');}catch(_){}
     finally{_nativeStarting=false;}
+    _bonjourPeerIds.clear();
+    _windowsSources.clearNative();
+    _publishWindowsPeers();
     if(!_disposed&&(started||_starting!=null))await _startBonjour();
   }
 
@@ -588,7 +592,15 @@ class LanEngine extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void _expirePeers() => _publishWindowsPeers();
+  void _expirePeers() {
+    if(testSupportDirectory!=null && _helloCandidates.isEmpty && _windowsSources.verified(DateTime.now()).isEmpty){
+      final cutoff=DateTime.now().subtract(const Duration(seconds:22));
+      peers.removeWhere((_,p)=>p.lastSeen.isBefore(cutoff));
+      _notify();
+      return;
+    }
+    _publishWindowsPeers();
+  }
 
   // Only known v2 File Share advertisements and verified same-subnet hints
   // can seed this control exchange. No scanning or relaying file payloads.
@@ -712,15 +724,16 @@ class LanEngine extends ChangeNotifier {
     final sender=_parseHelloPeer(meta,socket.remoteAddress.address);
     if(sender==null)return;
     final local=socket.address.address;
+    if(!_sameLocalSubnet(sender.address,local))return;
     // Only directly checked peers are shared; each recipient must verify the
     // advertised identity itself before adding the hinted device to its list.
     final hints=_windowsSources.verified(DateTime.now()).where((p)=>
-      p.id!=sender.id&&_sameLocalSubnet(p.address,local)).take(_helloCap)
+      p.id!=sender.id&&_sameLocalSubnet(p.address,local)).take(12)
       .map((p)=>{'id':p.id,'name':p.name,'address':p.address,'port':p.port}).toList();
     socket.add(utf8.encode(jsonEncode({'protocol':_helloProtocol,
       ..._helloIdentity(),'peers':hints})+'\n'));
     await socket.flush().timeout(const Duration(seconds:2));
-    if(_sameLocalSubnet(sender.address,local))_offerHello(sender);
+    _offerHello(sender);
   }
 
   Future<void> _restore() async {
@@ -1001,6 +1014,7 @@ class LanEngine extends ChangeNotifier {
           if(meta is Map && meta['protocol']==_helloProtocol){
             control=true;
             await _answerHello(socket,meta);
+            await Future<void>.delayed(const Duration(milliseconds:100));
             return;
           }
           if (meta is! Map || meta['protocol'] != 'fileshare-file-v1' ||
