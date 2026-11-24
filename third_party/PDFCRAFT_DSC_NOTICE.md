@@ -4,50 +4,69 @@ Upstream: https://github.com/storytold/pdfcraft
 Pinned reference: 6e910675c68dd5092e889065cfe8d0274c1b2742
 Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
 The copied validation, trust/status types and status-layer sources are in
-`third_party/pdfcraft-dsc-reference/`; the complete upstream MIT license is
-included beside them. These Rust files are reference source, not a compiled
-Android library. No upstream branding is included.
+`third_party/pdfcraft-dsc-reference/`; the upstream MIT license is included.
+These Rust files are reference source, not a compiled Android library.
+No upstream branding is included.
 
-The draft Android implementation adapts PdfCraft's original-byte range,
-explicit trust and three-state verification rules to File Share's existing
-Kotlin, PDFBox and Bouncy Castle stack. It does not claim full PdfCraft
-cryptographic or PDF-revision parity. Native Rust integration would require
-vendoring its transitive workspace crates (including pinned craft-libs)
-and an Android Rust/NDK build and test environment.
+The Android draft adapts PdfCraft's original-byte, explicit-trust and
+three-state verification rules to File Share's existing Kotlin, PDFBox and
+Bouncy Castle stack. It does not claim full PdfCraft cryptographic or
+PDF-revision parity. Native Rust integration requires the transitive workspace
+crates (including pinned craft-libs) and a Rust/NDK build/test environment.
 
-Implemented draft paths:
-- Detect PDF signature dictionaries and visible widgets, map their coordinates
-  to the existing Jetpack PDF viewer, and open the verification panel.
-- Real detached CMS RSA/EC signature verification; SHA-256/384/512 digest
-  policy, CAdES signing-certificate-v2 binding, original ByteRange checking.
-- Local explicit CA trust import/removal; current-time PKIX chain building.
-- Embedded CMS complete direct CRLs and bounded HTTPS CRL retrieval on
-  already trusted paths. Network requests never upload the PDF. The
-  transport disallows redirects, private-network DNS results and proxying.
-- Only show Valid when all currently implemented required checks pass.
-- Unknown for unsupported formats, incomplete evidence, later revisions,
-  or unsupported policy. No automatic trust of a certificate from a PDF.
-- Original-byte save and whole-document Cart/share with verified file hash;
-  no page extraction or recompression when a signature is known or
-  signature inspection is unavailable. Viewer edit is disabled for signed
-  documents.
+## Draft implementation
+- Detect PDF signature dictionaries/widgets, use the existing Jetpack PDF
+  coordinate mapping, and open the signature panel on a tap.
+- Real detached CMS verification, SHA-256/384/512 digest policy,
+  CAdES signing-certificate-v2 binding, and original ByteRange checks.
+- Explicit local CA trust import/removal; fingerprint confirmation at both
+  UI and storage boundaries, current or trusted-time PKIX chain construction.
+- Official CCA root certificate page and independent fingerprint confirmation
+  guidance (https://cca.gov.in/root_certificate.html). No arbitrary root is
+  silently installed or trusted based on its name. A bundled automatically
+  provisioned root set requires independently verified official certificate
+  bytes/fingerprints; these were not available in this environment.
+- Bounded extraction of PDF DSS certificates, CRLs and OCSP responses;
+  embedded CMS CRLs; issuer-authorized signed OCSP responses, CertID and
+  freshness checks. Delegated OCSP responders without the no-check extension
+  remain unverified rather than trusting an unchecked responder certificate.
+- RFC3161 attached and standalone document timestamps: exact message imprint,
+  TSA certificate/signature and chain/revocation verification. Historical
+  signing time is used only when the timestamp itself has trusted evidence.
+- Offline-first CRL/OCSP cache; cached evidence is independently rechecked
+  every time, never treated as a stored green tick.
+- Bounded HTTPS AIA issuer discovery and CRL/OCSP requests only as needed;
+  fetched issuers do not become trust anchors. No redirect, proxy or private
+  DNS connection. OCSP conveys certificate identifier data to a responder,
+  not the PDF or any private key. HTTP-only endpoints remain unsupported
+  rather than weakening the application's cleartext network policy.
+- Valid only when currently implemented required checks pass. Unknown for
+  unsupported algorithms/formats, incomplete evidence or later revisions.
+  Revalidation hides previous green badges until a new verdict is available.
+- Whole-document original-byte Cart/share and hash-bound Save snapshot;
+  page extraction, compression and editor entry are blocked for signed or
+  not-yet-inspected PDFs. Save errors do not report success.
+- All modifications confined to Android and documentation/reference source.
 
-Not complete: native Rust port, automatic official Indian CCA trust-bundle
-provisioning, AIA issuer discovery, embedded PDF DSS / OCSP, online OCSP,
-HTTP-only CA endpoints, trusted RFC 3161 signing-time/LTV validation,
-DocMDP/FieldMDP revision classification, and Android device/rotation/widget
-geometry validation. The existing Jetpack viewer has its own OS extension
-requirements. Do not treat an Unknown result as a valid signature. A
-display badge is not written into signed bytes. Third-party readers must
-verify independently.
+## Local verification
+Kotlin JVM 1.9 and local Bouncy Castle 1.80: original 12 real OpenSSL
+CMS/CAdES tests passed again. New OCSP/RFC3161 core code compiled and
+12 additional checks passed using generated signed fixtures (good, revoked,
+unknown, wrong serial, wrong responder key, stale and malformed evidence,
+request binding, trusted token cryptographic check, wrong imprint, standalone
+timestamp zero padding and nonzero trailing bytes). Corresponding JUnit
+regressions are in DscCryptoTest and DscAdvancedEvidenceTest. These tests
+exercise the cryptographic primitives, not the full Android application.
 
-Local tests performed: the exact DscCms.kt and DscSignedBytes.kt Git blobs
-23643e98f39e4af7257cf0561e2553cc990c9586 and
-fc1b4073a5094dfec2520eddba314eb969c2bd53 were compiled with Kotlin JVM 1.9
-and local Bouncy Castle 1.80. Twelve checks passed using real OpenSSL RSA
-detached CMS and CAdES fixtures: integrity, tamper, embedded content,
-CAdES binding, missing binding, padding, trailing data, original signed
-bytes, later revision, overlapping range, invalid hex and overflow.
-The Android project uses its own dependency versions; full Android
-compilation, Gradle tests, UI and real Indian DSC testing were NOT run.
-No workflow, build or release was dispatched. Keep this PR draft.
+## Unresolved / release blockers
+Full Android compilation, Gradle tests, release APK, Jetpack viewer hit
+testing on physical devices, real Indian DSC files and live CA endpoints
+remain unverified. The full Rust engine is not linked. Official pinned
+CCA root bundle provisioning, HTTP-only CA endpoint support, complete
+DocMDP/FieldMDP and incremental revision classification, historical LTV
+policy coverage, legacy adbe.pkcs7.sha1/adbe.x509.rsa_sha1 and other
+unsupported signature formats remain incomplete. Later revisions are
+reported Unknown rather than falsely marked Valid. A rendered status badge
+is never burned into signed bytes; other readers independently verify
+their own trust. Do not claim production readiness or legal certification.
+Keep PR #30 draft. No workflow, build, release or merge requested.
