@@ -52,6 +52,8 @@ jobs:
         run: flutter pub get
       - name: Verify atomic release publisher contracts
         run: python3 -m unittest discover -s tool -p 'test_publish_update_manifest.py' -v
+      - name: Verify Android signing parser against legacy and current SDK output
+        run: python3 -m unittest discover -s tool -p 'test_verify_android_signing.py' -v
       - name: Prove reciprocal LAN and photo Cart format before compiling
         run: flutter test --reporter expanded --timeout 2m test/cross_platform_lan_convergence_test.dart test/image_editing_test.dart test/file_share_updates_test.dart
 
@@ -508,10 +510,9 @@ jobs:
           mkdir -p "$previous"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$previous"
           signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
-          old="$("$signer" verify --print-certs "$previous/$asset" | grep -E '^Signer #[0-9]+ certificate SHA-256 digest:' | sort)"
-          new="$("$signer" verify --print-certs build/app/outputs/flutter-apk/FileShare-Android-ARM64-Release.apk | grep -E '^Signer #[0-9]+ certificate SHA-256 digest:' | sort)"
-          test -n "$old" && test "$old" = "$new" || { echo "::error::Android production signing identity differs from the previous published APK. Restore the original keystore."; exit 1; }
-          echo "Android signing identity matches the previous production APK."
+          test -n "$signer"
+          python3 tool/verify_android_signing.py "$signer" "$previous/$asset" \
+            build/app/outputs/flutter-apk/FileShare-Android-ARM64-Release.apk update_manifest.json
       - uses: actions/upload-artifact@v4
         if: matrix.group == 'android'
         with:
