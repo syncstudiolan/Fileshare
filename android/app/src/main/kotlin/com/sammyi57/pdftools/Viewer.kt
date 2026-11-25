@@ -125,7 +125,7 @@ fun PdfViewerScreen(path: String, name: String) {
     try {
       dsc = withContext(Dispatchers.IO) {
         val offline = DscVerifier.read(path, password)
-        if (offline.signatures.any { (it.status == DscStatus.UNKNOWN || it.status == DscStatus.PERSONALLY_TRUSTED) && it.integrity &&
+        if (offline.signatures.any { (it.status == DscStatus.UNKNOWN || it.status == DscStatus.PERSONALLY_TRUSTED || it.status == DscStatus.NATIVE_VERIFIED) && it.integrity &&
               (!it.trusted || it.revocation == "Not established") }) {
           DscVerifier.read(path, password, online = true)
         } else offline
@@ -286,7 +286,7 @@ fun PdfViewerScreen(path: String, name: String) {
   if (dscPanel) {
     val result = dsc
     if (result != null) DscValidationPanel(result, selectedSignature, dscBusy,
-      onValidate = { dscRevision++ }, onClose = { dscPanel = false },
+      onValidate = { if (!dscBusy) { dscBusy = true; dscRevision++ } }, onClose = { dscPanel = false },
       onCart = { dscPanel = false; sendMode = "cart" }, path = path, name = name)
     else AppDialog({ dscPanel = false }, "Signature inspection", dscError.ifBlank { "Checking signatures…" }) {
       Btn("Close", Modifier.fillMaxWidth()) { dscPanel = false }
@@ -324,14 +324,14 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, onTa
       val height = kotlin.math.abs(b.y - a.y)
       if (width < 1f || height < 1f) continue
       val color = when (sig.status) {
-        DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED -> Color(0xff18834b)
+        DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> Color(0xff18834b)
         DscStatus.UNKNOWN -> Color(0xffb57b13)
         DscStatus.INVALID -> Color(0xffc33232)
       }
       Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
         .size(with(density){width.toDp()}, with(density){height.toDp()})
         .border(1.dp,color).clickable { onTap(sig.id) }) {
-        Text(when(sig.status) { DscStatus.VALID -> "✓"; DscStatus.PERSONALLY_TRUSTED -> "✓*"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
+        Text(when(sig.status) { DscStatus.VALID -> "✓"; DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> "✓*"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
           color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
       }
     }

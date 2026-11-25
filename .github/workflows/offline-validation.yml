@@ -450,6 +450,9 @@ jobs:
           echo "ORG_GRADLE_PROJECT_fileshareDscRust=true" >> "$GITHUB_ENV"
           rustc --version
           cargo ndk --version
+      - name: Prepare verified Indian DSC CA issuer assets
+        if: matrix.group == 'android'
+        run: python3 tool/prepare_indian_dsc_issuers.py
       - name: Verify bundled Android native PDF Tools compile
         if: matrix.group == 'android'
         working-directory: android

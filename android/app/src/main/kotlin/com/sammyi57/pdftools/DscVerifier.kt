@@ -26,7 +26,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
 
-internal enum class DscStatus { VALID, PERSONALLY_TRUSTED, UNKNOWN, INVALID }
+internal enum class DscStatus { VALID, NATIVE_VERIFIED, PERSONALLY_TRUSTED, UNKNOWN, INVALID }
 internal data class DscWidget(val page: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
 internal data class DscResult(
   val id: String, val name: String, val status: DscStatus, val detail: String,
@@ -36,6 +36,8 @@ internal data class DscResult(
   val trustedTime: Date? = null,
   val personalTrust: Boolean = false,
   val canTrustSigner: Boolean = false,
+  val nativeVerdict: String? = null,
+  val certificateHosts: List<String> = emptyList(),
 )
 internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
 
@@ -74,6 +76,7 @@ internal object DscVerifier {
     val bytes = file.readBytes()
     require(bytes.size.toLong() <= MAX_PDF) { "PDF exceeds DSC verification safety limit" }
     val trust = (DscRoots.bundled() + DscTrust.load()).distinctBy { DscSignedBytes.sha256(it.encoded) }
+    val cachedIssuers = (DscImportedIssuers.load() + DscIndiaCatalog.bundled()).distinctBy { DscSignedBytes.sha256(it.encoded) }
     val fetchedCrls = mutableMapOf<String, X509CRL?>()
     val fetchedOcsp = mutableMapOf<String, ByteArray?>()
     val fetchedIssuers = mutableMapOf<String, List<X509Certificate>>()
@@ -127,9 +130,9 @@ internal object DscVerifier {
               parts.whole || (result?.status == "valid" && result.modification == "allowed")
             if (sig.subFilter == "ETSI.RFC3161") {
               val stamp = DscTimestamp.document(parts.cms, parts.signed)
-              var chain = buildChain(stamp.signer, stamp.certificates + dss.certificates, trust, stamp.time)
+              var chain = buildChain(stamp.signer, stamp.certificates + dss.certificates + cachedIssuers, trust, stamp.time)
               if(chain.isEmpty() && online && trust.isNotEmpty()) {
-                val extra = discoverIssuers(stamp.signer, stamp.certificates + dss.certificates, trust, fetchedIssuers)
+                val extra = discoverIssuers(stamp.signer, stamp.certificates + dss.certificates + cachedIssuers, trust, fetchedIssuers)
                 chain = buildChain(stamp.signer, extra, trust, stamp.time)
               }
               val rev = if(chain.size >= 2) checkRevocation(chain, stamp.cms, dss, online,
@@ -157,7 +160,7 @@ internal object DscVerifier {
               val pool = rawCerts.flatMap { DscTrust.parse(it) }
               val cert = pool.first()
               val intact = DscLegacy.verify(parts.signed, parts.cms, cert)
-              val chain = if(intact) buildChain(cert, pool + dss.certificates, trust) else emptyList()
+              val chain = if(intact) buildChain(cert, pool + dss.certificates + cachedIssuers, trust) else emptyList()
               return@mapIndexed DscResult(id, cert.subjectX500Principal.name,
                 if(!intact || nativeFor(cert)?.status == "invalid") DscStatus.INVALID else DscStatus.UNKNOWN,
                 if(!intact) "Legacy RSA signature does not match signed bytes"
@@ -174,7 +177,7 @@ internal object DscVerifier {
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
-                  var pool = embedded + dss.certificates
+                  var pool = embedded + dss.certificates + cachedIssuers
                   val personalTrust = DscSignerTrust.contains(cert)
                   val stamp = DscTimestamp.attached(cms)
                   val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
@@ -219,6 +222,12 @@ internal object DscVerifier {
                   }
                   val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val currentValidity = runCatching { cert.checkValidity(at); true }.getOrDefault(false)
+                  val nativeVerified = DscVerdictPolicy.nativeVerified(intact, revisionAccepted && signingUsage && documentEku && strong,
+                    currentValidity, chain.isNotEmpty(), nativeResult?.status == "valid" && nativeResult?.integrityChecked == true,
+                    rev == "Revoked" || nativeRejected)
+                  val hosts = (if(revChain.isEmpty()) listOf(cert) else revChain.dropLast(1)).flatMap {
+                    crlUrls(it) + aiaUrls(it, AccessDescription.id_ad_ocsp)
+                  }.mapNotNull { runCatching { it.toHttpUrl().host }.getOrNull() }.distinct()
                   val canTrust = (revisionAccepted || nativeResult?.modification == "allowed") && signingUsage && documentEku && strong && currentValidity && !nativeRejected && rev != "Revoked"
                   val personalAccepted = DscPersonalPolicy.accepted(personalTrust, intact,
                     revisionAccepted && signingUsage && documentEku && strong, currentValidity,
@@ -233,18 +242,20 @@ internal object DscVerifier {
                     personalAccepted && (chain.isEmpty() || rev != "Good") ->
                       "Signature integrity verified by PDF Craft; you personally trust this exact signer. CA/revocation verification is separate."
                     chain.isEmpty() -> "Signer identity not trusted. Review the signer and tap Trust signer."
+                    nativeVerified && rev != "Good" -> "PDF Craft verified the signature and CA chain. Revocation evidence is not confirmed; this is not full validation."
                     rev != "Good" -> "Integrity and trust verified; current revocation status not established"
                     !parts.whole -> "Verified signature; permitted later revisions: " + nativeResult?.changes.orEmpty().joinToString(", ")
                     else -> "Original signed bytes, trusted certificate chain and revocation evidence verified"
                   }
                   val status = when {
                     rev == "Revoked" || nativeRejected -> DscStatus.INVALID
-                    revisionAccepted && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    revisionAccepted && signingUsage && documentEku && strong && currentValidity && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    nativeVerified -> DscStatus.NATIVE_VERIFIED
                     personalAccepted -> DscStatus.PERSONALLY_TRUSTED
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
-                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust)
+                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust, nativeResult?.status, hosts)
                 }
           } catch(e: Exception) {
             // Preserve the native engine's signer metadata even if Java's
@@ -395,9 +406,12 @@ internal object DscVerifier {
       ip.isLinkLocalAddress || ip.isSiteLocalAddress || ip.isMulticastAddress) return false
     val a = ip.address[0].toInt() and 255
     val b = ip.address[1].toInt() and 255
-    // Conservatively exclude special-use, documentation and carrier-grade ranges.
-    return a in 1..223 && a !in listOf(10,127,169,192,198,203) &&
-      !(a == 100 && b in 64..127) && !(a == 172 && b in 16..31)
+    val c = ip.address[2].toInt() and 255
+    return a in 1..223 && a !in listOf(10,127,169) &&
+      !(a == 100 && b in 64..127) && !(a == 172 && b in 16..31) &&
+      !(a == 192 && (b == 168 || b == 0 || (b == 88 && c == 99))) &&
+      !(a == 198 && (b in 18..19 || (b == 51 && c == 100))) &&
+      !(a == 203 && b == 0 && c == 113)
   }
 
   private val http = OkHttpClient.Builder()
@@ -405,8 +419,10 @@ internal object DscVerifier {
       override fun lookup(hostname: String): List<InetAddress> {
         require(hostname.contains('.')) { "Public CA host required" }
         val ips = Dns.SYSTEM.lookup(hostname)
-        require(ips.isNotEmpty() && ips.all(::publicIpv4)) { "Non-public CA address refused" }
-        return ips
+        // Return only vetted IPv4 addresses; dual-stack DNS must not fail just because AAAA is present.
+        val ipv4 = ips.filter { it.address.size == 4 }
+        require(ipv4.isNotEmpty() && ipv4.all(::publicIpv4)) { "Non-public or unavailable CA address refused" }
+        return ipv4
       }
     })
     .proxy(Proxy.NO_PROXY)
@@ -444,10 +460,43 @@ internal object DscVerifier {
           pool.addAll(cache[url].orEmpty().filter(::issuerOf))
         }
         parent = pool.firstOrNull(::issuerOf)
+        if (parent == null) {
+          // Official directory fallback when a PDF omits its CA or AIA fails.
+          for (entry in runCatching { DscIndiaCatalog.matching(current.issuerX500Principal.name) }.getOrDefault(emptyList()).take(2)) {
+            if (entry.url !in cache && cache.size < 6) {
+              cache[entry.url] = fetchEvidence(entry.url, 128 * 1024)?.let { raw ->
+                runCatching { DscTrust.parse(raw).filter { DscIndiaCatalog.authenticIssuer(it, DscRoots.bundled()) } }.getOrDefault(emptyList())
+              }.orEmpty()
+            }
+            for (candidate in cache[entry.url].orEmpty()) {
+              if (issuerOf(candidate)) {
+                pool.add(candidate)
+                runCatching { DscImportedIssuers.add(candidate) }
+              }
+            }
+          }
+          parent = pool.firstOrNull(::issuerOf)
+        }
       }
       current = parent ?: return pool
     }
     return pool
+  }
+
+  /** Explicit one-time refresh; all fetched certificates must chain to a pinned root. */
+  fun syncIndianIssuers(onProgress: (Int, Int) -> Unit = { _, _ -> }): Pair<Int, Int> {
+    val roots = DscRoots.bundled()
+    require(roots.isNotEmpty()) { "Pinned CCA root unavailable" }
+    val entries = DscIndiaCatalog.entries()
+    var success = 0
+    for ((index, entry) in entries.withIndex()) {
+      val raw = fetchEvidence(entry.url, 128 * 1024)
+      val certs = raw?.let { runCatching { DscTrust.parse(it) }.getOrDefault(emptyList()) }.orEmpty()
+      if (certs.any { cert -> DscIndiaCatalog.authenticIssuer(cert, roots) &&
+            runCatching { DscImportedIssuers.add(cert); true }.getOrDefault(false) }) success++
+      onProgress(index + 1, entries.size)
+    }
+    return success to entries.size
   }
 
   private fun fetchCrl(address: String): X509CRL? = fetchEvidence(address, 4 * 1024 * 1024)?.let {

@@ -12,5 +12,8 @@
     <domain includeSubdomains="false">ocvs.gov.in</domain>
     <domain includeSubdomains="false">ca.igcar.gov.in</domain>
     <domain includeSubdomains="false">crl.care4sign.com</domain>
+    <domain includeSubdomains="false">www.e-mudhra.com</domain>
+    <domain includeSubdomains="false">e-mudhra.com</domain>
+    <domain includeSubdomains="false">ocsp.e-mudhra.com</domain>
   </domain-config>
 </network-security-config>
