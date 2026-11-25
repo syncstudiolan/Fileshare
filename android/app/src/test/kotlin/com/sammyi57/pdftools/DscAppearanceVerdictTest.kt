@@ -10,8 +10,9 @@ class DscAppearanceVerdictTest {
       intact: Boolean = true,
       chainTrusted: Boolean = true,
       revocation: String = "Good",
+      nativeVerdict: String? = null,
     ) = DscResult("0:Signature", "Original signer",status,"",
-      integrity=intact,trusted=chainTrusted,revocation=revocation)
+      integrity=intact,trusted=chainTrusted,revocation=revocation,nativeVerdict=nativeVerdict)
 
   @Test fun greenCheckRequiresSignatureIntegrityTrustedCAAndGoodRevocation() {
     assertEquals(DscAppearanceVerdict.VALID,
@@ -35,5 +36,19 @@ class DscAppearanceVerdictTest {
       assertEquals("Partial evidence must not display green: $status",
         DscAppearanceVerdict.UNKNOWN,dscAppearanceVerdict(result(status)))
     }
+  }
+
+  @Test fun nativeVerifiedLegacyShowsQualifiedMarkOnlyWithRealEvidence() {
+    val legacy = DscStatus.LEGACY_NATIVE_VERIFIED
+    assertEquals(DscAppearanceVerdict.VERIFIED_WITH_WARNINGS,
+      dscAppearanceVerdict(result(legacy,revocation="Not established",nativeVerdict="valid")))
+    assertEquals(DscAppearanceVerdict.UNKNOWN,
+      dscAppearanceVerdict(result(legacy,intact=false,revocation="Not established",nativeVerdict="valid")))
+    assertEquals(DscAppearanceVerdict.UNKNOWN,
+      dscAppearanceVerdict(result(legacy,chainTrusted=false,revocation="Not established",nativeVerdict="valid")))
+    assertEquals(DscAppearanceVerdict.UNKNOWN,
+      dscAppearanceVerdict(result(legacy,revocation="Not established",nativeVerdict="unknown")))
+    assertEquals(DscAppearanceVerdict.INVALID,
+      dscAppearanceVerdict(result(legacy,revocation="Revoked",nativeVerdict="valid")))
   }
 }
