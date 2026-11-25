@@ -10,7 +10,6 @@ import org.bouncycastle.asn1.x509.Extension
 import org.bouncycastle.asn1.x509.GeneralName
 import org.bouncycastle.asn1.x509.GeneralNames
 import org.bouncycastle.asn1.ASN1OctetString
-import org.bouncycastle.cert.jcajce.JcaX509CRLConverter
 import org.bouncycastle.cms.CMSSignedData
 import java.io.File
 import java.net.InetAddress
@@ -244,7 +243,7 @@ internal object DscVerifier {
       online: Boolean, fetched: MutableMap<String, X509CRL?>, ocspCache: MutableMap<String, ByteArray?>, at: Date): String {
     val now = Date()
     val crls = cms.getCRLs().getMatches(null).mapNotNull { holder ->
-      runCatching { JcaX509CRLConverter().setProvider(provider).getCRL(holder) }.getOrNull()
+      runCatching { DscCertificates.crl(holder) }.getOrNull()
     }
     var complete = true
     for ((cert, issuer) in chain.zipWithNext()) {
