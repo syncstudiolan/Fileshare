@@ -1,6 +1,7 @@
 package com.sammyi57.pdftools
 
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.PDResources
@@ -30,13 +31,25 @@ internal fun replaceDscNamedStatusLayers(
   }
   if (old.values.any { it == null }) return false
 
-  fun layer(key: String, draw: (PDPageContentStream) -> Unit): PDAppearanceStream {
+  fun layer(key: String, draw: (PDPageContentStream, PDRectangle) -> Unit): PDAppearanceStream {
     val prior = old.getValue(key)!!
+    val box = prior.bBox
+    require(box.width > 0f && box.height > 0f &&
+      box.width.isFinite() && box.height.isFinite()) {
+      "Unusable original signature status layer rectangle"
+    }
     val appearance = PDAppearanceStream(pdf).apply {
-      bBox = prior.bBox
+      bBox = box
       resources = PDResources()
     }
-    PDPageContentStream(pdf, appearance).use(draw)
+    // The original status layer may have a matrix and optional-content
+    // visibility. Retain these from the REAL PDF (never invent coordinates).
+    for (key in listOf(COSName.MATRIX, COSName.OC)) {
+      prior.cosObject.getDictionaryObject(key)?.let {
+        appearance.cosObject.setItem(key, it)
+      }
+    }
+    PDPageContentStream(pdf, appearance).use { draw(it, box) }
     return appearance
   }
   val checked = verdict in setOf(DscAppearanceVerdict.VALID,
@@ -44,37 +57,42 @@ internal fun replaceDscNamedStatusLayers(
   val ink = if (checked) intArrayOf(25, 140, 70) else intArrayOf(190, 43, 44)
   val iconLayer = if (checked) "n1" else "n3"
   val blankLayer = if (checked) "n3" else "n1"
-  val icon = layer(iconLayer) { stream ->
+  val icon = layer(iconLayer) { stream, box ->
+    // Lucide-style check/cross, centred *inside the original n1/n3 bbox*.
+    // Fixed 100-unit drawing coordinates would overflow UIDAI signatures.
+    val side = minOf(box.width, box.height)
+    val x = box.lowerLeftX + (box.width-side)*.5f
+    val y = box.lowerLeftY + (box.height-side)*.5f
     stream.setStrokingColor(ink[0], ink[1], ink[2])
-    stream.setLineWidth(8f)
+    stream.setLineWidth((side*.085f).coerceAtLeast(.25f))
     if (checked) {
-      stream.moveTo(16f, 51f)
-      stream.lineTo(40f, 27f)
-      stream.lineTo(85f, 78f)
+      stream.moveTo(x+side*.17f,y+side*.53f)
+      stream.lineTo(x+side*.40f,y+side*.30f)
+      stream.lineTo(x+side*.84f,y+side*.77f)
     } else {
-      stream.moveTo(22f, 22f)
-      stream.lineTo(78f, 78f)
-      stream.moveTo(22f, 78f)
-      stream.lineTo(78f, 22f)
+      stream.moveTo(x+side*.20f,y+side*.20f)
+      stream.lineTo(x+side*.80f,y+side*.80f)
+      stream.moveTo(x+side*.20f,y+side*.80f)
+      stream.lineTo(x+side*.80f,y+side*.20f)
     }
     stream.stroke()
   }
-  val blank = layer(blankLayer) { _ -> }
-  val caption = layer("n4") { stream ->
+  val blank = layer(blankLayer) { _, _ -> }
+  val caption = layer("n4") { stream, box ->
     val label = when (verdict) {
       DscAppearanceVerdict.VALID -> "Signature Valid"
       DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Integrity Verified*"
       DscAppearanceVerdict.INVALID -> "Signature Invalid"
       DscAppearanceVerdict.UNKNOWN -> "Not Verified"
     }
-    val box = old.getValue("n4")!!.bBox
-    val width = (box.width - 2f).coerceAtLeast(1f)
+    val width = (box.width*.94f).coerceAtLeast(1f)
     val measured = PDType1Font.HELVETICA_BOLD.getStringWidth(label)/1000f
-    val size = minOf(4.7f, width/measured)
+    val size = minOf(box.height*.62f, width/measured).coerceAtLeast(.25f)
     stream.setNonStrokingColor(ink[0], ink[1], ink[2])
     stream.beginText()
     stream.setFont(PDType1Font.HELVETICA_BOLD, size)
-    stream.newLineAtOffset(box.lowerLeftX+1f,box.lowerLeftY+2f)
+    stream.newLineAtOffset(box.lowerLeftX+box.width*.03f,
+      box.lowerLeftY+(box.height-size*.72f)*.5f)
     stream.showText(label)
     stream.endText()
   }
