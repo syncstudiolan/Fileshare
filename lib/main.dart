@@ -1868,7 +1868,8 @@ class LiveTransferCard extends StatelessWidget {
     }
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: FileTheme.pink.withValues(alpha: .12),
+        color: incoming?Colors.white.withValues(alpha:.12):
+          FileTheme.pink.withValues(alpha:.12),
         borderRadius: BorderRadius.circular(12)),
       child: Center(child: Icon(
         file.name.toLowerCase().endsWith('.pdf')
@@ -1876,7 +1877,7 @@ class LiveTransferCard extends StatelessWidget {
           : (file.name.toLowerCase().endsWith('.mp4')
              ? Icons.play_circle_outline_rounded
              : Icons.insert_drive_file_outlined),
-        color: FileTheme.pink, size: 42)));
+        color:incoming?Colors.white:FileTheme.pink, size:42)));
   }
 
   void _preview(BuildContext context, LanFile file) {
@@ -3742,7 +3743,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                     itemCount:groups.length,
                     itemBuilder:(_,i){
                       final group=groups[i];
-                      return RepaintBoundary(
+                      // ListView.addRepaintBoundaries already supplies the GPU
+                    // layer; avoid redundant nested boundaries per card.
+                    return KeyedSubtree(
                         key:ValueKey('card:${_keyOf(group)}'),
                         child:_multiSelectCard(group));
                     }),
