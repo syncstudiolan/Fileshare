@@ -351,9 +351,9 @@ fun ToolScreen(id: String, resume: Boolean) {
 
   sendResult?.let { selected ->
     if (sendResultPageCount > 0) PdfSendPicker(selected.first.path,
-      selected.first.name, 1, sendResultPageCount, selected.second) {
+      selected.first.name, 1, sendResultPageCount, selected.second, onClose = {
         sendResult = null
-      }
+      })
   }
   if (appFiles) AppFilesPicker(multi, files.map { it.path }, { appFiles = false }) { picked -> addFiles(if (multi) picked.filter { p -> files.none { it.path == p.path } } else picked) }
   locked.firstOrNull()?.let { f ->
