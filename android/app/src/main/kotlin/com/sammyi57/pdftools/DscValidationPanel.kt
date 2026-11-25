@@ -34,12 +34,15 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
   var confirmedFingerprints by remember { mutableStateOf<Map<String,String>>(emptyMap()) }
   var message by remember { mutableStateOf("") }
   var managing by remember { mutableStateOf(false) }
+  var issuers by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var saving by remember { mutableStateOf(false) }
   LaunchedEffect(managing) {
     if (managing) {
       trusted = withContext(Dispatchers.IO) { DscTrust.load() }
       signers = withContext(Dispatchers.IO) { DscSignerTrust.load() }
       builtIn = withContext(Dispatchers.IO) { DscRoots.bundled() }
+      issuers = withContext(Dispatchers.IO) { DscImportedIssuers.load() }
     }
   }
   val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -59,21 +62,27 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             DscTrust.parse(out.toByteArray())
           }
         }
-        message = "Compare the SHA-256 fingerprint with an independent official CA source before trusting."
+        managing = true
+        message = "${imported.size} certificate(s) loaded. Select the import action below."
       } catch (e: Exception) { message = e.message ?: "Unable to import certificate" }
     }
   }
-  ModalBottomSheet(onDismissRequest = onClose, containerColor = c.surface) {
+  ModalBottomSheet(onDismissRequest = onClose, sheetState = sheetState, containerColor = c.surface) {
     Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(18.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("Signature validation", style = MaterialTheme.typography.titleLarge, color = c.ink)
       Text(if (DscRustBridge.available) "PDF Craft native verifier available" else "Native verifier unavailable; advanced revision checks are limited", color = c.sub)
-      if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+      if (busy) {
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+        Text("Checking signature and certificate evidence…", color = c.sub)
+      }
+      if(message.isNotEmpty()) Text(message, color = c.ink)
+      Button(enabled = !busy && !trusting, onClick = onValidate, modifier = Modifier.fillMaxWidth()) { Text(if(busy) "Validating…" else "Validate signature") }
       val signatures = document.signatures.sortedBy { if (it.id == selected) 0 else 1 }
       for (sig in signatures) {
         val displayStatus = if(busy) DscStatus.UNKNOWN else sig.status
         val statusColor = when(displayStatus) {
-          DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED -> Color(0xff18834b)
+          DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> Color(0xff18834b)
           DscStatus.UNKNOWN -> Color(0xffb57b13)
           DscStatus.INVALID -> Color(0xffc33232)
         }
@@ -81,6 +90,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           verticalArrangement = Arrangement.spacedBy(5.dp)) {
           Text(when(displayStatus) {
             DscStatus.VALID -> "✓ Signature valid"
+            DscStatus.NATIVE_VERIFIED -> "✓* Signature verified — revocation unconfirmed"
             DscStatus.PERSONALLY_TRUSTED -> "✓ Signature valid — personally trusted"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
@@ -90,6 +100,8 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           Text("Integrity: " + if(sig.integrity) "Verified" else "Not established", color = c.sub)
           Text("Trust: " + when { sig.trusted -> "CA chain verified"; sig.personalTrust -> "Personally trusted signer (not CA verified)"; else -> "Not established" }, color = c.sub)
           Text("Revocation: ${sig.revocation}", color = c.sub)
+          sig.nativeVerdict?.let { Text("PDF Craft result: $it", color = c.sub) }
+          if(sig.certificateHosts.isNotEmpty()) Text("Certificate servers: " + sig.certificateHosts.joinToString(", "), color = c.sub)
           Text("Validation time: " + (sig.trustedTime?.toString() ?: "Current device time; no trusted timestamp"), color = c.sub)
           sig.certificate?.let { cert ->
             Text("Issued by: ${cert.issuerX500Principal.name}", color = c.sub)
@@ -121,7 +133,8 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         }
       }
       if (signatures.isEmpty()) Text("No digital signature found", color = c.sub)
-      TextButton(onClick = { managing = !managing }) { Text(if(managing) "Hide trusted certificates" else "Trusted certificates") }
+      OutlinedButton(enabled = !busy && !trusting, onClick = { managing = true; pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import downloaded certificate") }
+      TextButton(onClick = { managing = !managing }) { Text(if(managing) "Hide certificate manager" else "Manage trusted certificates") }
       if (managing) {
         Text("Personally trusted signers", style = MaterialTheme.typography.titleMedium, color = c.ink)
         for (cert in signers) {
@@ -132,6 +145,15 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             signers = withContext(Dispatchers.IO) { DscSignerTrust.load() }
             onValidate()
           } }) { Text("Remove signer trust") }
+        }
+        Text("Imported issuer certificates", style = MaterialTheme.typography.titleMedium, color = c.ink)
+        for (cert in issuers) {
+          Text(cert.subjectX500Principal.name, color = c.ink)
+          TextButton(enabled = !busy, onClick = { scope.launch {
+            withContext(Dispatchers.IO) { DscImportedIssuers.remove(cert) }
+            issuers = withContext(Dispatchers.IO) { DscImportedIssuers.load() }
+            onValidate()
+          } }) { Text("Remove issuer") }
         }
         Text("CA certificates (advanced)", style = MaterialTheme.typography.titleMedium, color = c.ink)
         if (builtIn.isEmpty()) Text("Built-in CCA certificate could not be loaded; verification remains limited.", color = c.sub)
@@ -154,12 +176,35 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             android.net.Uri.parse("https://cca.gov.in/root_certificate.html"))) }
             .onFailure { message = "Unable to open CCA website" }
         }) { Text("Official CCA website (optional)") }
-        Text("Confirm the root fingerprint through CCA (verifyroot@cca.gov.in) before importing.", color = c.sub)
+        Text("Download CER / CRT / PEM, tap Import downloaded certificate, then select the file in Downloads. Known CCA roots are checked automatically; unknown roots need independent fingerprint confirmation.", color = c.sub)
         OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }) { Text("Import CER / CRT / PEM") }
         for (cert in imported) {
           val fingerprint = DscSignedBytes.sha256(cert.encoded)
           Text(cert.subjectX500Principal.name, color = c.ink)
           Text("SHA-256: $fingerprint", color = c.sub)
+          if(DscRoots.isPinned(cert)) {
+            Button(enabled = !busy && !trusting, onClick = { scope.launch {
+              try {
+                withContext(Dispatchers.IO) { DscTrust.add(cert, fingerprint) }
+                imported = imported.filterNot { it == cert }
+                trusted = withContext(Dispatchers.IO) { DscTrust.load() }
+                message = "Known CCA root imported. Validating again."
+                onValidate()
+              } catch(e: Exception) { message = e.message ?: "Import failed" }
+            } }) { Text("Import verified CCA root & validate") }
+          } else if(cert.basicConstraints >= 0 && cert.subjectX500Principal != cert.issuerX500Principal) {
+            Button(enabled = !busy && !trusting, onClick = { scope.launch {
+              try {
+                withContext(Dispatchers.IO) { DscImportedIssuers.add(cert) }
+                imported = imported.filterNot { it == cert }
+                issuers = withContext(Dispatchers.IO) { DscImportedIssuers.load() }
+                message = "Issuer imported. Checking chain against trusted roots."
+                onValidate()
+              } catch(e: Exception) { message = e.message ?: "Import failed" }
+            } }) { Text("Import issuer & validate") }
+          } else if(cert.basicConstraints < 0) {
+            Text("This is a signer certificate, not a CA root. Use Trust signer on the matching PDF.", color = c.sub)
+          } else {
           OutlinedTextField(value = confirmedFingerprints[fingerprint].orEmpty(),
             onValueChange = { confirmedFingerprints = confirmedFingerprints + (fingerprint to it.take(128)) },
             label = { Text("Independently verified SHA-256 fingerprint") }, singleLine = true,
@@ -177,10 +222,10 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
               } catch(e: Exception) { message = e.message ?: "Unable to save trust" }
             }
           }) { Text("Trust this CA fingerprint") }
+          }
         }
       }
-      if(message.isNotEmpty()) Text(message, color = c.sub)
-      Button(enabled = !busy, onClick = onValidate, modifier = Modifier.fillMaxWidth()) { Text("Validate again") }
+      if(message.isNotEmpty()) Text(message, color = c.ink)
       Text("Save and Cart preserve the original signed bytes, not a flattened green tick.", color = c.sub)
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(enabled = !saving && !busy, onClick = {
