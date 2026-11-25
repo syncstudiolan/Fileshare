@@ -1749,10 +1749,6 @@ class _TransferBubblePainter extends CustomPainter {
         ]);
     canvas.drawPath(path,Paint()..shader=gradient.createShader(
       Rect.fromLTWH(0,0,size.width,size.height)));
-    canvas.drawPath(path,Paint()
-      ..style=PaintingStyle.stroke
-      ..strokeWidth=1.5
-      ..color=dark?const Color(0xFFDFE5FF):const Color(0xFFFFFFFF));
   }
 
   @override
