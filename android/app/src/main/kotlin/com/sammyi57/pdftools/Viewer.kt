@@ -49,8 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material3.Text
@@ -306,7 +304,7 @@ fun PdfViewerScreen(path: String, name: String) {
       )
       SelectionHandles(state, c.accent)
       if (!searching) dsc?.let { result ->
-        DscSignatureOverlay(state, result, dscBusy, showOriginalSignature) { id ->
+        DscSignatureOverlay(state, result) { id ->
           selectedSignature = id; dscPanel = true
           if (!dscBusy && result.signatures.any { it.id == id && it.status == DscStatus.UNKNOWN }) { dscBusy = true; dscRevision++ }
         }
@@ -377,8 +375,8 @@ fun PdfViewerScreen(path: String, name: String) {
 /** Signature hit targets use the viewer's own page-to-screen mapping. */
 @OptIn(ExperimentalPdfApi::class)
 @Composable
-private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy: Boolean,
-    showOriginal: Boolean, onTap: (String) -> Unit) {
+private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument,
+    onTap: (String) -> Unit) {
   val density = LocalDensity.current
   state.zoom; state.firstVisiblePageOffset
   Box(Modifier.fillMaxSize().clipToBounds()) {
@@ -391,7 +389,6 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
       val width = kotlin.math.abs(b.x - a.x)
       val height = kotlin.math.abs(b.y - a.y)
       if (!width.isFinite() || !height.isFinite() || width < 1f || height < 1f) continue
-      val displayStatus = if (busy) DscStatus.UNKNOWN else sig.status
       // Zero-paint transparent hit box. The original signature's contents
       // remain visible for UNKNOWN; VALID/INVALID is rendered in-place by
       // the PDF engine from its temporary viewer-only appearance stream.
