@@ -89,7 +89,7 @@ internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): I
     ?.filterIsInstance<PDSignatureField>().orEmpty()
   var changed = 0
   pdf.signatureDictionaries.forEachIndexed { index, signed ->
-    val sig = result.signatures.firstOrNull { it.id.startsWith("$"+"{index}:") }
+    val sig = result.signatures.firstOrNull { it.id.startsWith(index.toString() + ":") }
       ?: return@forEachIndexed
     val verdict = dscAppearanceVerdict(sig)
     if(verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
@@ -126,7 +126,6 @@ private fun drawViewerSignature(
   // art and its original colored background remain as drawn in the PDF.
   PDPageContentStream(document, appearance).use { stream ->
     val green = verdict == DscAppearanceVerdict.VALID
-    val red = verdict == DscAppearanceVerdict.INVALID
     val accent = if (green) intArrayOf(0, 135, 74) else intArrayOf(191, 40, 40)
     val title = if (green) "Signature valid" else "Signature invalid"
     // The mark sits BELOW the heading, not through it.
