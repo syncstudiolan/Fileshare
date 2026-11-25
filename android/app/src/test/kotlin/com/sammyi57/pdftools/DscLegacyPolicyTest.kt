@@ -90,7 +90,7 @@ class DscLegacyPolicyTest {
   @Test fun visualCopyNeverTreatsUnknownOrRevokedAsVerified() {
     for (status in DscStatus.entries) {
       val sig = DscResult("a","signer",status,"test",integrity=true,trusted=true)
-      assertEquals(status == DscStatus.VALID || status == DscStatus.LEGACY_NATIVE_VERIFIED, hasVerifiedAppearance(sig))
+      assertEquals(status == DscStatus.VALID || status == DscStatus.LEGACY_NATIVE_VERIFIED || status == DscStatus.NATIVE_VERIFIED, hasVerifiedAppearance(sig))
       assertFalse(hasVerifiedAppearance(sig.copy(integrity=false)))
       assertFalse(hasVerifiedAppearance(sig.copy(trusted=false)))
       assertFalse(hasVerifiedAppearance(sig.copy(revocation="Revoked")))

@@ -19,7 +19,7 @@ import java.io.File
 
 internal fun hasVerifiedAppearance(sig: DscResult): Boolean =
   sig.integrity && sig.trusted && sig.revocation != "Revoked" &&
-    (sig.status == DscStatus.VALID || sig.status == DscStatus.LEGACY_NATIVE_VERIFIED)
+    (sig.status == DscStatus.VALID || sig.status == DscStatus.LEGACY_NATIVE_VERIFIED || sig.status == DscStatus.NATIVE_VERIFIED)
 
 /** One shared painter for viewport and the clearly identified unsigned visual copy.
  * Never edits the original PDF or claims that a flattened image is a DSC. */
@@ -48,7 +48,7 @@ internal fun paintDscAppearance(canvas: Canvas, rect: RectF, sig: DscResult, vis
       if (measured > 224f) p.textSize = size * 224f / measured
       canvas.drawText(value, 8f, y, p)
     }
-    line(if (visualCopy) "Original signature checked*" else if (legacy) "Signature verified*" else "Signature valid", 26f, 23f)
+    line(if (visualCopy) "Original signature checked*" else if (legacy || sig.revocation != "Good") "Signature verified*" else "Signature valid", 26f, 23f)
     line("Digitally signed by", 46f, 15f)
     line(signer.take(100), 64f, 15f)
     sig.claimedSigningDate?.let { line("Claimed date: " + it, 81f, 13f) }
@@ -64,7 +64,9 @@ internal fun paintDscAppearance(canvas: Canvas, rect: RectF, sig: DscResult, vis
     canvas.drawPath(tick, p)
     if (legacy) {
       line("* Legacy SHA-1", 163f, 13f, warning, true)
-      line(if (sig.revocation == "Good") "Revocation checked" else "Revocation unconfirmed", 178f, 13f, warning)
+      line(if (sig.revocation == "Good") "Revocation checked" else "CA status not available", 178f, 13f, warning)
+    } else if (sig.revocation != "Good") {
+      line("* CA revocation status unavailable", 178f, 13f, warning)
     }
     line(if (visualCopy) "UNSIGNED VISUAL COPY" else "File Share verification", 194f, 13f, dark, visualCopy)
   } finally { canvas.restoreToCount(save) }
