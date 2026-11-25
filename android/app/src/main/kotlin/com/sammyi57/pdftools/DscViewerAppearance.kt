@@ -33,6 +33,33 @@ internal fun dscAppearanceVerdict(sig: DscResult): DscAppearanceVerdict = when {
   else -> DscAppearanceVerdict.UNKNOWN
 }
 
+/** Signature text comes from the current PDF/signature, never from a
+ * document template or a hard-coded identity. Qualified status is distinct
+ * from a modern-policy valid signature on both viewer and export.
+ */
+internal fun dscAppearanceLabel(verdict: DscAppearanceVerdict): String = when(verdict) {
+  DscAppearanceVerdict.VALID -> "Signature valid"
+  DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Signature integrity verified*"
+  DscAppearanceVerdict.INVALID -> "Signature invalid"
+  DscAppearanceVerdict.UNKNOWN -> "Signature not established"
+}
+
+internal fun dscAppearanceFacts(sig: DscResult, signer: String,
+    reason: String, location: String, verdict: DscAppearanceVerdict): List<String> {
+  val result = mutableListOf<String>()
+  signer.trim().takeIf { it.isNotEmpty() }?.let { result.add("Digitally signed by $it") }
+  sig.claimedSigningDate?.trim()?.takeIf { it.isNotEmpty() }?.let { result.add("Date: $it") }
+  reason.trim().takeIf { it.isNotEmpty() }?.let { result.add("Reason: $it") }
+  location.trim().takeIf { it.isNotEmpty() }?.let { result.add("Location: $it") }
+  if (verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS) {
+    result.add("* Legacy SHA-1: modern validity not established")
+  }
+  if (verdict != DscAppearanceVerdict.UNKNOWN && sig.revocation != "Good") {
+    result.add("* Revocation: ${sig.revocation}")
+  }
+  return result
+}
+
 /**
  * Render-only PDF copy. It rewrites the /AP N stream of VERIFIED/INVALID
  * signature widgets in a temporary, explicitly unsigned preview, so the PDF
@@ -187,11 +214,7 @@ private fun drawViewerSignature(
   PDPageContentStream(document, appearance).use { stream ->
     val green = verdict == DscAppearanceVerdict.VALID || verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
     val accent = if (green) intArrayOf(0, 135, 74) else intArrayOf(191, 40, 40)
-    val title = when(verdict) {
-      DscAppearanceVerdict.VALID -> "Signature valid"
-      DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Signature integrity verified*"
-      else -> "Signature invalid"
-    }
+    val title = dscAppearanceLabel(verdict)
     // The mark sits BELOW the heading, not through it.
     val markW = width * .26f
     val markH = height * .28f
@@ -217,12 +240,7 @@ private fun drawViewerSignature(
       sig.certificate?.let(DscCertificates::displayName).orEmpty()
         .ifBlank { sig.name }
     }
-    val facts = listOfNotNull(
-      signer.trim().takeIf { it.isNotEmpty() }?.let { "Digitally signed by $it" },
-      sig.claimedSigningDate?.trim()?.takeIf { it.isNotEmpty() }?.let { "Date: $it" },
-      originalReason.trim().takeIf { it.isNotEmpty() }?.let { "Reason: $it" },
-      originalLocation.trim().takeIf { it.isNotEmpty() }?.let { "Location: $it" },
-    )
+    val facts = dscAppearanceFacts(sig, signer, originalReason, originalLocation, verdict)
     fun line(text: String, baseline: Float, fontSize: Float, bold: Boolean = false) {
       // Built-in Helvetica has WinAnsi coverage only. Do not invent glyphs:
       // skip unsupported code points rather than crash the viewer.
@@ -240,15 +258,16 @@ private fun drawViewerSignature(
       stream.showText(cleaned)
       stream.endText()
     }
-    val titleSize = (height * .14f).coerceIn(7f, 19f)
+    // Content-aware layout rather than the PAN-card template dimensions.
+    // Keep the full source-derived signature identity before optional details.
+    val titleSize = (height * .14f).coerceIn(5f, 19f)
     line(title, height*.84f, titleSize, true)
-    val lineSize = (height*.095f).coerceIn(5f, 12f)
-    val step = lineSize*1.25f
-    val displayFacts = if(verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS)
-      listOf("* Legacy SHA-1; revocation not established") + facts
-      else facts
-    displayFacts.take(4).forEachIndexed { index, fact ->
-      line(fact, height*.67f-index*step, lineSize)
+    val availableHeight = (height*.56f).coerceAtLeast(0f)
+    val targetLineSize = (height*.095f).coerceIn(4f, 12f)
+    val perLine = targetLineSize*1.24f
+    val lines = minOf(facts.size, (availableHeight / perLine).toInt().coerceAtLeast(0))
+    facts.take(lines).forEachIndexed { index, fact ->
+      line(fact, height*.66f-index*perLine, targetLineSize)
     }
     // The renderer itself—not a second Compose overlay—now owns the status.
   }
