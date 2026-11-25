@@ -54,6 +54,8 @@ jobs:
         run: python3 -m unittest discover -s tool -p 'test_publish_update_manifest.py' -v
       - name: Verify Android signing parser against legacy and current SDK output
         run: python3 -m unittest discover -s tool -p 'test_verify_android_signing.py' -v
+      - name: Verify DSC native build command contract
+        run: python3 -m unittest discover -s tool -p 'test_dsc_build_command.py' -v
       - name: Prove reciprocal LAN and photo Cart format before compiling
         run: flutter test --reporter expanded --timeout 2m test/cross_platform_lan_convergence_test.dart test/image_editing_test.dart test/file_share_updates_test.dart
 
@@ -434,15 +436,17 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android
           rustup default 1.95.0
-          cargo install cargo-ndk --locked
-          # Match the runner's installed NDK (or install the current supported NDK).
-          ndk="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
-          if [[ -z "$ndk" ]]; then
+          cargo install cargo-ndk --version 4.1.2 --locked
+          # Pin the DSC compiler instead of choosing an arbitrary newest/preview NDK.
+          ndk="$ANDROID_HOME/ndk/28.2.13676358"
+          if [[ ! -d "$ndk/toolchains/llvm" ]]; then
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
-            ndk="$ANDROID_HOME/ndk/28.2.13676358"
           fi
           test -d "$ndk/toolchains/llvm"
-          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          for key in ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK; do
+            echo "$key=$ndk" >> "$GITHUB_ENV"
+          done
+          cargo ndk --help | grep -F -- '--platform'
           echo "ORG_GRADLE_PROJECT_fileshareDscRust=true" >> "$GITHUB_ENV"
           rustc --version
           cargo ndk --version
