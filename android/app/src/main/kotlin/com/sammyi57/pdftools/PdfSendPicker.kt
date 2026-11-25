@@ -39,6 +39,7 @@ fun PdfSendPicker(
   toCart: Boolean,
   preserveSigned: Boolean = false,
   expectedSignedHash: String? = null,
+  visualCopy: (suspend () -> File)? = null,
   // Keep the callback last: legacy scanner/editor callers use trailing lambdas.
   onClose: () -> Unit,
 ) {
@@ -48,12 +49,26 @@ fun PdfSendPicker(
   var compressResult by remember(preserveSigned) { mutableStateOf(false) }
   var busy by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf("") }
+  var sendVisualCopy by remember { mutableStateOf(false) }
   AlertDialog(
     onDismissRequest = { if (!busy) onClose() },
     title = { Text(if (toCart) "Add PDF to File Share Cart" else "Share PDF") },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (preserveSigned) Text("Signed or unverified PDF: the complete original file will be sent unchanged. Page extraction and compression are disabled.")
+        if (preserveSigned) {
+          if (visualCopy == null) Text("Signed or unverified PDF: the complete original file will be sent unchanged. Page extraction and compression are disabled.")
+          else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              RadioButton(selected = !sendVisualCopy, enabled = !busy, onClick = { sendVisualCopy = false })
+              Text("Original signed PDF (keeps digital signature)")
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              RadioButton(selected = sendVisualCopy, enabled = !busy, onClick = { sendVisualCopy = true })
+              Text("Visual verification copy (unsigned)")
+            }
+            if (sendVisualCopy) Text("Creates a new, unencrypted image PDF marked UNSIGNED VISUAL COPY on every page. The displayed verification is a record only, not a digital signature. Share the original for independent validation.")
+          }
+        }
         else listOf("current" to "Current page ($currentPage)", "all" to "Whole document ($pageCount pages)", "range" to "Choose pages").forEach { (id, label) ->
           Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = selection == id, onClick = { selection = id })
@@ -78,7 +93,9 @@ fun PdfSendPicker(
         busy = true
         scope.launch {
           try {
-            val file = preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned, expectedSignedHash)
+            val file = if (sendVisualCopy) {
+              requireNotNull(visualCopy) { "Verification copy is unavailable; reopen and verify the original PDF." }.invoke()
+            } else preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned, expectedSignedHash)
             if (toCart) {
               val app = appContext as FileShareApplication
               check(app.stagePdfFromTools(file, file.name)) { "Unable to stage this PDF in File Share" }

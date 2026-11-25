@@ -256,7 +256,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         }
       }
       if(message.isNotEmpty()) Text(message, color = c.ink)
-      Text("Save and Cart preserve the original signed bytes, not a flattened green tick.", color = c.sub)
+      Text("Save preserves the original digital signature. Share or Cart offers a separate unsigned visual copy when all signatures are verified.", color = c.sub)
       TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Back to PDF") }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(enabled = !saving && !busy, onClick = {
