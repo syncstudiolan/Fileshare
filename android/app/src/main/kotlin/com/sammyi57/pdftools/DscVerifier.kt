@@ -108,8 +108,8 @@ internal object DscVerifier {
         // match rather than Kotlin reference identity.
         val field = fields.singleOrNull { candidate ->
           val value = candidate.signature ?: return@singleOrNull false
-          value.byteRange?.contentEquals(sig.byteRange) == true &&
-            value.contents?.contentEquals(sig.contents) == true
+          dscSameSignedData(value.byteRange, value.contents,
+            sig.byteRange, sig.contents)
         }
         val widgets = field?.widgets.orEmpty().mapNotNull { widget ->
           val rect = widget.rectangle ?: return@mapNotNull null
