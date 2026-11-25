@@ -6,11 +6,13 @@ import subprocess
 import tempfile
 import unittest
 
+from verify_dsc_cargo_graph import REVISION, verify
+
 SCRIPT = Path(__file__).resolve().parents[1] / "android/dsc-rust/build-android.sh"
 
 
 class DscBuildCommandTest(unittest.TestCase):
-    def run_wrapper(self, produce_library=True):
+    def run_wrapper(self, produce_library=True, patched=True):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             ndk = root / "ndk"
@@ -25,8 +27,11 @@ class DscBuildCommandTest(unittest.TestCase):
                 "import os,sys,json,pathlib\n"
                 "args=sys.argv[1:]\n"
                 "if args == ['ndk','--version']: sys.exit(0)\n"
+                "if args == ['metadata','--format-version','1','--filter-platform','aarch64-linux-android']:\n"
+                " src='git+https://github.com/storytold/craft-libs?rev='+os.environ['DSC_TEST_REV']+'#'+os.environ['DSC_TEST_REV'] if os.environ['DSC_TEST_PATCHED']=='1' else 'registry+https://github.com/rust-lang/crates.io-index'\n"
+                " print(json.dumps({'packages':[{'name':'hayro-syntax','version':'0.7.2','source':src}]})); sys.exit(0)\n"
                 "assert args[:5] == ['ndk','--target','arm64-v8a','--platform','24'],args\n"
-                "assert args[5] == '--output-dir' and args[7:] == ['build','--release'],args\n"
+                "assert args[5] == '--output-dir' and args[7:] == ['build','--release','--locked'],args\n"
                 "assert os.environ['ANDROID_NDK_HOME']==os.environ['ANDROID_NDK_ROOT']==os.environ['ANDROID_NDK']\n"
                 "pathlib.Path(os.environ['DSC_TEST_LOG']).write_text(json.dumps(args))\n"
                 "if os.environ['DSC_TEST_CREATE']=='1':\n"
@@ -38,10 +43,11 @@ class DscBuildCommandTest(unittest.TestCase):
             env = dict(os.environ, PATH=str(fake_bin)+os.pathsep+os.environ["PATH"],
                        ANDROID_NDK_HOME=str(ndk), ANDROID_NDK_ROOT="/old-ndk",
                        ANDROID_NDK="/other-ndk", DSC_TEST_LOG=str(log),
-                       DSC_TEST_CREATE="1" if produce_library else "0")
+                       DSC_TEST_CREATE="1" if produce_library else "0",
+                       DSC_TEST_REV=REVISION, DSC_TEST_PATCHED="1" if patched else "0")
             process = subprocess.run(["bash", str(SCRIPT), str(output)], env=env,
                                      capture_output=True, text=True)
-            return process, json.loads(log.read_text())
+            return process, json.loads(log.read_text()) if log.exists() else None
 
     def test_platform_flag_not_cargo_package_and_ndk_paths_agree(self):
         result, args = self.run_wrapper()
@@ -51,6 +57,20 @@ class DscBuildCommandTest(unittest.TestCase):
     def test_missing_native_library_fails_build(self):
         result, _ = self.run_wrapper(False)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_wrong_parser_stops_before_compilation(self):
+        result, args = self.run_wrapper(patched=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(args)
+        self.assertIn("Incompatible parser dependency", result.stderr)
+
+    def test_duplicate_registry_parser_is_rejected(self):
+        pinned = "git+https://github.com/storytold/craft-libs?rev=" + REVISION + "#" + REVISION
+        with self.assertRaisesRegex(ValueError, "Incompatible parser dependency"):
+            verify({"packages": [
+                {"name":"hayro-syntax","version":"0.7.2","source":pinned},
+                {"name":"hayro-syntax","version":"0.7.2","source":"registry+https://github.com/rust-lang/crates.io-index"}
+            ]})
 
 
 if __name__ == "__main__":
