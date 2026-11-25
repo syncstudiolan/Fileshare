@@ -25,15 +25,20 @@ void main(){
           if(!selected.add(file.id))selected.remove(file.id);
         }),
       )))));
-    final icons=find.byIcon(Icons.insert_drive_file_outlined);
-    expect(icons,findsNWidgets(2));
-    await tester.longPress(icons.first);
+    // Select the actual file previews, not a placeholder icon. The new lazy
+    // thumbnail renderer may show a decoded photo or an error placeholder,
+    // and neither choice should change selection semantics.
+    final first=find.byKey(const ValueKey('lan-file-preview-photo-0'));
+    final second=find.byKey(const ValueKey('lan-file-preview-photo-1'));
+    expect(first,findsOneWidget);
+    expect(second,findsOneWidget);
+    await tester.longPress(first);
     await tester.pump();
     expect(selected,{'photo-0'});
-    await tester.tap(icons.last);
+    await tester.tap(second);
     await tester.pump();
     expect(selected,{'photo-0','photo-1'});
-    await tester.tap(icons.first);
+    await tester.tap(first);
     await tester.pump();
     expect(selected,{'photo-1'});
   });
