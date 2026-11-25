@@ -147,6 +147,7 @@ if (includeDscRust.get()) {
         commandLine("bash", "build-android.sh", generatedDsc.absolutePath)
         inputs.files(fileTree(dscRustDir.asFile) { include("Cargo.toml", "Cargo.lock", "src/**", "build-android.sh", ".cargo/**") })
         inputs.files(fileTree(rootProject.projectDir.parentFile.resolve("third_party/pdfcraft-dsc-reference/crates/sign")) { include("Cargo.toml", "src/**") })
+        inputs.file(rootProject.projectDir.parentFile.resolve("tool/verify_dsc_cargo_graph.py"))
         outputs.dir(generatedDsc)
     }
     android.sourceSets.getByName("main").jniLibs.srcDir(generatedDsc)

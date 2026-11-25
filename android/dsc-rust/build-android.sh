@@ -13,5 +13,10 @@ test -d "$ANDROID_NDK_HOME/toolchains/llvm"
 # workspace and its build dependencies at build time.
 output="${1:?Pass Gradle-generated JNI output directory}"
 mkdir -p "$output"
-cargo ndk --target arm64-v8a --platform 24 --output-dir "$output" build --release
+# Validate actual resolved dependency graph (not just manifest text).
+metadata="$(mktemp)"
+trap 'rm -f "$metadata"' EXIT
+cargo metadata --format-version 1 --filter-platform aarch64-linux-android > "$metadata"
+python3 ../../tool/verify_dsc_cargo_graph.py "$metadata"
+cargo ndk --target arm64-v8a --platform 24 --output-dir "$output" build --release --locked
 test -s "$output/arm64-v8a/libfileshare_dsc.so"
