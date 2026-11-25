@@ -134,7 +134,7 @@ val verifyBundledDocAlignerModel = tasks.register("verifyBundledDocAlignerModel"
 }
 tasks.named("preBuild") { dependsOn(verifyBundledDocAlignerModel) }
 
-// Explicit local NDK integration for the DSC draft. No workflow is triggered.
+// Local NDK integration. Debug JVM-only tests may omit Rust; production APKs must not.
 // Enable with -PfileshareDscRust=true after installing Rust/cargo-ndk.
 val includeDscRust = providers.gradleProperty("fileshareDscRust").map { it == "true" }.orElse(false)
 if (includeDscRust.get()) {
@@ -155,4 +155,12 @@ if (includeDscRust.get()) {
     tasks.matching { it.name.startsWith("merge") &&
         (it.name.endsWith("JniLibFolders") || it.name.endsWith("NativeLibs"))
     }.configureEach { dependsOn(buildDscRust) }
+}
+
+// A release cannot silently ship without the PDF Craft engine, even when
+// built outside the existing release pipeline (which already sets the flag).
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst {
+        check(includeDscRust.get()) { "Release requires PDF Craft DSC: set -PfileshareDscRust=true and install the pinned Rust/NDK toolchain" }
+    }
 }

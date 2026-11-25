@@ -26,7 +26,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
 
-internal enum class DscStatus { VALID, NATIVE_VERIFIED, PERSONALLY_TRUSTED, UNKNOWN, INVALID }
+internal enum class DscStatus { VALID, NATIVE_VERIFIED, PERSONALLY_TRUSTED, LEGACY_VERIFIED, UNKNOWN, INVALID }
 internal data class DscWidget(val page: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
 internal data class DscResult(
   val id: String, val name: String, val status: DscStatus, val detail: String,
@@ -232,13 +232,17 @@ internal object DscVerifier {
                   val personalAccepted = DscPersonalPolicy.accepted(personalTrust, intact,
                     revisionAccepted && signingUsage && documentEku && strong, currentValidity,
                     nativeResult?.status == "valid", rev == "Revoked" || nativeRejected)
+                  val legacyVerified = DscVerdictPolicy.legacyVerified(sig.subFilter == "adbe.pkcs7.sha1", intact,
+                    revisionAccepted, signingUsage && documentEku, currentValidity, chain.isNotEmpty(), nativeRejected, rev == "Revoked")
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     nativeRejected -> "PDF Craft rejected this signature or its later revisions"
                     !revisionAccepted -> "Signed bytes intact; later revisions are not established as permitted"
                     !signingUsage || !documentEku -> "Certificate key usage does not allow document signing"
-                    !strong -> "Legacy or unsupported digest policy"
                     !currentValidity -> "Certificate is not valid at the checked time"
+                    legacyVerified -> "Original signed bytes and trusted CA chain verified. Legacy SHA-1 is weak; revocation: $rev. Not modern-policy validation."
+                    sig.subFilter == "adbe.pkcs7.sha1" && chain.isEmpty() -> "Legacy SHA-1 signature integrity verified; certificate chain not trusted"
+                    !strong -> "Legacy or unsupported digest policy"
                     personalAccepted && (chain.isEmpty() || rev != "Good") ->
                       "Signature integrity verified by PDF Craft; you personally trust this exact signer. CA/revocation verification is separate."
                     chain.isEmpty() -> "Signer identity not trusted. Review the signer and tap Trust signer."
@@ -250,6 +254,7 @@ internal object DscVerifier {
                   val status = when {
                     rev == "Revoked" || nativeRejected -> DscStatus.INVALID
                     revisionAccepted && signingUsage && documentEku && strong && currentValidity && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    legacyVerified -> DscStatus.LEGACY_VERIFIED
                     nativeVerified -> DscStatus.NATIVE_VERIFIED
                     personalAccepted -> DscStatus.PERSONALLY_TRUSTED
                     else -> DscStatus.UNKNOWN

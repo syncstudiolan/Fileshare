@@ -51,6 +51,22 @@ class DscLegacyPolicyTest {
     assertTrue(runCatching { DscLegacy.verify(bytes,legacy+byteArrayOf(1),cert) }.isFailure)
   }
 
+  @Test fun legacyVerificationRequiresRealIntegrityAndTrustedChain() {
+    fun verdict(format: Boolean = true, integrity: Boolean = true, revision: Boolean = true,
+        usage: Boolean = true, current: Boolean = true, trusted: Boolean = true,
+        nativeRejected: Boolean = false, revoked: Boolean = false) =
+      DscVerdictPolicy.legacyVerified(format, integrity, revision, usage, current, trusted, nativeRejected, revoked)
+    assertTrue(verdict())
+    assertFalse(verdict(format = false))
+    assertFalse(verdict(integrity = false))
+    assertFalse(verdict(revision = false))
+    assertFalse(verdict(usage = false))
+    assertFalse(verdict(current = false))
+    assertFalse(verdict(trusted = false))
+    assertFalse(verdict(nativeRejected = true))
+    assertFalse(verdict(revoked = true))
+  }
+
   @Test fun onlyExplicitCleartextEvidenceHostsAreAllowed() {
     assertTrue(DscHttpPolicy.allowed("OCVS.GOV.IN"))
     assertTrue(DscHttpPolicy.allowed("cca.gov.in"))

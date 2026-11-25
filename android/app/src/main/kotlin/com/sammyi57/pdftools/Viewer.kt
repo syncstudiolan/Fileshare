@@ -123,12 +123,18 @@ fun PdfViewerScreen(path: String, name: String) {
     dscBusy = true
     dscError = ""
     try {
-      dsc = withContext(Dispatchers.IO) {
-        val offline = DscVerifier.read(path, password)
-        if (offline.signatures.any { (it.status == DscStatus.UNKNOWN || it.status == DscStatus.PERSONALLY_TRUSTED || it.status == DscStatus.NATIVE_VERIFIED) && it.integrity &&
-              (!it.trusted || it.revocation == "Not established") }) {
-          DscVerifier.read(path, password, online = true)
-        } else offline
+      val offline = withContext(Dispatchers.IO) { DscVerifier.read(path, password) }
+      // Publish local results first; network problems must not erase a verified
+      // original signature or turn its certificate information into unavailable.
+      dsc = offline
+      if (offline.signatures.any { it.status != DscStatus.INVALID && it.status != DscStatus.VALID &&
+          it.integrity && (!it.trusted || it.revocation == "Not established") }) {
+        try {
+          val online = withContext(Dispatchers.IO) { DscVerifier.read(path, password, online = true) }
+          require(online.hash == offline.hash) { "PDF changed during verification" }
+          dsc = online
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+          catch (e: Exception) { dscError = "Online evidence unavailable: " + (e.message ?: e.javaClass.simpleName) }
       }
     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
       catch (e: Exception) { dsc = null; dscError = e.message ?: "Signature inspection unavailable" }
@@ -250,9 +256,10 @@ fun PdfViewerScreen(path: String, name: String) {
         onUrlLinkClicked = { uri -> openUrl(uri.toString()); true },
       )
       SelectionHandles(state, c.accent)
-      if (!searching && !dscBusy) dsc?.let { result ->
-        DscSignatureOverlay(state, result) { id ->
+      if (!searching) dsc?.let { result ->
+        DscSignatureOverlay(state, result, dscBusy) { id ->
           selectedSignature = id; dscPanel = true
+          if (!dscBusy && result.signatures.any { it.id == id && it.status == DscStatus.UNKNOWN }) { dscBusy = true; dscRevision++ }
         }
       }
       if (doc != null) {
@@ -313,7 +320,7 @@ fun PdfViewerScreen(path: String, name: String) {
 /** Signature hit targets use the viewer's own page-to-screen mapping. */
 @OptIn(ExperimentalPdfApi::class)
 @Composable
-private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, onTap: (String) -> Unit) {
+private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy: Boolean, onTap: (String) -> Unit) {
   val density = LocalDensity.current
   state.zoom; state.firstVisiblePageOffset
   Box(Modifier.fillMaxSize().clipToBounds()) {
@@ -323,15 +330,16 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, onTa
       val width = kotlin.math.abs(b.x - a.x)
       val height = kotlin.math.abs(b.y - a.y)
       if (width < 1f || height < 1f) continue
-      val color = when (sig.status) {
+      val displayStatus = if (busy) DscStatus.UNKNOWN else sig.status
+      val color = when (displayStatus) {
         DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> Color(0xff18834b)
-        DscStatus.UNKNOWN -> Color(0xffb57b13)
+        DscStatus.LEGACY_VERIFIED, DscStatus.UNKNOWN -> Color(0xffb57b13)
         DscStatus.INVALID -> Color(0xffc33232)
       }
       Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
         .size(with(density){width.toDp()}, with(density){height.toDp()})
         .border(1.dp,color).clickable { onTap(sig.id) }) {
-        Text(when(sig.status) { DscStatus.VALID -> "✓"; DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> "✓*"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
+        Text(when(displayStatus) { DscStatus.VALID -> "✓"; DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_VERIFIED -> "✓*"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
           color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
       }
     }
