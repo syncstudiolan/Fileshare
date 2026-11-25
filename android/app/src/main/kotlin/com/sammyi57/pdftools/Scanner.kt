@@ -210,7 +210,7 @@ fun Scanner(id: String?) {
     scope.launch { save() }
   }
   cartFile?.let { pdf ->
-    PdfSendPicker(pdf.path, pdf.name, cartPage, cartPages, true) { cartFile = null }
+    PdfSendPicker(pdf.path, pdf.name, cartPage, cartPages, true, onClose = { cartFile = null })
   }
 
   if (recentOpen) RecentScans({ recentOpen = false }) { picked -> doc = picked; capture = false; recentOpen = false; draft = null }
