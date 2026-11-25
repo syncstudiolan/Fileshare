@@ -26,7 +26,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
 
-internal enum class DscStatus { VALID, NATIVE_VERIFIED, PERSONALLY_TRUSTED, LEGACY_VERIFIED, UNKNOWN, INVALID }
+internal enum class DscStatus { VALID, NATIVE_VERIFIED, PERSONALLY_TRUSTED, LEGACY_VERIFIED, LEGACY_NATIVE_VERIFIED, UNKNOWN, INVALID }
 internal data class DscWidget(val page: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
 internal data class DscResult(
   val id: String, val name: String, val status: DscStatus, val detail: String,
@@ -234,12 +234,15 @@ internal object DscVerifier {
                     nativeResult?.status == "valid", rev == "Revoked" || nativeRejected)
                   val legacyVerified = DscVerdictPolicy.legacyVerified(sig.subFilter == "adbe.pkcs7.sha1", intact,
                     revisionAccepted, signingUsage && documentEku, currentValidity, chain.isNotEmpty(), nativeRejected, rev == "Revoked")
+                  val legacyNativeVerified = DscVerdictPolicy.legacyNativeVerified(legacyVerified,
+                    nativeResult?.status == "valid", nativeResult?.integrityChecked == true)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     nativeRejected -> "PDF Craft rejected this signature or its later revisions"
                     !revisionAccepted -> "Signed bytes intact; later revisions are not established as permitted"
                     !signingUsage || !documentEku -> "Certificate key usage does not allow document signing"
                     !currentValidity -> "Certificate is not valid at the checked time"
+                    legacyNativeVerified -> "PDF Craft and Android verified the original signed bytes and trusted CA chain. SHA-1 is a legacy weak algorithm. Revocation: $rev."
                     legacyVerified -> "Original signed bytes and trusted CA chain verified. Legacy SHA-1 is weak; revocation: $rev. Not modern-policy validation."
                     sig.subFilter == "adbe.pkcs7.sha1" && chain.isEmpty() -> "Legacy SHA-1 signature integrity verified; certificate chain not trusted"
                     !strong -> "Legacy or unsupported digest policy"
@@ -254,6 +257,7 @@ internal object DscVerifier {
                   val status = when {
                     rev == "Revoked" || nativeRejected -> DscStatus.INVALID
                     revisionAccepted && signingUsage && documentEku && strong && currentValidity && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    legacyNativeVerified -> DscStatus.LEGACY_NATIVE_VERIFIED
                     legacyVerified -> DscStatus.LEGACY_VERIFIED
                     nativeVerified -> DscStatus.NATIVE_VERIFIED
                     personalAccepted -> DscStatus.PERSONALLY_TRUSTED

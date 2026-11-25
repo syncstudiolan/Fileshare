@@ -67,6 +67,13 @@ class DscLegacyPolicyTest {
     assertFalse(verdict(revoked = true))
   }
 
+  @Test fun nativeLegacyPresentationRequiresBothIndependentProofs() {
+    assertTrue(DscVerdictPolicy.legacyNativeVerified(true,true,true))
+    assertFalse(DscVerdictPolicy.legacyNativeVerified(false,true,true))
+    assertFalse(DscVerdictPolicy.legacyNativeVerified(true,false,true))
+    assertFalse(DscVerdictPolicy.legacyNativeVerified(true,true,false))
+  }
+
   @Test fun onlyExplicitCleartextEvidenceHostsAreAllowed() {
     assertTrue(DscHttpPolicy.allowed("OCVS.GOV.IN"))
     assertTrue(DscHttpPolicy.allowed("cca.gov.in"))

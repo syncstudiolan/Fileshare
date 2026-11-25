@@ -12,4 +12,9 @@ internal object DscVerdictPolicy {
       nativeRejected: Boolean, revoked: Boolean): Boolean =
     legacyFormat && integrity && revisionAllowed && usageAllowed && validAtTime &&
       chainTrusted && !nativeRejected && !revoked
+  // Match PDF Craft's verified identity/integrity result, but retain the
+  // SHA-1 and unconfirmed-revocation qualifications in every presentation.
+  fun legacyNativeVerified(legacyVerified: Boolean, nativeValid: Boolean,
+      nativeIntegrity: Boolean): Boolean =
+    legacyVerified && nativeValid && nativeIntegrity
 }

@@ -23,7 +23,8 @@ import java.security.cert.X509Certificate
 @Composable
 internal fun DscValidationPanel(document: DscDocument, selected: String?,
     busy: Boolean, onValidate: () -> Unit, onClose: () -> Unit,
-    onCart: () -> Unit, path: String, name: String) {
+    onCart: () -> Unit, path: String, name: String,
+    showOriginal: Boolean, onToggleOriginal: () -> Unit) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var trusted by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
@@ -80,11 +81,14 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
       if(message.isNotEmpty()) Text(message, color = c.ink)
       Button(enabled = !busy && !trusting, onClick = onValidate, modifier = Modifier.fillMaxWidth()) { Text(if(busy) "Validating…" else "Validate signature") }
       OutlinedButton(enabled = !busy && !trusting, onClick = { managing = true; pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import downloaded certificate") }
+      TextButton(onClick = onToggleOriginal) {
+        Text(if (showOriginal) "Show verification overlay" else "Show original signature appearance")
+      }
       val signatures = document.signatures.sortedBy { if (it.id == selected) 0 else 1 }
       for (sig in signatures) {
         val displayStatus = if(busy) DscStatus.UNKNOWN else sig.status
         val statusColor = when(displayStatus) {
-          DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> Color(0xff18834b)
+          DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_NATIVE_VERIFIED -> Color(0xff18834b)
           DscStatus.LEGACY_VERIFIED, DscStatus.UNKNOWN -> Color(0xffb57b13)
           DscStatus.INVALID -> Color(0xffc33232)
         }
@@ -94,11 +98,15 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             DscStatus.VALID -> "✓ Signature valid"
             DscStatus.NATIVE_VERIFIED -> "✓* Signature verified — revocation unconfirmed"
             DscStatus.PERSONALLY_TRUSTED -> "✓ Signature valid — personally trusted"
-            DscStatus.LEGACY_VERIFIED -> "✓* Signature verified — legacy SHA-1"
+            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ Signature verified by PDF Craft — legacy SHA-1"
+            DscStatus.LEGACY_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
           }, color = statusColor, style = MaterialTheme.typography.titleMedium)
-          Text(sig.name, color = c.ink)
+          Text(sig.certificate?.let(DscCertificates::displayName) ?: sig.name, color = c.ink)
+          if (displayStatus == DscStatus.LEGACY_NATIVE_VERIFIED) {
+            Text("Legacy SHA-1 is weak. Revocation: ${sig.revocation}. Not modern-policy validation.", color = Color(0xffb57b13))
+          }
           Text(if(busy) "Rechecking — previous verdict is not current" else sig.detail, color = c.sub)
           if (sig.status == DscStatus.UNKNOWN && sig.canTrustSigner && !sig.personalTrust) {
             sig.certificate?.let { cert ->
@@ -129,6 +137,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           if(sig.certificateHosts.isNotEmpty()) Text("Certificate servers: " + sig.certificateHosts.joinToString(", "), color = c.sub)
           Text("Validation time: " + (sig.trustedTime?.toString() ?: "Current device time; no trusted timestamp"), color = c.sub)
           sig.certificate?.let { cert ->
+            Text("Subject: ${cert.subjectX500Principal.name}", color = c.sub)
             Text("Issued by: ${cert.issuerX500Principal.name}", color = c.sub)
             Text("Serial: ${cert.serialNumber.toString(16)}", color = c.sub)
             Text("Validity: ${cert.notBefore} — ${cert.notAfter}", color = c.sub)
