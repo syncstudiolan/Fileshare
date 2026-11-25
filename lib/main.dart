@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'file_share_text.dart';
 import 'text_transfer_card.dart';
+import 'dashboard_thumbnail.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
@@ -498,9 +499,11 @@ class FileTheme {
       dark(context) ? const Color(0xFF111318) : const Color(0xFFE7F1FA);
 
   static Color foreground(BuildContext context) =>
+      TransferCardInk.isIncoming(context) ? Colors.white :
       dark(context) ? const Color(0xFFF5F6FF) : const Color(0xFF17263A);
 
   static Color muted(BuildContext context) =>
+      TransferCardInk.isIncoming(context) ? const Color(0xFFE1F3E9) :
       dark(context) ? const Color(0xFFB8C1D0) : const Color(0xFF617086);
 
   static Gradient background(BuildContext context) => LinearGradient(
@@ -1402,9 +1405,9 @@ class DesignFileCard extends StatelessWidget {
           gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
             colors:FileTheme.dark(context)
               ?(sent?const [Color(0xFF236EAA),Color(0xFF123F72)]
-                  :const [Color(0xFFB08A27),Color(0xFF705514)])
+                  :const [Color(0xFF164B34),Color(0xFF071E16)])
               :(sent?const [Color(0xFFE2F4FF),Color(0xFF8DCBFF)]
-                  :const [Color(0xFFFFF6D5),Color(0xFFFFD65C)])),
+                  :const [Color(0xFF267A50),Color(0xFF0B432F)])),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(24), topRight: const Radius.circular(23),
             bottomLeft: Radius.circular(sent ? 23 : 6),
@@ -1649,6 +1652,20 @@ class SelectedFileToolsPage extends StatelessWidget {
 }
 
 
+/// Applies readable white foreground colors only inside received green cards.
+/// Does not mutate the global light/dark theme or the sent blue cards.
+class TransferCardInk extends InheritedWidget {
+  const TransferCardInk({super.key, required this.incoming,
+    required super.child});
+  final bool incoming;
+  static bool isIncoming(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<TransferCardInk>()?.incoming ??
+      false;
+  @override
+  bool updateShouldNotify(TransferCardInk oldWidget) =>
+      incoming != oldWidget.incoming;
+}
+
 /* Compact, direction-aware transfer bubble used by LAN and Guest QR.
    Draw the side tail with the card itself so it scales on both platforms. */
 class TransferBubble extends StatelessWidget {
@@ -1662,9 +1679,9 @@ class TransferBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark=FileTheme.dark(context);
     final fill=dark
-        ? (incoming?const Color(0xFF94721A):const Color(0xFF14517F))
-        : (incoming?const Color(0xFFFFDC72):const Color(0xFF9DD7FF));
-    final accent=incoming?FileTheme.violet:FileTheme.turquoise;
+        ? (incoming?const Color(0xFF123C2B):const Color(0xFF14517F))
+        : (incoming?const Color(0xFF186B44):const Color(0xFF9DD7FF));
+    final accent=incoming?const Color(0xFF318A55):FileTheme.turquoise;
     return LayoutBuilder(builder:(context,constraints){
       final width=constraints.hasBoundedWidth
         ?constraints.maxWidth:MediaQuery.sizeOf(context).width;
@@ -1682,7 +1699,7 @@ class TransferBubble extends StatelessWidget {
               child:Padding(
                 padding:EdgeInsets.fromLTRB(incoming?16:13,
                   textOnly?8:12,incoming?13:16,textOnly?8:12),
-                child:child),
+                child:TransferCardInk(incoming:incoming,child:child)),
             ),
           ),
         ),
@@ -1719,13 +1736,20 @@ class _TransferBubblePainter extends CustomPainter {
     // Raised 3D depth, subtle bevel and cool top-left highlight.
     canvas.drawShadow(path,Colors.black.withValues(alpha:dark ? .46 : .23),13,false);
     canvas.drawShadow(path,accent.withValues(alpha:dark ? .18 : .19),6,false);
+    // Deep leafy green on incoming/received cards, and the unchanged cool
+    // blue gradient on sent cards. Avoid pale green stops: white text must
+    // remain legible on every part of the raised surface.
     final gradient=LinearGradient(
       begin:Alignment.topLeft,end:Alignment.bottomRight,
-      colors:[
-        Color.lerp(fill,Colors.white,dark ? .08 : .37)!,
-        fill,
-        Color.lerp(fill,Colors.black,dark ? .15 : .06)!,
-      ]);
+      colors:incoming
+        ?(dark
+          ?const [Color(0xFF174B34),Color(0xFF0E3023),Color(0xFF071E16)]
+          :const [Color(0xFF267A50),Color(0xFF165B3C),Color(0xFF0B432F)])
+        :[
+          Color.lerp(fill,Colors.white,dark ? .08 : .37)!,
+          fill,
+          Color.lerp(fill,Colors.black,dark ? .15 : .06)!,
+        ]);
     canvas.drawPath(path,Paint()..shader=gradient.createShader(
       Rect.fromLTWH(0,0,size.width,size.height)));
     canvas.drawPath(path,Paint()
@@ -1746,6 +1770,7 @@ class TransferCardActions extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder:(context,constraints){
       if(actions.isEmpty)return const SizedBox.shrink();
+      final onGreen=TransferCardInk.isIncoming(context);
       final available=constraints.hasBoundedWidth
         ?constraints.maxWidth:actions.length*44.0+7*(actions.length-1);
       final gap=available<175?3.0:7.0;
@@ -1761,13 +1786,16 @@ class TransferCardActions extends StatelessWidget {
           decoration:BoxDecoration(
             gradient:LinearGradient(
               begin:Alignment.topLeft,end:Alignment.bottomRight,
-              colors:FileTheme.dark(context)
-                ?const [Color(0xFF245768),Color(0xFF103A47)]
-                :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
+              colors:onGreen
+                ?const [Color(0xFF2B7954),Color(0xFF11452F)]
+                :FileTheme.dark(context)
+                  ?const [Color(0xFF245768),Color(0xFF103A47)]
+                  :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
             borderRadius:BorderRadius.circular(15),
             border:Border.all(
-              color:FileTheme.dark(context)
-                ?const Color(0xFF367987):Colors.white,width:1.25),
+              color:onGreen?Colors.white.withValues(alpha:.64)
+                :FileTheme.dark(context)
+                  ?const Color(0xFF367987):Colors.white,width:1.25),
             boxShadow:[BoxShadow(
               color:Colors.black.withValues(alpha:.20),
               offset:const Offset(0,5),blurRadius:7)],
@@ -1787,7 +1815,9 @@ class TransferCardTime extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
     decoration: BoxDecoration(
-      color: FileTheme.turquoise.withValues(alpha: .10),
+      color: TransferCardInk.isIncoming(context)
+        ?Colors.white.withValues(alpha:.12)
+        :FileTheme.turquoise.withValues(alpha: .10),
       border:Border.all(color:FileTheme.dark(context)
         ?const Color(0xFF58939D):Colors.white,width:1.1),
       borderRadius: BorderRadius.circular(22)),
