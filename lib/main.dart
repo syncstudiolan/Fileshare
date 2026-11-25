@@ -1836,7 +1836,9 @@ class LiveTransferCard extends StatelessWidget {
     super.key, required this.items, required this.onSave,
     required this.onDelete, required this.onShare, required this.onTools,
     this.isFileSelected, this.fileSelectionActive=false, this.onFileSelect,
+    this.scrolling,
   });
+  final ValueListenable<bool>? scrolling;
   final bool Function(LanFile)? isFileSelected;
   final bool fileSelectionActive;
   final void Function(LanFile)? onFileSelect;
@@ -1855,12 +1857,13 @@ class LiveTransferCard extends StatelessWidget {
 
   Widget _visual(LanFile file) {
     if (_photo(file.name) && File(file.path).existsSync()) {
-      return ClipRRect(borderRadius: BorderRadius.circular(12),
-        child: Image.file(File(file.path), fit: BoxFit.cover,
-          cacheWidth: 280,
-          errorBuilder: (_, __, ___) => const Icon(
-            Icons.image_not_supported_outlined,
-            color: FileTheme.pink, size: 34)));
+      return scrolling == null
+        ?Image.file(File(file.path),fit:BoxFit.cover,cacheWidth:160,
+          errorBuilder:(_,__,___)=>const Icon(
+            Icons.image_not_supported_outlined,size:34))
+        :DashboardThumbnail(
+            key:ValueKey('lan-thumb-${file.id}'),
+            path:file.path,scrolling:scrolling!);
     }
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -1899,7 +1902,8 @@ class LiveTransferCard extends StatelessWidget {
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         icon: Icon(icon, color: onTap == null
-          ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink));
+          ? (incoming?Colors.white38:FileTheme.pink.withValues(alpha:.25))
+          : (incoming?Colors.white:FileTheme.pink)));
     return TransferCardActions(actions: [
       // NEW disappears only after a successful export, never after preview.
       if (file.incoming)
@@ -1926,7 +1930,8 @@ class LiveTransferCard extends StatelessWidget {
         : file.state == TransferState.failed ? Icons.error_outline_rounded
         : Icons.done_rounded,
       size: 15,
-      color: delivered ? FileTheme.pink : FileTheme.violet);
+      color: incoming ? Colors.white :
+        (delivered ? FileTheme.pink : FileTheme.violet));
   }
 
   Widget _file(BuildContext context, LanFile file) {
@@ -2000,19 +2005,22 @@ class LiveTransferCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 15,
-            backgroundColor: const Color(0xFF89EEE5),
+            backgroundColor: incoming ? Colors.white.withValues(alpha:.18)
+              :const Color(0xFF89EEE5),
             child: Icon(incoming ? Icons.download_rounded : Icons.send_rounded,
-              size: 19, color: FileTheme.pink)),
+              size:19,color:incoming?Colors.white:FileTheme.pink)),
           const SizedBox(width: 8),
           Expanded(child: Text(origin,
             maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: FileTheme.foreground(context),
+            style: TextStyle(color:incoming?Colors.white:
+              FileTheme.foreground(context),
               fontWeight: FontWeight.w700, fontSize: 13))),
           TransferCardTime(created:first.created,
             status:_status(first)),
         ]),
         if(multiple) Text('${items.length} files',
-          style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
+          style:TextStyle(color:incoming?const Color(0xFFE1F3E9):
+            FileTheme.muted(context),fontSize:10)),
         for (final file in items) _file(context, file),
         if (incoming && multiple)
           Align(alignment: Alignment.centerRight,
@@ -2099,7 +2107,9 @@ class CloudInboxCard extends StatelessWidget {
   const CloudInboxCard({super.key, required this.items,
     required this.onSave, required this.onDelete, required this.onShare,
     required this.onPreview, required this.onTools,
-    this.isFileSelected,this.fileSelectionActive=false,this.onFileSelect});
+    this.isFileSelected,this.fileSelectionActive=false,this.onFileSelect,
+    this.scrolling});
+  final ValueListenable<bool>? scrolling;
   final bool Function(CloudFile)? isFileSelected;
   final bool fileSelectionActive;
   final void Function(CloudFile)? onFileSelect;
@@ -2118,27 +2128,30 @@ class CloudInboxCard extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         constraints: const BoxConstraints(minWidth: 24, minHeight: 38),
         padding: EdgeInsets.zero,
-        icon: Icon(icon, color: FileTheme.pink));
+        icon: Icon(icon,color:sent?FileTheme.pink:Colors.white));
     return TransferBubble(
       incoming: !sent,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          CircleAvatar(radius: 15,
-            backgroundColor: const Color(0xFF89EEE5),
-            child: Icon(sent?Icons.send_rounded:Icons.download_rounded,
-              size:19,color:FileTheme.pink)),
+          CircleAvatar(radius:15,
+            backgroundColor:sent?const Color(0xFF89EEE5):
+              Colors.white.withValues(alpha:.18),
+            child:Icon(sent?Icons.send_rounded:Icons.download_rounded,
+              size:19,color:sent?FileTheme.pink:Colors.white)),
           const SizedBox(width: 8),
           Expanded(child: Text(device ? (sent ? 'Sent · Online / Cloud' : 'From '+items.first.senderName+' · Online / Cloud') : 'From Guest browser · Guest QR · Online',
             maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: FileTheme.foreground(context),
+            style: TextStyle(color:sent?FileTheme.foreground(context):
+              Colors.white,
               fontWeight: FontWeight.w700, fontSize: 13))),
           TransferCardTime(created:items.first.created,
             status:Icon(device && items.first.receivedAt==null
               ?Icons.done_rounded:Icons.done_all_rounded,
-              size:17,color:FileTheme.turquoise)),
+              size:17,color:sent?FileTheme.turquoise:Colors.white)),
         ]),
         if(grouped)Text('${items.length} files',
-          style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
+          style:TextStyle(color:sent?FileTheme.muted(context):
+            const Color(0xFFE1F3E9),fontSize:10)),
         for(final file in items)
           Padding(padding:const EdgeInsets.only(top:8),
             child:LayoutBuilder(builder:(context,constraints){
@@ -2151,7 +2164,8 @@ class CloudInboxCard extends StatelessWidget {
                   SizedBox(width:side,height:side,
                     child:CloudImageThumbnail(
                       key:ValueKey('qr-thumb-'+file.id),
-                      file:file,onOpen:()=>fileSelectionActive&&onFileSelect!=null
+                      file:file,scrolling:scrolling,
+                      onOpen:()=>fileSelectionActive&&onFileSelect!=null
                         ?onFileSelect!(file):onPreview(file))),
                   if(fileSelectionActive)Positioned(right:2,top:2,
                     child:Icon(selected?Icons.check_circle_rounded:
@@ -2658,7 +2672,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           ?'From ${g.lan!.first.peer} · Received':'Sent · Offline LAN',
         created:g.lan!.first.created,
         status:Icon(g.lan!.first.state==TransferState.delivered
-          ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,color:FileTheme.pink))
+          ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,
+          color:g.lan!.first.incoming?Colors.white:FileTheme.pink))
       :cloudText
       ?TextTransferCard(
         key:ValueKey('text-cloud-${g.cloud!.first.id}'),
@@ -2673,15 +2688,19 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           :'From ${g.cloud!.first.senderName} · Online / Cloud',
         created:g.cloud!.first.created,
         status:Icon(g.cloud!.first.receivedAt==null
-          ?Icons.done_rounded:Icons.done_all_rounded,size:15,color:FileTheme.pink))
+          ?Icons.done_rounded:Icons.done_all_rounded,size:15,
+          color:g.cloud!.first.senderId!=appLan.deviceId
+            ?Colors.white:FileTheme.pink))
       :g.upload!=null ? _cloudUploadCard(g.upload!)
       :g.lan!=null
       ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
         onDelete:_delete,onShare:_share,onTools:_openFileTools,
+        scrolling:_dashboardScrolling,
         isFileSelected:(f)=>_selectedFiles.contains(_lanFileKey(f)),
         fileSelectionActive:active,onFileSelect:_selectLanFile)
       :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
         onDelete:_deleteCloud,onShare:_shareCloud,
+        scrolling:_dashboardScrolling,
         onPreview:_previewCloud,onTools:_openCloudTools,
         isFileSelected:(f)=>_selectedFiles.contains(_cloudFileKey(f)),
         fileSelectionActive:active,onFileSelect:_selectCloudFile);
