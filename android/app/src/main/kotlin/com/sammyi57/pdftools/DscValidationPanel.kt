@@ -85,7 +85,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         val displayStatus = if(busy) DscStatus.UNKNOWN else sig.status
         val statusColor = when(displayStatus) {
           DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> Color(0xff18834b)
-          DscStatus.UNKNOWN -> Color(0xffb57b13)
+          DscStatus.LEGACY_VERIFIED, DscStatus.UNKNOWN -> Color(0xffb57b13)
           DscStatus.INVALID -> Color(0xffc33232)
         }
         Column(Modifier.fillMaxWidth().border(1.dp, statusColor).padding(12.dp),
@@ -94,6 +94,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             DscStatus.VALID -> "✓ Signature valid"
             DscStatus.NATIVE_VERIFIED -> "✓* Signature verified — revocation unconfirmed"
             DscStatus.PERSONALLY_TRUSTED -> "✓ Signature valid — personally trusted"
+            DscStatus.LEGACY_VERIFIED -> "✓* Signature verified — legacy SHA-1"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
           }, color = statusColor, style = MaterialTheme.typography.titleMedium)

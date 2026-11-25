@@ -81,3 +81,6 @@ unverified. Full historical LTV, all legacy algorithms and all HTTP-only
 CA endpoints are not guaranteed. Do not claim production readiness or legal
 certification. Keep PR #30 open as draft; do not merge or release.
 No GitHub Actions workflow was initiated.
+
+## Legacy encrypted PDF compatibility draft (2026-11-25)
+A private user-supplied encrypted PDF was checked locally with Poppler and OpenSSL. Its complete signed byte range and encapsulated SHA-1 digest verified, and its embedded intermediate CA chain verified against the CCA India 2022 root whose SHA-256 matches the existing independent pin. Revocation was not established. The private PDF, password and end-entity certificate are NOT committed. Add a distinct warning-colored legacy verification status, never modern-policy green, and preserve offline results if online evidence fails. Future production builds must explicitly include the Rust native library; the existing main release pipeline already sets the required flag. Android/NDK integration and the new JUnit tests still need execution on a suitable toolchain. No workflow dispatch or release is requested.
