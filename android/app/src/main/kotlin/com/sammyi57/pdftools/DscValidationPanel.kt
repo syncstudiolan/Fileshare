@@ -98,7 +98,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           verticalArrangement = Arrangement.spacedBy(5.dp)) {
           Text(when(displayStatus) {
             DscStatus.VALID -> "✓ Signature valid"
-            DscStatus.NATIVE_VERIFIED -> "? Signature integrity verified; full CA/revocation status pending"
+            DscStatus.NATIVE_VERIFIED -> "✓* Signature integrity verified — revocation not established"
             DscStatus.PERSONALLY_TRUSTED -> "? Signer personally trusted; CA validity not established"
             DscStatus.LEGACY_NATIVE_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
             DscStatus.LEGACY_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
