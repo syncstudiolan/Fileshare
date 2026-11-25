@@ -18,8 +18,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 internal fun hasVerifiedAppearance(sig: DscResult): Boolean =
-  sig.integrity && sig.trusted && sig.revocation != "Revoked" &&
-    (sig.status == DscStatus.VALID || sig.status == DscStatus.LEGACY_NATIVE_VERIFIED || sig.status == DscStatus.NATIVE_VERIFIED)
+  dscAppearanceVerdict(sig) in setOf(
+    DscAppearanceVerdict.VALID, DscAppearanceVerdict.VERIFIED_WITH_WARNINGS,
+  )
 
 /** One shared painter for viewport and the clearly identified unsigned visual copy.
  * Never edits the original PDF or claims that a flattened image is a DSC. */
@@ -126,6 +127,12 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
         require(changed >= verified.signatures.sumOf { it.widgets.size }) {
           "All verified signature appearances must be replaceable"
         }
+        // Raster rendering must use the same flattened /AP that the viewer
+        // shows. Otherwise some Android/PDFBox backends can keep drawing
+        // the original '?' annotation instead of the verified appearance.
+        val matched = signaturePreviewFields(input, verified)
+        require(matched.isNotEmpty()) { "No replaceable signed widgets for visual copy" }
+        input.documentCatalog.acroForm?.flatten(matched, false)
         val renderer = PDFRenderer(input)
         PDDocument().use { out ->
           out.documentInformation.title = "Unsigned visual verification copy"

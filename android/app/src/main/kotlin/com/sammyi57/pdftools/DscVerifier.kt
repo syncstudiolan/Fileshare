@@ -103,7 +103,14 @@ internal object DscVerifier {
       require(signatures.size <= 64) { "Too many signatures to check safely" }
       val native = if (signatures.isNotEmpty()) DscRustBridge.inspect(bytes, password, trust + dss.certificates.filter(DscRoots::isPinned)) else emptyList()
       signatures.mapIndexed { index, sig ->
-        val field = fields.firstOrNull { it.signature?.cosObject === sig.cosObject }
+        // PDFBox can wrap the same underlying signature in distinct COS
+        // objects. Require a unique cryptographically bound contents/range
+        // match rather than Kotlin reference identity.
+        val field = fields.singleOrNull { candidate ->
+          val value = candidate.signature ?: return@singleOrNull false
+          dscSameSignedData(value.byteRange, value.contents,
+            sig.byteRange, sig.contents)
+        }
         val widgets = field?.widgets.orEmpty().mapNotNull { widget ->
           val rect = widget.rectangle ?: return@mapNotNull null
           val pageIndex = (0 until pdf.numberOfPages).firstOrNull { n ->

@@ -14,10 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Only cryptographically established full validity earns a green check.
- * A cryptographic mismatch/invalid revision earns a red cross. All partial,
- * legacy-only, personally trusted or pending states remain UNKNOWN.
- * Visual status never changes DscVerifier's underlying signed-byte verdict.
+/** Full validation and integrity-only legacy verification remain distinct.
+ * The qualified mark never claims a valid current-policy certificate or a
+ * successful revocation check. The original PDF signature remains untouched.
  */
 internal enum class DscAppearanceVerdict { VALID, VERIFIED_WITH_WARNINGS, INVALID, UNKNOWN }
 
@@ -28,10 +27,39 @@ internal fun dscAppearanceVerdict(sig: DscResult): DscAppearanceVerdict = when {
   // A native-verified legacy signature proves signed-byte integrity and CA
   // chaining, NOT modern SHA-1 suitability or a good revocation response.
   // Show a clearly qualified verification mark rather than the stale PDF '?'.
-  sig.status == DscStatus.LEGACY_NATIVE_VERIFIED && sig.integrity && sig.trusted &&
+  sig.status in setOf(DscStatus.LEGACY_NATIVE_VERIFIED, DscStatus.NATIVE_VERIFIED) &&
+    sig.integrity && sig.trusted &&
     sig.nativeVerdict?.equals("valid", ignoreCase = true) == true &&
     sig.revocation != "Revoked" -> DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
   else -> DscAppearanceVerdict.UNKNOWN
+}
+
+/** Signature text comes from the current PDF/signature, never from a
+ * document template or a hard-coded identity. Qualified status is distinct
+ * from a modern-policy valid signature on both viewer and export.
+ */
+internal fun dscAppearanceLabel(verdict: DscAppearanceVerdict): String = when(verdict) {
+  DscAppearanceVerdict.VALID -> "Signature valid"
+  DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Signature integrity verified*"
+  DscAppearanceVerdict.INVALID -> "Signature invalid"
+  DscAppearanceVerdict.UNKNOWN -> "Signature not established"
+}
+
+internal fun dscAppearanceFacts(sig: DscResult, signer: String,
+    reason: String, location: String, verdict: DscAppearanceVerdict): List<String> {
+  val result = mutableListOf<String>()
+  signer.trim().takeIf { it.isNotEmpty() }?.let { result.add("Digitally signed by $it") }
+  sig.claimedSigningDate?.trim()?.takeIf { it.isNotEmpty() }?.let { result.add("Date: $it") }
+  reason.trim().takeIf { it.isNotEmpty() }?.let { result.add("Reason: $it") }
+  location.trim().takeIf { it.isNotEmpty() }?.let { result.add("Location: $it") }
+  if (verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS) {
+    if (sig.status == DscStatus.LEGACY_NATIVE_VERIFIED)
+      result.add("* Legacy SHA-1: modern validity not established")
+  }
+  if (verdict != DscAppearanceVerdict.UNKNOWN && sig.revocation != "Good") {
+    result.add("* Revocation: ${sig.revocation}")
+  }
+  return result
 }
 
 /**
@@ -69,6 +97,15 @@ internal suspend fun prepareDscViewerAppearance(
       PDDocument.load(bytes, password.orEmpty()).use { pdf ->
         changed = applyDscPreviewAppearances(pdf, result)
         if (changed > 0) {
+          // Jetpack PDF does not consistently paint every widget /AP. Bake
+          // the replacement into page content of this UNSIGNED preview only.
+          // false = preserve the appearance we just authored, do not
+          // regenerate the original '?' from the field value.
+          val matched = signaturePreviewFields(pdf, result)
+          check(matched.isNotEmpty()) {
+            "No signature widget can be flattened into the preview"
+          }
+          pdf.documentCatalog.acroForm?.flatten(matched, false)
           pdf.documentInformation.setCustomMetadataValue(
             "FileSharePreviewOnly", "UNSIGNED_RENDER_COPY_NEVER_VERIFY")
           pdf.save(output)
@@ -90,23 +127,69 @@ internal suspend fun prepareDscViewerAppearance(
 /** Replace ONLY a signed widget's normal /AP in an unsigned, in-memory
  * rendering derivative. The original document is NEVER passed to this
  * function for persistence or signing. */
-internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): Int {
+/** Fail-closed match for a signed PDF /V dictionary and its field value. */
+internal fun dscSameSignedData(
+  fieldRange: IntArray?, fieldContents: ByteArray?,
+  signatureRange: IntArray?, signatureContents: ByteArray?,
+): Boolean =
+  fieldRange != null && signatureRange != null &&
+    fieldContents != null && signatureContents != null &&
+    fieldRange.contentEquals(signatureRange) &&
+    fieldContents.contentEquals(signatureContents)
+
+/**
+ * COSDictionary object identity (===) is not stable across PDFBox wrappers.
+ * Match actual signature contents + ByteRange instead, and reject ambiguous
+ * fields. Never assign a green appearance to an unrelated PDF field.
+ */
+internal fun signaturePreviewFields(pdf: PDDocument, result: DscDocument): List<PDSignatureField> {
   val fields = pdf.documentCatalog.acroForm?.fieldTree
     ?.filterIsInstance<PDSignatureField>().orEmpty()
+  val selected = mutableListOf<PDSignatureField>()
+  pdf.signatureDictionaries.forEachIndexed { index, signed ->
+    val sig = result.signatures.firstOrNull { it.id.substringBefore(":").toIntOrNull() == index }
+      ?: return@forEachIndexed
+    if (dscAppearanceVerdict(sig) == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
+    val candidate = fields.filter { field ->
+      val value = field.signature ?: return@filter false
+      dscSameSignedData(value.byteRange, value.contents,
+        signed.byteRange, signed.contents)
+    }
+    if (candidate.size != 1) {
+      Log.w("FileShareDSC", "Signature ${index + 1}: expected exactly one matching signature widget field, found ${candidate.size}")
+      return@forEachIndexed
+    }
+    val field = candidate.single()
+    if (field.widgets.any { widget ->
+        widget.rectangle?.let { it.width.isFinite() && it.height.isFinite() &&
+          it.width > 0f && it.height > 0f } == true
+      } && field !in selected) selected.add(field)
+  }
+  return selected
+}
+
+/** Replaces the annotation appearance only in a temporary unsigned document.
+ * It is later flattened for reliable rendering by Android's Jetpack PDF.
+ */
+internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): Int {
+  val selected = signaturePreviewFields(pdf, result)
   var changed = 0
   pdf.signatureDictionaries.forEachIndexed { index, signed ->
-    val sig = result.signatures.firstOrNull { it.id.startsWith(index.toString() + ":") }
+    val sig = result.signatures.firstOrNull { it.id.substringBefore(":").toIntOrNull() == index }
       ?: return@forEachIndexed
     val verdict = dscAppearanceVerdict(sig)
-    if(verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
-    val field = fields.firstOrNull { it.signature?.cosObject === signed.cosObject }
-      ?: return@forEachIndexed
-    for(widget in field.widgets){
-      val rect=widget.rectangle ?: continue
-      if(rect.width<=0f||rect.height<=0f||
-          !rect.width.isFinite()||!rect.height.isFinite())continue
-      drawViewerSignature(pdf,widget,sig,verdict,
-        signed.name.orEmpty(),signed.reason.orEmpty(),signed.location.orEmpty())
+    if (verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
+    val field = selected.singleOrNull { candidate ->
+      val value = candidate.signature ?: return@singleOrNull false
+      dscSameSignedData(value.byteRange, value.contents,
+        signed.byteRange, signed.contents)
+    } ?: return@forEachIndexed
+    for (widget in field.widgets) {
+      val rect = widget.rectangle ?: continue
+      if (rect.width <= 0f || rect.height <= 0f ||
+          !rect.width.isFinite() || !rect.height.isFinite()) continue
+      drawViewerSignature(pdf, widget, sig, verdict,
+        signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
       changed++
     }
   }
@@ -133,11 +216,7 @@ private fun drawViewerSignature(
   PDPageContentStream(document, appearance).use { stream ->
     val green = verdict == DscAppearanceVerdict.VALID || verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
     val accent = if (green) intArrayOf(0, 135, 74) else intArrayOf(191, 40, 40)
-    val title = when(verdict) {
-      DscAppearanceVerdict.VALID -> "Signature valid"
-      DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Signature integrity verified*"
-      else -> "Signature invalid"
-    }
+    val title = dscAppearanceLabel(verdict)
     // The mark sits BELOW the heading, not through it.
     val markW = width * .26f
     val markH = height * .28f
@@ -163,12 +242,7 @@ private fun drawViewerSignature(
       sig.certificate?.let(DscCertificates::displayName).orEmpty()
         .ifBlank { sig.name }
     }
-    val facts = listOfNotNull(
-      signer.trim().takeIf { it.isNotEmpty() }?.let { "Digitally signed by $it" },
-      sig.claimedSigningDate?.trim()?.takeIf { it.isNotEmpty() }?.let { "Date: $it" },
-      originalReason.trim().takeIf { it.isNotEmpty() }?.let { "Reason: $it" },
-      originalLocation.trim().takeIf { it.isNotEmpty() }?.let { "Location: $it" },
-    )
+    val facts = dscAppearanceFacts(sig, signer, originalReason, originalLocation, verdict)
     fun line(text: String, baseline: Float, fontSize: Float, bold: Boolean = false) {
       // Built-in Helvetica has WinAnsi coverage only. Do not invent glyphs:
       // skip unsupported code points rather than crash the viewer.
@@ -186,15 +260,16 @@ private fun drawViewerSignature(
       stream.showText(cleaned)
       stream.endText()
     }
-    val titleSize = (height * .14f).coerceIn(7f, 19f)
+    // Content-aware layout rather than the PAN-card template dimensions.
+    // Keep the full source-derived signature identity before optional details.
+    val titleSize = (height * .14f).coerceIn(5f, 19f)
     line(title, height*.84f, titleSize, true)
-    val lineSize = (height*.095f).coerceIn(5f, 12f)
-    val step = lineSize*1.25f
-    val displayFacts = if(verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS)
-      listOf("* Legacy SHA-1; revocation not established") + facts
-      else facts
-    displayFacts.take(4).forEachIndexed { index, fact ->
-      line(fact, height*.67f-index*step, lineSize)
+    val availableHeight = (height*.56f).coerceAtLeast(0f)
+    val targetLineSize = (height*.095f).coerceIn(4f, 12f)
+    val perLine = targetLineSize*1.24f
+    val lines = minOf(facts.size, (availableHeight / perLine).toInt().coerceAtLeast(0))
+    facts.take(lines).forEachIndexed { index, fact ->
+      line(fact, height*.66f-index*perLine, targetLineSize)
     }
     // The renderer itself—not a second Compose overlay—now owns the status.
   }
