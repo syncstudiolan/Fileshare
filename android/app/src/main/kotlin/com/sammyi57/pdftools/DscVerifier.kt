@@ -26,7 +26,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
 
-internal enum class DscStatus { VALID, PERSONALLY_TRUSTED, UNKNOWN, INVALID }
+internal enum class DscStatus { VALID, NATIVE_VERIFIED, PERSONALLY_TRUSTED, UNKNOWN, INVALID }
 internal data class DscWidget(val page: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
 internal data class DscResult(
   val id: String, val name: String, val status: DscStatus, val detail: String,
@@ -36,6 +36,8 @@ internal data class DscResult(
   val trustedTime: Date? = null,
   val personalTrust: Boolean = false,
   val canTrustSigner: Boolean = false,
+  val nativeVerdict: String? = null,
+  val certificateHosts: List<String> = emptyList(),
 )
 internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
 
@@ -174,7 +176,7 @@ internal object DscVerifier {
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
-                  var pool = embedded + dss.certificates
+                  var pool = embedded + dss.certificates + DscImportedIssuers.load()
                   val personalTrust = DscSignerTrust.contains(cert)
                   val stamp = DscTimestamp.attached(cms)
                   val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
@@ -219,6 +221,12 @@ internal object DscVerifier {
                   }
                   val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val currentValidity = runCatching { cert.checkValidity(at); true }.getOrDefault(false)
+                  val nativeVerified = DscVerdictPolicy.nativeVerified(intact, revisionAccepted && signingUsage && documentEku && strong,
+                    currentValidity, chain.isNotEmpty(), nativeResult?.status == "valid" && nativeResult.integrityChecked,
+                    rev == "Revoked" || nativeRejected)
+                  val hosts = (if(revChain.isEmpty()) listOf(cert) else revChain.dropLast(1)).flatMap {
+                    crlUrls(it) + aiaUrls(it, AccessDescription.id_ad_ocsp)
+                  }.mapNotNull { runCatching { it.toHttpUrl().host }.getOrNull() }.distinct()
                   val canTrust = (revisionAccepted || nativeResult?.modification == "allowed") && signingUsage && documentEku && strong && currentValidity && !nativeRejected && rev != "Revoked"
                   val personalAccepted = DscPersonalPolicy.accepted(personalTrust, intact,
                     revisionAccepted && signingUsage && documentEku && strong, currentValidity,
@@ -233,6 +241,7 @@ internal object DscVerifier {
                     personalAccepted && (chain.isEmpty() || rev != "Good") ->
                       "Signature integrity verified by PDF Craft; you personally trust this exact signer. CA/revocation verification is separate."
                     chain.isEmpty() -> "Signer identity not trusted. Review the signer and tap Trust signer."
+                    nativeVerified && rev != "Good" -> "PDF Craft verified the signature and CA chain. Revocation evidence is not confirmed; this is not full validation."
                     rev != "Good" -> "Integrity and trust verified; current revocation status not established"
                     !parts.whole -> "Verified signature; permitted later revisions: " + nativeResult?.changes.orEmpty().joinToString(", ")
                     else -> "Original signed bytes, trusted certificate chain and revocation evidence verified"
@@ -240,11 +249,12 @@ internal object DscVerifier {
                   val status = when {
                     rev == "Revoked" || nativeRejected -> DscStatus.INVALID
                     revisionAccepted && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    nativeVerified -> DscStatus.NATIVE_VERIFIED
                     personalAccepted -> DscStatus.PERSONALLY_TRUSTED
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
-                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust)
+                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust, nativeResult?.status, hosts)
                 }
           } catch(e: Exception) {
             // Preserve the native engine's signer metadata even if Java's
