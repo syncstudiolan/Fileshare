@@ -126,6 +126,12 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
         require(changed >= verified.signatures.sumOf { it.widgets.size }) {
           "All verified signature appearances must be replaceable"
         }
+        // Raster rendering must use the same flattened /AP that the viewer
+        // shows. Otherwise some Android/PDFBox backends can keep drawing
+        // the original '?' annotation instead of the verified appearance.
+        val matched = signaturePreviewFields(input, verified)
+        require(matched.isNotEmpty()) { "No replaceable signed widgets for visual copy" }
+        input.documentCatalog.acroForm?.flatten(matched, false)
         val renderer = PDFRenderer(input)
         PDDocument().use { out ->
           out.documentInformation.title = "Unsigned visual verification copy"
