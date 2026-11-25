@@ -1230,9 +1230,6 @@ class DesignPanel extends StatelessWidget {
               ? const [Color(0xFFEAF8FC),Color(0xFFD8EFF7),Color(0xFFCDEAF5)]
               : const [Color(0xFFE9F5F9),Color(0xFFD3E7EF),Color(0xFFB9D4E1)],
         ),
-        border:Border.all(
-          color:dark?const Color(0xFF468895):const Color(0xFFF6FDFF),
-          width:1.25),
         borderRadius:BorderRadius.circular(24),
         boxShadow:[
           BoxShadow(color:Colors.black.withValues(alpha:dark ? .46 : .19),
@@ -1415,8 +1412,6 @@ class DesignFileCard extends StatelessWidget {
             bottomLeft: Radius.circular(sent ? 23 : 6),
             bottomRight: Radius.circular(sent ? 6 : 23),
           ),
-          border:Border.all(color:FileTheme.dark(context)
-              ?const Color(0xFF43949B):Colors.white.withValues(alpha:.90),width:1.3),
           boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.24),
             blurRadius:14,offset:const Offset(0,8))],
         ),
@@ -1754,10 +1749,6 @@ class _TransferBubblePainter extends CustomPainter {
         ]);
     canvas.drawPath(path,Paint()..shader=gradient.createShader(
       Rect.fromLTWH(0,0,size.width,size.height)));
-    canvas.drawPath(path,Paint()
-      ..style=PaintingStyle.stroke
-      ..strokeWidth=1.5
-      ..color=dark?const Color(0xFFDFE5FF):const Color(0xFFFFFFFF));
   }
 
   @override
@@ -1794,10 +1785,6 @@ class TransferCardActions extends StatelessWidget {
                   ?const [Color(0xFF245768),Color(0xFF103A47)]
                   :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
             borderRadius:BorderRadius.circular(15),
-            border:Border.all(
-              color:onGreen?Colors.white.withValues(alpha:.64)
-                :FileTheme.dark(context)
-                  ?const Color(0xFF367987):Colors.white,width:1.25),
             boxShadow:[BoxShadow(
               color:Colors.black.withValues(alpha:.20),
               offset:const Offset(0,5),blurRadius:7)],
@@ -1820,8 +1807,8 @@ class TransferCardTime extends StatelessWidget {
       color: TransferCardInk.isIncoming(context)
         ?Colors.white.withValues(alpha:.12)
         :FileTheme.turquoise.withValues(alpha: .10),
-      border:Border.all(color:FileTheme.dark(context)
-        ?const Color(0xFF58939D):Colors.white,width:1.1),
+      boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.12),
+        offset:const Offset(0,2),blurRadius:5)],
       borderRadius: BorderRadius.circular(22)),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Text(created.toLocal().toString().substring(11, 16),
@@ -2716,8 +2703,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               decoration:BoxDecoration(
                 color:selected?FileTheme.violet.withValues(alpha:.08):null,
                 borderRadius:BorderRadius.circular(26),
-                border:Border.all(color:selected
-                  ?FileTheme.violet:Colors.transparent,width:1.5)),
+                boxShadow:selected?[BoxShadow(
+                  color:FileTheme.violet.withValues(alpha:.24),
+                  blurRadius:14,offset:const Offset(0,5))]:null),
               child:card)),
           if(active)Positioned(top:10,right:10,
             child:AnimatedContainer(
@@ -3694,9 +3682,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                                     : FileTheme.dark(context)
                                       ?const [Color(0xFF1C4755),Color(0xFF102F3B)]
                                       :const [Color(0xFFE6F7FD),Color(0xFFCBE9F3)]),
-                                border:Border.all(
-                                  color:FileTheme.dark(context)
-                                    ?const Color(0xFF3B7783):const Color(0xFFF6FCFE)),
                                 boxShadow:[BoxShadow(
                                   color:Colors.black.withValues(alpha:.18),
                                   offset:const Offset(0,3),blurRadius:5)]),
@@ -3791,8 +3776,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                                 ?const [Color(0xFF245667),Color(0xFF103443)]
                                 :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
                             borderRadius:BorderRadius.circular(12),
-                            border:Border.all(color:FileTheme.dark(context)
-                              ?const Color(0xFF438591):Colors.white),
                             boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.19),
                               offset:const Offset(0,3),blurRadius:5)]),
                           child:Icon(icon,size:small?19:21,color:FileTheme.violet)))));
@@ -3811,8 +3794,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                             ?const [Color(0xFF173F4D),Color(0xFF0D2D3C)]
                             :const [Color(0xFFE6F7FD),Color(0xFFCBE9F3)]),
                         borderRadius:BorderRadius.circular(15),
-                        border:Border.all(color:FileTheme.dark(context)
-                          ?const Color(0xFF468896):Colors.white),
                         boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.13),
                           offset:const Offset(0,3),blurRadius:5)]),
                       child:TextField(

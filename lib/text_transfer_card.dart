@@ -61,8 +61,6 @@ class _TextTransferCardState extends State<TextTransferCard> {
                 ?const [Color(0xFF245768),Color(0xFF103A47)]
                 :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
           borderRadius:BorderRadius.circular(17),
-          border:Border.all(color:dark
-            ?const Color(0xFF58939D):Colors.white,width:1.2),
           boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.17),
             blurRadius:6,offset:const Offset(0,4))]),
         child:TextButton.icon(onPressed:tap,
@@ -93,8 +91,8 @@ class _TextTransferCardState extends State<TextTransferCard> {
                   padding:const EdgeInsets.symmetric(horizontal:9,vertical:5),
                   decoration:BoxDecoration(
                     color:const Color(0xFF009A9C).withValues(alpha:.10),
-                    border:Border.all(color:dark
-                      ?const Color(0xFF58939D):Colors.white,width:1.1),
+                    boxShadow:[BoxShadow(color:Colors.black.withValues(alpha:.12),
+                      blurRadius:5,offset:const Offset(0,2))],
                     borderRadius:BorderRadius.circular(22)),
                   child:Row(mainAxisSize:MainAxisSize.min,children:[
                     Text('${widget.created.toLocal().hour.toString().padLeft(2,'0')}:'

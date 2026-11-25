@@ -19,12 +19,18 @@ import java.io.File
  * legacy-only, personally trusted or pending states remain UNKNOWN.
  * Visual status never changes DscVerifier's underlying signed-byte verdict.
  */
-internal enum class DscAppearanceVerdict { VALID, INVALID, UNKNOWN }
+internal enum class DscAppearanceVerdict { VALID, VERIFIED_WITH_WARNINGS, INVALID, UNKNOWN }
 
 internal fun dscAppearanceVerdict(sig: DscResult): DscAppearanceVerdict = when {
-  sig.status == DscStatus.INVALID -> DscAppearanceVerdict.INVALID
+  sig.status == DscStatus.INVALID || sig.revocation == "Revoked" -> DscAppearanceVerdict.INVALID
   sig.status == DscStatus.VALID && sig.integrity && sig.trusted &&
     sig.revocation == "Good" -> DscAppearanceVerdict.VALID
+  // A native-verified legacy signature proves signed-byte integrity and CA
+  // chaining, NOT modern SHA-1 suitability or a good revocation response.
+  // Show a clearly qualified verification mark rather than the stale PDF '?'.
+  sig.status == DscStatus.LEGACY_NATIVE_VERIFIED && sig.integrity && sig.trusted &&
+    sig.nativeVerdict?.equals("valid", ignoreCase = true) == true &&
+    sig.revocation != "Revoked" -> DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
   else -> DscAppearanceVerdict.UNKNOWN
 }
 
@@ -125,9 +131,13 @@ private fun drawViewerSignature(
   // Important: NOT a page-wide opaque rectangle. The signed page's original
   // art and its original colored background remain as drawn in the PDF.
   PDPageContentStream(document, appearance).use { stream ->
-    val green = verdict == DscAppearanceVerdict.VALID
+    val green = verdict == DscAppearanceVerdict.VALID || verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
     val accent = if (green) intArrayOf(0, 135, 74) else intArrayOf(191, 40, 40)
-    val title = if (green) "Signature valid" else "Signature invalid"
+    val title = when(verdict) {
+      DscAppearanceVerdict.VALID -> "Signature valid"
+      DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Signature integrity verified*"
+      else -> "Signature invalid"
+    }
     // The mark sits BELOW the heading, not through it.
     val markW = width * .26f
     val markH = height * .28f
@@ -180,7 +190,10 @@ private fun drawViewerSignature(
     line(title, height*.84f, titleSize, true)
     val lineSize = (height*.095f).coerceIn(5f, 12f)
     val step = lineSize*1.25f
-    facts.take(4).forEachIndexed { index, fact ->
+    val displayFacts = if(verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS)
+      listOf("* Legacy SHA-1; revocation not established") + facts
+      else facts
+    displayFacts.take(4).forEachIndexed { index, fact ->
       line(fact, height*.67f-index*step, lineSize)
     }
     // The renderer itself—not a second Compose overlay—now owns the status.
