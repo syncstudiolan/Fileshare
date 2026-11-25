@@ -208,8 +208,17 @@ internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): I
       val rect = widget.rectangle ?: continue
       if (rect.width <= 0f || rect.height <= 0f ||
           !rect.width.isFinite() || !rect.height.isFinite()) continue
-      drawViewerSignature(pdf, widget, sig, verdict,
-        signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
+      // Adobe/UIDAI-style signature widgets already contain a dedicated
+      // FRM with n0..n4 layers. Preserve original n0/n2 instead of erasing
+      // the whole signer box. For shared/multi-signature appearances use the
+      // existing conservative isolated-widget fallback.
+      val layered = pdf.signatureDictionaries.size == 1 &&
+        field.widgets.size == 1 &&
+        replaceDscNamedStatusLayers(pdf, widget, verdict)
+      if(!layered) {
+        drawViewerSignature(pdf, widget, sig, verdict,
+          signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
+      }
       changed++
     }
   }
