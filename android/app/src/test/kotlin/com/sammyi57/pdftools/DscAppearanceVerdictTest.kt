@@ -23,7 +23,7 @@ class DscAppearanceVerdictTest {
       dscAppearanceVerdict(result(DscStatus.VALID,chainTrusted=false)))
     assertEquals(DscAppearanceVerdict.UNKNOWN,
       dscAppearanceVerdict(result(DscStatus.VALID,revocation="Not established")))
-    assertEquals(DscAppearanceVerdict.UNKNOWN,
+    assertEquals(DscAppearanceVerdict.INVALID,
       dscAppearanceVerdict(result(DscStatus.VALID,revocation="Revoked")))
   }
 
