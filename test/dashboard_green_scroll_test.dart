@@ -29,6 +29,19 @@ void main() {
     expect(source,contains('TransferCardInk(incoming:incoming'));
   });
 
+  test('sent and received cards have elevation without a white stroke', () {
+    final source=File('lib/main.dart').readAsStringSync();
+    final painter=source.split('class _TransferBubblePainter extends CustomPainter').last
+      .split('class TransferCardActions extends StatelessWidget').first;
+    expect(painter,contains('canvas.drawShadow(path,'));
+    expect(painter,contains('canvas.drawPath(path,Paint()..shader='));
+    expect(painter,isNot(contains('PaintingStyle.stroke')));
+    final panel=source.split('class DesignPanel extends StatelessWidget').last
+      .split('class DesignTag extends StatelessWidget').first;
+    expect(panel,contains('boxShadow:['));
+    expect(panel,isNot(contains('border:Border.all(')));
+  });
+
   test('lazy scrolling does not build/decode intermediate full thumbnails', () {
     final src=File('lib/main.dart').readAsStringSync();
     final thumbs=File('lib/dashboard_thumbnail.dart').readAsStringSync();
