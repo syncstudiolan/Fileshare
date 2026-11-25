@@ -1857,7 +1857,9 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   Widget _visual(LanFile file) {
-    if (_photo(file.name) && File(file.path).existsSync()) {
+    // Avoid synchronous filesystem stat for every card during a fling. The
+    // Image widget has an errorBuilder if this file has since disappeared.
+    if (_photo(file.name)) {
       return scrolling == null
         ?Image.file(File(file.path),fit:BoxFit.cover,cacheWidth:160,
           errorBuilder:(_,__,___)=>const Icon(
