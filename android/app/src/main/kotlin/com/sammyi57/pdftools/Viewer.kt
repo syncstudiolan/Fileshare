@@ -108,6 +108,7 @@ fun PdfViewerScreen(path: String, name: String) {
   // reading the untouched source PDF at `path`, never the unsigned preview.
   var signaturePreview by remember(path) { mutableStateOf<PdfDocument?>(null) }
   var signaturePreviewFile by remember(path) { mutableStateOf<File?>(null) }
+  var signaturePreviewError by remember(path) { mutableStateOf<String?>(null) }
   var problem by remember { mutableStateOf("") }
   var password by remember { mutableStateOf<String?>(null) }
   var asking by remember { mutableStateOf(false) }
@@ -166,9 +167,16 @@ fun PdfViewerScreen(path: String, name: String) {
         dscAppearanceVerdict(it)!=DscAppearanceVerdict.UNKNOWN
       }==true
     val built=if(needsPreview){
-      withContext(Dispatchers.IO) {
-        prepareDscViewerAppearance(path,password,verified!!)
-      }
+      try {
+        withContext(Dispatchers.IO) {
+          prepareDscViewerAppearance(path,password,verified!!)
+        }
+      } catch(e:kotlinx.coroutines.CancellationException) { throw e }
+        catch(e:Exception) {
+          android.util.Log.w("FileShareDSC", "Signature appearance preview failed", e)
+          signaturePreviewError = e.message ?: "Unable to prepare signature appearance"
+          null
+        }
     }else null
     if(built!=null){
       val next=try { loader.openDocument(Uri.fromFile(built), null) }
@@ -182,6 +190,8 @@ fun PdfViewerScreen(path: String, name: String) {
       val oldFile=signaturePreviewFile
       signaturePreview=next
       signaturePreviewFile=if(next!=null)built else null
+      signaturePreviewError=if(next!=null)null else
+        "The signature appearance could not be loaded by Android PDF Viewer."
       runCatching { old?.close() }
       oldFile?.delete()
     }else{
@@ -189,6 +199,9 @@ fun PdfViewerScreen(path: String, name: String) {
       val oldFile=signaturePreviewFile
       signaturePreview=null
       signaturePreviewFile=null
+      if(needsPreview && signaturePreviewError==null)
+        signaturePreviewError="The PDF signature appearance could not be replaced; original mark is shown."
+      if(!needsPreview) signaturePreviewError=null
       runCatching { old?.close() }
       oldFile?.delete()
     }
@@ -303,6 +316,16 @@ fun PdfViewerScreen(path: String, name: String) {
         onUrlLinkClicked = { uri -> openUrl(uri.toString()); true },
       )
       SelectionHandles(state, c.accent)
+      if(!dscBusy && !showOriginalSignature && signaturePreviewError != null) {
+        Text(
+          signaturePreviewError!!,
+          color = Color(0xFF9D620A),
+          modifier = Modifier.align(Alignment.TopCenter)
+            .padding(horizontal=18.dp, vertical=12.dp)
+            .background(c.panel.copy(alpha=0.96f), RoundedCornerShape(10.dp))
+            .padding(10.dp),
+        )
+      }
       if (!searching) dsc?.let { result ->
         DscSignatureOverlay(state, result) { id ->
           selectedSignature = id; dscPanel = true
