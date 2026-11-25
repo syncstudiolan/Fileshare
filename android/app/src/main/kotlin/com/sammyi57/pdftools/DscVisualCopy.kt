@@ -36,39 +36,57 @@ internal fun paintDscAppearance(canvas: Canvas, rect: RectF, sig: DscResult, vis
     canvas.drawRect(rect, p)
     canvas.translate(rect.left, rect.top)
     canvas.scale(rect.width()/240f, rect.height()/200f)
-    val dark = 0xff20252a.toInt()
+    // Reference layout: left-aligned black heading and signer/date lines,
+    // with a large, outlined diagonal green check across the text block.
+    // Both the viewer and exported page use this exact same painter.
+    val dark = 0xff171717.toInt()
     val warning = 0xff805400.toInt()
-    fun line(value: String, y: Float, size: Float, color: Int = dark, bold: Boolean = false) {
+    fun line(value: String, y: Float, size: Float, color: Int = dark) {
       p.style = Paint.Style.FILL
       p.color = color
-      p.typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+      p.typeface = Typeface.DEFAULT
       p.textAlign = Paint.Align.LEFT
       p.textSize = size
       val measured = p.measureText(value)
       if (measured > 224f) p.textSize = size * 224f / measured
       canvas.drawText(value, 8f, y, p)
     }
-    line(if (visualCopy) "Original signature checked*" else if (legacy || sig.revocation != "Good") "Signature verified*" else "Signature valid", 26f, 23f)
-    line("Digitally signed by", 46f, 15f)
-    line(signer.take(100), 64f, 15f)
-    sig.claimedSigningDate?.let { line("Claimed date: " + it, 81f, 13f) }
+    val qualified = legacy || sig.revocation != "Good" || sig.status != DscStatus.VALID
+    line(if (qualified) "Signature verified*" else "Signature valid", 34f, 26f)
+    line("Digitally signed by", 60f, 18f)
+    line(signer.take(160), 81f, 18f)
+    val date = sig.claimedSigningDate
+    line(if (date != null) "Date: " + date else "Date: Not available", 103f, 16f)
+    // Filled angular tick with black outline and offset dark shadow,
+    // matching the reference rather than using a corner badge or glyph.
     val tick = Path().apply {
-      moveTo(77f, 113f); lineTo(108f, 142f); lineTo(177f, 88f)
+      moveTo(88f, 78f)
+      lineTo(109f, 99f)
+      lineTo(151f, 38f)
+      lineTo(166f, 49f)
+      lineTo(112f, 127f)
+      lineTo(74f, 94f)
+      close()
     }
+    p.style = Paint.Style.FILL
+    p.color = 0xff111111.toInt()
+    canvas.save()
+    canvas.translate(3f, 4f)
+    canvas.drawPath(tick,p)
+    canvas.restore()
+    p.color = 0xe600a33d.toInt()
+    canvas.drawPath(tick,p)
     p.style = Paint.Style.STROKE
-    p.strokeCap = Paint.Cap.SQUARE
+    p.strokeWidth = 2f
     p.strokeJoin = Paint.Join.MITER
-    p.strokeWidth = 22f; p.color = 0xff12321d.toInt()
-    canvas.drawPath(tick, p)
-    p.strokeWidth = 16f; p.color = 0xff159447.toInt()
-    canvas.drawPath(tick, p)
-    if (legacy) {
-      line("* Legacy SHA-1", 163f, 13f, warning, true)
-      line(if (sig.revocation == "Good") "Revocation checked" else "CA status not available", 178f, 13f, warning)
-    } else if (sig.revocation != "Good") {
-      line("* CA revocation status unavailable", 178f, 13f, warning)
-    }
-    line(if (visualCopy) "UNSIGNED VISUAL COPY" else "File Share verification", 194f, 13f, dark, visualCopy)
+    p.color = 0xff183b23.toInt()
+    canvas.drawPath(tick,p)
+    // Keep material qualifications readable below the reference-style
+    // block. A static copy cannot represent a live digital signature.
+    if (legacy) line("* Legacy SHA-1", 146f, 14f, warning)
+    if (sig.revocation != "Good") line("* CA revocation status unavailable", 163f, 13f, warning)
+    if (date != null) line("Date as recorded by signer", 179f, 11f, dark)
+    line(if (visualCopy) "UNSIGNED VISUAL COPY" else "File Share verification", 195f, 13f, dark)
   } finally { canvas.restoreToCount(save) }
 }
 
