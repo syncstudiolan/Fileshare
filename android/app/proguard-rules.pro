@@ -25,3 +25,16 @@
 
 # JNI entry point name must remain stable.
 -keep class com.sammyi57.pdftools.DscRustBridge { *; }
+
+# BC registers JCA algorithm implementations by class-name strings, which
+# are not ordinary static call sites. Preserve provider mappings and SPI
+# implementation names/constructors in the minified signed APK.
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
+-keep class org.bouncycastle.jcajce.provider.**$Mappings { *; }
+-keep class org.bouncycastle.jcajce.provider.digest.** { *; }
+-keep class org.bouncycastle.jcajce.provider.asymmetric.rsa.** { *; }
+-keep class org.bouncycastle.jcajce.provider.asymmetric.ec.** { *; }
+-keep class org.bouncycastle.jcajce.provider.asymmetric.dsa.** { *; }
+-keep class org.bouncycastle.jcajce.provider.asymmetric.edec.** { *; }
+-keep class org.bouncycastle.jcajce.provider.asymmetric.x509.CertificateFactory { *; }
+-keep class org.bouncycastle.jcajce.util.** { *; }

@@ -125,7 +125,7 @@ fun PdfViewerScreen(path: String, name: String) {
     try {
       dsc = withContext(Dispatchers.IO) {
         val offline = DscVerifier.read(path, password)
-        if (offline.signatures.any { it.status == DscStatus.UNKNOWN && it.integrity &&
+        if (offline.signatures.any { (it.status == DscStatus.UNKNOWN || it.status == DscStatus.PERSONALLY_TRUSTED) && it.integrity &&
               (!it.trusted || it.revocation == "Not established") }) {
           DscVerifier.read(path, password, online = true)
         } else offline
@@ -324,14 +324,14 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, onTa
       val height = kotlin.math.abs(b.y - a.y)
       if (width < 1f || height < 1f) continue
       val color = when (sig.status) {
-        DscStatus.VALID -> Color(0xff18834b)
+        DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED -> Color(0xff18834b)
         DscStatus.UNKNOWN -> Color(0xffb57b13)
         DscStatus.INVALID -> Color(0xffc33232)
       }
       Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
         .size(with(density){width.toDp()}, with(density){height.toDp()})
         .border(1.dp,color).clickable { onTap(sig.id) }) {
-        Text(when(sig.status) { DscStatus.VALID -> "✓"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
+        Text(when(sig.status) { DscStatus.VALID -> "✓"; DscStatus.PERSONALLY_TRUSTED -> "✓*"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
           color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
       }
     }

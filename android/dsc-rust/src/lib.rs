@@ -37,6 +37,11 @@ fn inspect(bytes: Vec<u8>, password: String, roots: Vec<Vec<u8>>) -> Result<Valu
         json!({
             "field": s.field, "signed_len": s.signed_len,
             "fingerprint": s.certificate.as_ref().map(|c| digest(&c.raw)),
+            "certificate_hex": s.certificate.as_ref().filter(|c| c.raw.len() <= 128 * 1024).map(|c| c.raw.iter().map(|b| format!("{b:02x}")).collect::<String>()),
+            "digest": s.digest.map(|d| d.name()),
+            // In upstream approval validation, chain is populated only after
+            // successful cryptographic signature verification in finish_validation.
+            "integrity_checked": !s.doc_timestamp && s.certificate.as_ref().is_some_and(|c| s.chain.first().is_some_and(|first| first.raw == c.raw)),
             "status": match s.status { Status::Valid => "valid", Status::Unknown => "unknown", Status::Invalid => "invalid" },
             "modification": modification, "changes": changes,
             "details": s.details.iter().take(32).map(|d| &d.message).collect::<Vec<_>>(),

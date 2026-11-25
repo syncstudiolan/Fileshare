@@ -3,7 +3,6 @@ package com.sammyi57.pdftools
 import org.bouncycastle.asn1.x509.Extension
 import org.bouncycastle.cert.X509CertificateHolder
 import org.bouncycastle.cert.ocsp.*
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder
 import java.security.cert.X509Certificate
@@ -27,8 +26,7 @@ internal object DscOcsp {
     require(basic.criticalExtensionOIDs.isNullOrEmpty())
     require(basic.producedAt.time <= now.time + 300000L)
     val issuerHolder = X509CertificateHolder(issuer.encoded)
-    val converter = JcaX509CertificateConverter().setProvider(provider)
-    val candidates = (listOf(issuer) + basic.certs.map { converter.getCertificate(it) })
+    val candidates = (listOf(issuer) + basic.certs.map { DscCertificates.certificate(it) })
       .distinctBy { DscSignedBytes.sha256(it.encoded) }
     val signer = candidates.firstOrNull { candidate ->
       runCatching {

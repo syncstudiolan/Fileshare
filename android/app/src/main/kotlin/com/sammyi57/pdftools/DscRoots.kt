@@ -14,7 +14,7 @@ internal object DscRoots {
       cert.basicConstraints >= 0 && cert.subjectX500Principal == cert.issuerX500Principal &&
       !cert.hasUnsupportedCriticalExtension() &&
       (cert.keyUsage?.getOrElse(5){false} ?: true) &&
-      run { cert.verify(cert.publicKey, DscCms.provider); true }
+      run { cert.verify(cert.publicKey); true }
   }.getOrDefault(false)
 
   fun bundled(): List<X509Certificate> = runCatching {

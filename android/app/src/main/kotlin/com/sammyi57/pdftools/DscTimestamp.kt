@@ -3,7 +3,6 @@ package com.sammyi57.pdftools
 import org.bouncycastle.asn1.cms.ContentInfo
 import org.bouncycastle.asn1.ASN1InputStream
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cms.CMSSignedData
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder
 import org.bouncycastle.tsp.TimeStampToken
@@ -48,10 +47,9 @@ internal object DscTimestamp {
     val holders = token.certificates.getMatches(null)
     val holder = holders.single { token.sid.match(it) }
     val provider = DscCms.provider
-    token.validate(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(holder))
-    val converter = JcaX509CertificateConverter().setProvider(provider)
-    val cert = converter.getCertificate(holder)
+    val cert = DscCertificates.certificate(holder)
+    token.validate(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(cert))
     cert.checkValidity(info.genTime)
-    return Evidence(info.genTime, cert, holders.map { converter.getCertificate(it) }, token.toCMSSignedData())
+    return Evidence(info.genTime, cert, holders.map { DscCertificates.certificate(it) }, token.toCMSSignedData())
   }
 }

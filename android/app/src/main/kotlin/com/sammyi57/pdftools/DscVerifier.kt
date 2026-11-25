@@ -10,7 +10,6 @@ import org.bouncycastle.asn1.x509.Extension
 import org.bouncycastle.asn1.x509.GeneralName
 import org.bouncycastle.asn1.x509.GeneralNames
 import org.bouncycastle.asn1.ASN1OctetString
-import org.bouncycastle.cert.jcajce.JcaX509CRLConverter
 import org.bouncycastle.cms.CMSSignedData
 import java.io.File
 import java.net.InetAddress
@@ -27,7 +26,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.security.cert.*
 import java.util.Date
 
-internal enum class DscStatus { VALID, UNKNOWN, INVALID }
+internal enum class DscStatus { VALID, PERSONALLY_TRUSTED, UNKNOWN, INVALID }
 internal data class DscWidget(val page: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
 internal data class DscResult(
   val id: String, val name: String, val status: DscStatus, val detail: String,
@@ -35,6 +34,8 @@ internal data class DscResult(
   val integrity: Boolean = false, val trusted: Boolean = false,
   val revocation: String = "Not established", val widgets: List<DscWidget> = emptyList(),
   val trustedTime: Date? = null,
+  val personalTrust: Boolean = false,
+  val canTrustSigner: Boolean = false,
 )
 internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
 
@@ -173,7 +174,8 @@ internal object DscVerifier {
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
-                  val pool = embedded + dss.certificates
+                  var pool = embedded + dss.certificates
+                  val personalTrust = DscSignerTrust.contains(cert)
                   val stamp = DscTimestamp.attached(cms)
                   val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
                   val trustedTime = if (stamp != null && tsaChain.size >= 2 &&
@@ -181,27 +183,56 @@ internal object DscVerifier {
                     stamp.time else null
                   val at = trustedTime ?: Date()
                   var chain = buildChain(cert, pool, trust, at)
-                  if (chain.isEmpty() && online && trust.isNotEmpty()) {
-                    val extra = discoverIssuers(cert, pool, trust, fetchedIssuers)
-                    chain = buildChain(cert, pool + extra, trust, at)
+                  if (chain.isEmpty() && online) {
+                    pool = (pool + discoverIssuers(cert, pool, trust, fetchedIssuers))
+                      .distinctBy { DscSignedBytes.sha256(it.encoded) }
+                    chain = buildChain(cert, pool, trust, at)
                   }
                   val signingUsage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
                   val documentEku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
                   val strong = checked.strong
-                  val nativeResult = nativeFor(cert)
+                  // Same one-click trust as upstream, scoped to this exact signer.
+                  // Do not supply personal certificates as global CA/TSA anchors.
+                  val nativeResult = if (personalTrust) {
+                    DscRustBridge.inspect(bytes, password, (trust + cert).distinctBy {
+                      DscSignedBytes.sha256(it.encoded)
+                    }).singleOrNull {
+                      field != null && it.field == field.fullyQualifiedName &&
+                        it.length == covered && it.fingerprint == DscSignedBytes.sha256(cert.encoded)
+                    }
+                  } else nativeFor(cert)
                   // Only a matching native verdict and allowed revision classification
                   // can relax the original whole-file requirement. A missing library,
                   // unknown verdict or field mismatch never approves modifications.
                   val revisionAccepted = revisionAllowed(nativeResult)
                   val nativeRejected = nativeResult?.status == "invalid"
-                  val rev = if (chain.size < 2) "Not established" else checkRevocation(chain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
+                  // Even without a trusted CA chain, obtain signer revocation evidence
+                  // from a cryptographically matching issuer; never treat this as CA trust.
+                  val revChain = if (chain.size >= 2) chain else {
+                    val issuer = pool.firstOrNull { candidate ->
+                      candidate != cert && candidate.basicConstraints >= 0 &&
+                        candidate.subjectX500Principal == cert.issuerX500Principal &&
+                        (candidate.keyUsage?.getOrElse(5){false} ?: true) &&
+                        runCatching { cert.verify(candidate.publicKey, provider); true }.getOrDefault(false)
+                    }
+                    if (issuer == null) emptyList() else listOf(cert, issuer)
+                  }
+                  val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
+                  val currentValidity = runCatching { cert.checkValidity(at); true }.getOrDefault(false)
+                  val canTrust = (revisionAccepted || nativeResult?.modification == "allowed") && signingUsage && documentEku && strong && currentValidity && !nativeRejected && rev != "Revoked"
+                  val personalAccepted = DscPersonalPolicy.accepted(personalTrust, intact,
+                    revisionAccepted && signingUsage && documentEku && strong, currentValidity,
+                    nativeResult?.status == "valid", rev == "Revoked" || nativeRejected)
                   val detail = when {
                     rev == "Revoked" -> "Certificate is revoked"
                     nativeRejected -> "PDF Craft rejected this signature or its later revisions"
                     !revisionAccepted -> "Signed bytes intact; later revisions are not established as permitted"
                     !signingUsage || !documentEku -> "Certificate key usage does not allow document signing"
                     !strong -> "Legacy or unsupported digest policy"
-                    chain.isEmpty() -> "Certificate identity is not trusted or not currently valid"
+                    !currentValidity -> "Certificate is not valid at the checked time"
+                    personalAccepted && (chain.isEmpty() || rev != "Good") ->
+                      "Signature integrity verified by PDF Craft; you personally trust this exact signer. CA/revocation verification is separate."
+                    chain.isEmpty() -> "Signer identity not trusted. Review the signer and tap Trust signer."
                     rev != "Good" -> "Integrity and trust verified; current revocation status not established"
                     !parts.whole -> "Verified signature; permitted later revisions: " + nativeResult?.changes.orEmpty().joinToString(", ")
                     else -> "Original signed bytes, trusted certificate chain and revocation evidence verified"
@@ -209,12 +240,54 @@ internal object DscVerifier {
                   val status = when {
                     rev == "Revoked" || nativeRejected -> DscStatus.INVALID
                     revisionAccepted && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    personalAccepted -> DscStatus.PERSONALLY_TRUSTED
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
-                    chain.isNotEmpty(), rev, widgets, trustedTime)
+                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust)
                 }
-          } catch(e: Exception) { unknown("Signature could not be completely checked: ${e.message ?: e.javaClass.simpleName}") }
+          } catch(e: Exception) {
+            // Preserve the native engine's signer metadata even if Java's
+            // provider has trouble. Only native integrity proof for the exact
+            // field/byte-range counts; never infer it from a certificate alone.
+            val covered = sig.byteRange[2].toLong() + sig.byteRange[3].toLong()
+            val match = native.singleOrNull { field != null &&
+              it.field == field.fullyQualifiedName && it.length == covered }
+            val cert = match?.certificate
+            if (match == null || cert == null) {
+              unknown("Signature could not be completely checked: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
+            } else {
+              val personal = DscSignerTrust.contains(cert)
+              val result = if(personal) DscRustBridge.inspect(bytes,password,(trust + cert).distinctBy {
+                DscSignedBytes.sha256(it.encoded)
+              }).singleOrNull { it.field == match.field && it.length == covered &&
+                it.fingerprint == match.fingerprint } ?: match else match
+              val bad = result.status == "invalid"
+              // Native-only fallback is deliberately limited to ordinary
+              // detached CMS and provider failures. CAdES ESS binding and
+              // legacy/other formats must still pass their stricter checks.
+              val providerFailure = generateSequence<Throwable>(e) { it.cause }
+                .take(8).any { it is java.security.NoSuchAlgorithmException ||
+                  it is java.security.cert.CertificateException || it is java.security.ProviderException }
+              val current = runCatching { cert.checkValidity(); true }.getOrDefault(false)
+              val usage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
+              val eku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36",
+                "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
+              val policy = providerFailure && sig.subFilter == "adbe.pkcs7.detached" &&
+                result.digest in setOf("SHA-256","SHA-384","SHA-512") &&
+                ((cert.publicKey as? java.security.interfaces.RSAPublicKey)?.modulus?.bitLength() ?: 2048) >= 2048 &&
+                usage && eku && current && (parts.whole || result.modification == "allowed")
+              val accepted = DscPersonalPolicy.accepted(personal,result.integrityChecked,policy,current,
+                result.status == "valid",bad)
+              DscResult(id,cert.subjectX500Principal.name,
+                if(bad) DscStatus.INVALID else if(accepted) DscStatus.PERSONALLY_TRUSTED else DscStatus.UNKNOWN,
+                if(bad) "PDF Craft rejected this signature"
+                else if(accepted) "PDF Craft verified the signed bytes; personally trusted signer. CA/revocation check unavailable."
+                else "PDF Craft signer recovered; Android certificate check incomplete: ${e.javaClass.simpleName}: ${e.message.orEmpty()}",
+                cert, integrity = result.integrityChecked, widgets = widgets,
+                personalTrust = personal, canTrustSigner = policy && result.integrityChecked && !bad)
+            }
+          }
         }
       }
     }
@@ -244,7 +317,7 @@ internal object DscVerifier {
       online: Boolean, fetched: MutableMap<String, X509CRL?>, ocspCache: MutableMap<String, ByteArray?>, at: Date): String {
     val now = Date()
     val crls = cms.getCRLs().getMatches(null).mapNotNull { holder ->
-      runCatching { JcaX509CRLConverter().setProvider(provider).getCRL(holder) }.getOrNull()
+      runCatching { DscCertificates.crl(holder) }.getOrNull()
     }
     var complete = true
     for ((cert, issuer) in chain.zipWithNext()) {
