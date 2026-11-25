@@ -72,6 +72,21 @@ class DscBuildCommandTest(unittest.TestCase):
                 {"name":"hayro-syntax","version":"0.7.2","source":"registry+https://github.com/rust-lang/crates.io-index"}
             ]})
 
+    def test_cart_picker_callback_remains_last(self):
+        root = SCRIPT.parents[2] / "android/app/src/main/kotlin/com/sammyi57/pdftools"
+        signature = (root / "PdfSendPicker.kt").read_text().split("fun PdfSendPicker(", 1)[1].split("\n) {", 1)[0]
+        self.assertTrue(signature.strip().endswith("onClose: () -> Unit,"))
+        self.assertIn("preserveSigned: Boolean = false", signature)
+        self.assertIn("expectedSignedHash: String? = null", signature)
+
+    def test_existing_cart_callers_explicitly_bind_close_callback(self):
+        root = SCRIPT.parents[2] / "android/app/src/main/kotlin/com/sammyi57/pdftools"
+        for name in ("Scanner.kt", "ToolScreen.kt", "Viewer.kt"):
+            source = (root / name).read_text()
+            call = source.split("PdfSendPicker(", 1)[1]
+            self.assertIn("onClose = {", call[:500], name)
+        self.assertIn("expectedSignedHash = dsc?", (root / "Viewer.kt").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
