@@ -106,6 +106,10 @@ fun PdfViewerScreen(path: String, name: String) {
   val state = remember { PdfViewerState() }
   val loader = remember { SandboxedPdfLoader(context) }
   var doc by remember { mutableStateOf<PdfDocument?>(null) }
+  // ONLY for display. Signature validation, Save, Share and Cart continue
+  // reading the untouched source PDF at `path`, never the unsigned preview.
+  var signaturePreview by remember(path) { mutableStateOf<PdfDocument?>(null) }
+  var signaturePreviewFile by remember(path) { mutableStateOf<File?>(null) }
   var problem by remember { mutableStateOf("") }
   var password by remember { mutableStateOf<String?>(null) }
   var asking by remember { mutableStateOf(false) }
@@ -155,8 +159,50 @@ fun PdfViewerScreen(path: String, name: String) {
       problem = "This PDF couldn’t be opened. It may be damaged."
     }
   }
+  LaunchedEffect(path,doc,dsc,dscBusy,showOriginalSignature) {
+    // A visible status belongs to the document renderer, not to a second
+    // Canvas floating over a scrolling Jetpack PDF page.
+    val verified=dsc
+    val needsPreview=!dscBusy && !showOriginalSignature && doc!=null &&
+      verified?.signatures?.any {
+        dscAppearanceVerdict(it)!=DscAppearanceVerdict.UNKNOWN
+      }==true
+    val built=if(needsPreview){
+      withContext(Dispatchers.IO) {
+        prepareDscViewerAppearance(path,password,verified!!)
+      }
+    }else null
+    if(built!=null){
+      val next=try { loader.openDocument(Uri.fromFile(built), null) }
+        catch (e:Exception) {
+          built.delete()
+          android.util.Log.w("FileShareDSC",
+            "Unable to open temporary visual signature rendering",e)
+          null
+        }
+      val old=signaturePreview
+      val oldFile=signaturePreviewFile
+      signaturePreview=next
+      signaturePreviewFile=if(next!=null)built else null
+      runCatching { old?.close() }
+      oldFile?.delete()
+    }else{
+      val old=signaturePreview
+      val oldFile=signaturePreviewFile
+      signaturePreview=null
+      signaturePreviewFile=null
+      runCatching { old?.close() }
+      oldFile?.delete()
+    }
+  }
   val latest by rememberUpdatedState(doc)
-  DisposableEffect(Unit) { onDispose { runCatching { latest?.close() } } }
+  val latestPreview by rememberUpdatedState(signaturePreview)
+  val latestPreviewFile by rememberUpdatedState(signaturePreviewFile)
+  DisposableEffect(Unit) { onDispose {
+    runCatching { latest?.close() }
+    runCatching { latestPreview?.close() }
+    latestPreviewFile?.delete()
+  } }
 
   // Search: every hit softly highlighted, the current one in Tangerine, stepped through with the arrows.
   var searching by remember { mutableStateOf(false) }
@@ -254,7 +300,7 @@ fun PdfViewerScreen(path: String, name: String) {
         doc == null -> Spinner(c.accent, modifier = Modifier.align(Alignment.Center))
       }
       PdfViewer(
-        doc, state, Modifier.fillMaxSize(),
+        signaturePreview ?: doc, state, Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp),
         onUrlLinkClicked = { uri -> openUrl(uri.toString()); true },
       )
@@ -336,21 +382,9 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
   val density = LocalDensity.current
   state.zoom; state.firstVisiblePageOffset
   Box(Modifier.fillMaxSize().clipToBounds()) {
-    // Paint in the viewer's own viewport coordinate system. A child Box's
-    // measured size/offset may be clamped by Compose at low or high zoom.
-    if (!busy && !showOriginal) androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-      drawIntoCanvas { canvas ->
-        for (sig in result.signatures.filter(::hasVerifiedAppearance)) for (widget in sig.widgets) {
-          val a = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.left, widget.top)) ?: continue
-          val b = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.right, widget.bottom)) ?: continue
-          val left = minOf(a.x, b.x); val top = minOf(a.y, b.y)
-          val right = maxOf(a.x, b.x); val bottom = maxOf(a.y, b.y)
-          if (listOf(left,top,right,bottom).any { !it.isFinite() } || right <= left || bottom <= top ||
-              right <= 0f || bottom <= 0f || left >= size.width || top >= size.height) continue
-          paintDscAppearance(canvas.nativeCanvas, android.graphics.RectF(left,top,right,bottom), sig, visualCopy = false)
-        }
-      }
-    }
+    // Hit targets only. The verified/invalid appearance was installed in a
+    // temporary PDF /AP stream; draw NO second badge here. Otherwise the
+    // original '?' and overlay ✓ drift apart at different scroll/zoom scales.
     for (sig in result.signatures) for (widget in sig.widgets) {
       val a = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.left, widget.top)) ?: continue
       val b = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.right, widget.bottom)) ?: continue
@@ -358,27 +392,12 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
       val height = kotlin.math.abs(b.y - a.y)
       if (!width.isFinite() || !height.isFinite() || width < 1f || height < 1f) continue
       val displayStatus = if (busy) DscStatus.UNKNOWN else sig.status
-      val color = when (displayStatus) {
-        DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_NATIVE_VERIFIED -> Color(0xff18834b)
-        DscStatus.LEGACY_VERIFIED, DscStatus.UNKNOWN -> Color(0xffb57b13)
-        DscStatus.INVALID -> Color(0xffc33232)
-      }
+      // Zero-paint transparent hit box. The original signature's contents
+      // remain visible for UNKNOWN; VALID/INVALID is rendered in-place by
+      // the PDF engine from its temporary viewer-only appearance stream.
       Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
         .size(with(density){width.toDp()}, with(density){height.toDp()})
-        .then(if (!busy && !showOriginal && hasVerifiedAppearance(sig)) Modifier else Modifier.border(1.dp,color)).clickable { onTap(sig.id) }) {
-
-        // The viewport Canvas already paints the verified appearance.
-        // Keep only a transparent tap target over it, not a second badge.
-        if (busy || showOriginal || !hasVerifiedAppearance(sig)) {
-          Text(when(displayStatus) {
-            DscStatus.VALID -> "✓"
-            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ SHA-1*"
-            DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_VERIFIED -> "✓*"
-            DscStatus.UNKNOWN -> "?"
-            DscStatus.INVALID -> "✕"
-          }, color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
-        }
-      }
+        .clickable { onTap(sig.id) })
     }
   }
 }
