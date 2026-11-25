@@ -51,4 +51,17 @@ class DscAppearanceVerdictTest {
     assertEquals(DscAppearanceVerdict.INVALID,
       dscAppearanceVerdict(result(legacy,revocation="Revoked",nativeVerdict="valid")))
   }
+
+  @Test fun signedFieldMatchingRejectsReferencesWithDifferentByteRangeOrContents() {
+    val range = intArrayOf(0, 15, 45, 20)
+    val cms = byteArrayOf(1, 2, 3, 4)
+    assertEquals(true, dscSameSignedData(
+      range.copyOf(), cms.copyOf(), range, cms))
+    assertEquals(false, dscSameSignedData(
+      intArrayOf(0, 15, 44, 20), cms, range, cms))
+    assertEquals(false, dscSameSignedData(
+      range, byteArrayOf(1, 2, 3, 5), range, cms))
+    assertEquals(false, dscSameSignedData(
+      null, cms, range, cms))
+  }
 }
