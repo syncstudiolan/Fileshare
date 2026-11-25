@@ -58,6 +58,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.pdf.ExperimentalPdfApi
 import androidx.pdf.view.Highlight
 import androidx.pdf.PdfDocument
@@ -116,6 +119,7 @@ fun PdfViewerScreen(path: String, name: String) {
   var dscError by remember(path) { mutableStateOf("") }
   var dscBusy by remember(path) { mutableStateOf(false) }
   var dscPanel by remember(path) { mutableStateOf(false) }
+  var showOriginalSignature by remember(path) { mutableStateOf(false) }
   var selectedSignature by remember(path) { mutableStateOf<String?>(null) }
   var dscRevision by remember(path) { mutableIntStateOf(0) }
   LaunchedEffect(path, doc, password, dscRevision) {
@@ -257,7 +261,7 @@ fun PdfViewerScreen(path: String, name: String) {
       )
       SelectionHandles(state, c.accent)
       if (!searching) dsc?.let { result ->
-        DscSignatureOverlay(state, result, dscBusy) { id ->
+        DscSignatureOverlay(state, result, dscBusy, showOriginalSignature) { id ->
           selectedSignature = id; dscPanel = true
           if (!dscBusy && result.signatures.any { it.id == id && it.status == DscStatus.UNKNOWN }) { dscBusy = true; dscRevision++ }
         }
@@ -294,7 +298,8 @@ fun PdfViewerScreen(path: String, name: String) {
     val result = dsc
     if (result != null) DscValidationPanel(result, selectedSignature, dscBusy,
       onValidate = { if (!dscBusy) { dscBusy = true; dscRevision++ } }, onClose = { dscPanel = false },
-      onCart = { dscPanel = false; sendMode = "cart" }, path = path, name = name)
+      onCart = { dscPanel = false; sendMode = "cart" }, path = path, name = name,
+      showOriginal = showOriginalSignature, onToggleOriginal = { showOriginalSignature = !showOriginalSignature; dscPanel = false })
     else AppDialog({ dscPanel = false }, "Signature inspection", dscError.ifBlank { "Checking signatures…" }) {
       Btn("Close", Modifier.fillMaxWidth()) { dscPanel = false }
     }
@@ -320,7 +325,8 @@ fun PdfViewerScreen(path: String, name: String) {
 /** Signature hit targets use the viewer's own page-to-screen mapping. */
 @OptIn(ExperimentalPdfApi::class)
 @Composable
-private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy: Boolean, onTap: (String) -> Unit) {
+private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy: Boolean,
+    showOriginal: Boolean, onTap: (String) -> Unit) {
   val density = LocalDensity.current
   state.zoom; state.firstVisiblePageOffset
   Box(Modifier.fillMaxSize().clipToBounds()) {
@@ -329,18 +335,51 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
       val b = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.right, widget.bottom)) ?: continue
       val width = kotlin.math.abs(b.x - a.x)
       val height = kotlin.math.abs(b.y - a.y)
-      if (width < 1f || height < 1f) continue
+      if (!width.isFinite() || !height.isFinite() || width < 1f || height < 1f) continue
       val displayStatus = if (busy) DscStatus.UNKNOWN else sig.status
       val color = when (displayStatus) {
-        DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED -> Color(0xff18834b)
+        DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_NATIVE_VERIFIED -> Color(0xff18834b)
         DscStatus.LEGACY_VERIFIED, DscStatus.UNKNOWN -> Color(0xffb57b13)
         DscStatus.INVALID -> Color(0xffc33232)
       }
       Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
         .size(with(density){width.toDp()}, with(density){height.toDp()})
         .border(1.dp,color).clickable { onTap(sig.id) }) {
-        Text(when(displayStatus) { DscStatus.VALID -> "✓"; DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_VERIFIED -> "✓*"; DscStatus.UNKNOWN -> "?"; DscStatus.INVALID -> "✕" },
-          color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
+
+        // The embedded PDF appearance is static and untrusted. Render the
+        // app's independently verified verdict as a reversible viewer overlay,
+        // never rewrite /AP or any signed bytes. Keep qualifications visible.
+        val legacy = displayStatus == DscStatus.LEGACY_NATIVE_VERIFIED
+        val full = displayStatus == DscStatus.VALID
+        val w = with(density) { width.toDp().value }
+        val h = with(density) { height.toDp().value }
+        if (!showOriginal && (full || legacy) && w >= 100f && h >= 90f) {
+          Column(Modifier.fillMaxSize().background(Color.White).border(1.dp,color).padding(4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center) {
+            Text("✓", color = color, fontSize = (minOf(w,h)*0.27f).coerceIn(20f,64f).sp,
+              lineHeight = (minOf(w,h)*0.30f).coerceIn(24f,70f).sp)
+            val font = (minOf(w,h)*0.095f).coerceIn(9f,16f).sp
+            Text(if (legacy) "Signature verified (SHA-1)" else "Signature valid", color = color,
+              fontSize = font, lineHeight = font, maxLines = 2, textAlign = TextAlign.Center)
+            Text(if (legacy && sig.revocation != "Good") "Revocation unconfirmed" else if (legacy) "Legacy weak algorithm" else "File Share verification",
+              color = if (legacy) Color(0xff946200) else Color(0xff333333), fontSize = font,
+              lineHeight = font, maxLines = 2, textAlign = TextAlign.Center)
+            if (h >= 145f) {
+              Text(sig.certificate?.let(DscCertificates::displayName) ?: "Signer", color = Color(0xff333333),
+                fontSize = font, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+              Text("File Share viewer overlay", color = Color(0xff555555), fontSize = font, maxLines = 1)
+            }
+          }
+        } else {
+          Text(when(displayStatus) {
+            DscStatus.VALID -> "✓"
+            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ SHA-1*"
+            DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_VERIFIED -> "✓*"
+            DscStatus.UNKNOWN -> "?"
+            DscStatus.INVALID -> "✕"
+          }, color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
+        }
       }
     }
   }

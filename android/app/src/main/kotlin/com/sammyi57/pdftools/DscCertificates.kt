@@ -14,6 +14,14 @@ import org.bouncycastle.cert.X509CRLHolder
 internal object DscCertificates {
   private fun factory() = CertificateFactory.getInstance("X.509")
 
+  /** Read the actual CN rather than printing a long encoded distinguished name. */
+  fun displayName(cert: X509Certificate): String = runCatching {
+    val name = org.bouncycastle.asn1.x500.X500Name.getInstance(cert.subjectX500Principal.encoded)
+    name.getRDNs(org.bouncycastle.asn1.x500.style.BCStyle.CN).firstOrNull()?.first?.value?.let {
+      org.bouncycastle.asn1.x500.style.IETFUtils.valueToString(it)
+    }?.takeIf { it.isNotBlank() }?.take(200) ?: cert.subjectX500Principal.name
+  }.getOrDefault(cert.subjectX500Principal.name)
+
   fun certificate(holder: X509CertificateHolder): X509Certificate =
     factory().generateCertificate(holder.encoded.inputStream()) as X509Certificate
 
