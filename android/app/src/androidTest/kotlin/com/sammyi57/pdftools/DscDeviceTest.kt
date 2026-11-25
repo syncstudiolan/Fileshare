@@ -82,7 +82,6 @@ class DscDeviceTest {
     val revision = File.createTempFile("dsc-device-revision-", ".pdf", appContext.cacheDir)
     var cart: File? = null
     try {
-      DscTrust.add(root,DscSignedBytes.sha256(root.encoded))
       PDDocument().use { it.addPage(PDPage()); it.save(input) }
       PDDocument.load(input).use { pdf ->
         val sig = PDSignature().apply {
@@ -100,6 +99,23 @@ class DscDeviceTest {
         })
         signed.outputStream().use { pdf.saveIncremental(it) }
       }
+      val beforeTrust = DscVerifier.read(signed.path,null).signatures.single()
+      assertTrue(beforeTrust.integrity)
+      assertTrue(beforeTrust.canTrustSigner)
+      assertFalse(beforeTrust.trusted)
+      assertEquals(DscStatus.UNKNOWN,beforeTrust.status)
+      assertArrayEquals(leaf.encoded,beforeTrust.certificate!!.encoded)
+      DscSignerTrust.add(leaf)
+      assertTrue(DscSignerTrust.contains(leaf))
+      assertFalse(DscSignerTrust.contains(root))
+      assertFalse(DscTrust.load().any { it == root || it == leaf })
+      val personal = DscVerifier.read(signed.path,null).signatures.single()
+      assertEquals(DscStatus.PERSONALLY_TRUSTED,personal.status)
+      assertTrue(personal.personalTrust)
+      assertFalse(personal.trusted)
+      DscSignerTrust.remove(leaf)
+      assertEquals(DscStatus.UNKNOWN,DscVerifier.read(signed.path,null).signatures.single().status)
+      DscTrust.add(root,DscSignedBytes.sha256(root.encoded))
       val verdict = DscVerifier.read(signed.path,null).signatures.single()
       assertTrue("Signature must be cryptographically intact",verdict.integrity)
       assertTrue("Synthetic chain must build",verdict.trusted)
@@ -136,6 +152,7 @@ class DscDeviceTest {
       assertTrue(runCatching { preparePdfSend(changed.path,"changed.pdf","all",1,"",false,true,hash) }.isFailure)
     } finally {
       DscTrust.remove(root)
+      DscSignerTrust.remove(leaf)
       input.delete(); signed.delete(); changed.delete(); revision.delete(); cart?.delete()
     }
   }
