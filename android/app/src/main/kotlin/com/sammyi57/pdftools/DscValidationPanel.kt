@@ -35,6 +35,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
   var message by remember { mutableStateOf("") }
   var managing by remember { mutableStateOf(false) }
   var issuers by remember { mutableStateOf<List<X509Certificate>>(emptyList()) }
+  var syncingIndian by remember { mutableStateOf(false) }
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var saving by remember { mutableStateOf(false) }
   LaunchedEffect(managing) {
@@ -137,6 +138,20 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         }
       }
       if (signatures.isEmpty()) Text("No digital signature found", color = c.sub)
+      OutlinedButton(enabled = !busy && !trusting && !syncingIndian, modifier = Modifier.fillMaxWidth(), onClick = {
+        syncingIndian = true
+        message = "Downloading official Indian CA certificates…"
+        scope.launch {
+          try {
+            val result = withContext(Dispatchers.IO) { DscVerifier.syncIndianIssuers() }
+            issuers = withContext(Dispatchers.IO) { DscImportedIssuers.load() }
+            message = "${result.first}/${result.second} official CA entries checked and saved for offline use."
+            onValidate()
+          } catch(e: Exception) { message = e.message ?: "Certificate sync failed" }
+          finally { syncingIndian = false }
+        }
+      }) { Text(if(syncingIndian) "Updating Indian certificates…" else "Update Indian CA certificates") }
+      if(syncingIndian) LinearProgressIndicator(Modifier.fillMaxWidth())
       TextButton(onClick = { managing = !managing }) { Text(if(managing) "Hide certificate manager" else "Manage trusted certificates") }
       if (managing) {
         Text("Personally trusted signers", style = MaterialTheme.typography.titleMedium, color = c.ink)
@@ -151,6 +166,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           } }) { Text("Remove signer trust") }
         }
         Text("Imported issuer certificates", style = MaterialTheme.typography.titleMedium, color = c.ink)
+        Text("Bundled Indian issuers and downloaded certificates are used automatically; they do not become independent trust roots.", color = c.sub)
         for (cert in issuers) {
           Text(cert.subjectX500Principal.name, color = c.ink)
           TextButton(enabled = !busy, onClick = { scope.launch {
