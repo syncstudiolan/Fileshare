@@ -212,9 +212,18 @@ internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): I
       // FRM with n0..n4 layers. Preserve original n0/n2 instead of erasing
       // the whole signer box. For shared/multi-signature appearances use the
       // existing conservative isolated-widget fallback.
+      val named=dscHasNamedStatusLayers(widget)
+      // The original n0/n2 signer artwork is authoritative. A failed
+      // Adobe-style named-layer rewrite MUST NOT silently fall back to an
+      // opaque replacement that deletes that artwork.
       val layered = pdf.signatureDictionaries.size == 1 &&
         field.widgets.size == 1 &&
         replaceDscNamedStatusLayers(pdf, widget, verdict)
+      if(named && !layered) {
+        throw IllegalStateException(
+          "Named signature status layers could not be rewritten safely; " +
+          "the original PDF appearance was preserved")
+      }
       if(!layered) {
         drawViewerSignature(pdf, widget, sig, verdict,
           signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
