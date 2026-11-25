@@ -30,6 +30,15 @@ internal fun replaceDscNamedStatusLayers(
     layers.getXObject(COSName.getPDFName(key)) as? PDFormXObject
   }
   if (old.values.any { it == null }) return false
+  // Original PDF Craft guards against opaque page-wide redrawing. Do not
+  // attempt to replace an appearance which has no usable status form.
+  // The visible signature's own signer block is always left as issued.
+  for (key in listOf("n1", "n3", "n4")) {
+    val box = old.getValue(key)!!.bBox
+    if (!box.width.isFinite() || !box.height.isFinite() ||
+        box.width <= 0f || box.height <= 0f ||
+        box.width > 1000000f || box.height > 1000000f) return false
+  }
 
   fun layer(key: String, draw: (PDPageContentStream, PDRectangle) -> Unit): PDAppearanceStream {
     val prior = old.getValue(key)!!
