@@ -219,7 +219,7 @@ internal object DscVerifier {
                   }
                   val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val currentValidity = runCatching { cert.checkValidity(at); true }.getOrDefault(false)
-                  val canTrust = revisionAccepted && signingUsage && documentEku && strong && currentValidity && !nativeRejected && rev != "Revoked"
+                  val canTrust = (revisionAccepted || nativeResult?.modification == "allowed") && signingUsage && documentEku && strong && currentValidity && !nativeRejected && rev != "Revoked"
                   val personalAccepted = DscPersonalPolicy.accepted(personalTrust, intact,
                     revisionAccepted && signingUsage && documentEku && strong, currentValidity,
                     nativeResult?.status == "valid", rev == "Revoked" || nativeRejected)
