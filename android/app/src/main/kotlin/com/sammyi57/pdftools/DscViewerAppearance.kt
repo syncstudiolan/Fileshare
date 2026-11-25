@@ -27,7 +27,8 @@ internal fun dscAppearanceVerdict(sig: DscResult): DscAppearanceVerdict = when {
   // A native-verified legacy signature proves signed-byte integrity and CA
   // chaining, NOT modern SHA-1 suitability or a good revocation response.
   // Show a clearly qualified verification mark rather than the stale PDF '?'.
-  sig.status == DscStatus.LEGACY_NATIVE_VERIFIED && sig.integrity && sig.trusted &&
+  sig.status in setOf(DscStatus.LEGACY_NATIVE_VERIFIED, DscStatus.NATIVE_VERIFIED) &&
+    sig.integrity && sig.trusted &&
     sig.nativeVerdict?.equals("valid", ignoreCase = true) == true &&
     sig.revocation != "Revoked" -> DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
   else -> DscAppearanceVerdict.UNKNOWN
@@ -52,7 +53,8 @@ internal fun dscAppearanceFacts(sig: DscResult, signer: String,
   reason.trim().takeIf { it.isNotEmpty() }?.let { result.add("Reason: $it") }
   location.trim().takeIf { it.isNotEmpty() }?.let { result.add("Location: $it") }
   if (verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS) {
-    result.add("* Legacy SHA-1: modern validity not established")
+    if (sig.status == DscStatus.LEGACY_NATIVE_VERIFIED)
+      result.add("* Legacy SHA-1: modern validity not established")
   }
   if (verdict != DscAppearanceVerdict.UNKNOWN && sig.revocation != "Good") {
     result.add("* Revocation: ${sig.revocation}")
