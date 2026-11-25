@@ -7,7 +7,8 @@ import java.security.cert.X509Certificate
  * Missing native library is not interpreted as a successful verification. */
 internal object DscRustBridge {
   data class Result(val field: String, val length: Long, val fingerprint: String?,
-    val status: String, val modification: String, val changes: List<String>)
+    val status: String, val modification: String, val changes: List<String>,
+    val certificate: X509Certificate?, val digest: String?, val integrityChecked: Boolean)
   private val loaded = runCatching { System.loadLibrary("fileshare_dsc") }.isSuccess
   val available get() = loaded
   @JvmStatic private external fun verifyNative(bytes: ByteArray, password: String, roots: Array<ByteArray>): String?
@@ -21,10 +22,19 @@ internal object DscRustBridge {
       (0 until signatures.length()).map { i ->
         val s = signatures.getJSONObject(i)
         val changes = s.getJSONArray("changes")
+        val fingerprint = if(s.isNull("fingerprint")) null else s.getString("fingerprint")
+        val hex = s.optString("certificate_hex", "")
+        val cert = runCatching {
+          require(hex.length in 2..262144 && hex.length % 2 == 0)
+          val der = ByteArray(hex.length / 2) { n -> hex.substring(n*2,n*2+2).toInt(16).toByte() }
+          require(DscSignedBytes.sha256(der) == fingerprint)
+          DscCertificates.decode(der)
+        }.getOrNull()
         Result(s.getString("field"), s.getLong("signed_len"),
           if(s.isNull("fingerprint")) null else s.getString("fingerprint"),
           s.getString("status"), s.getString("modification"),
-          (0 until changes.length()).map { changes.getString(it) })
+          (0 until changes.length()).map { changes.getString(it) }, cert,
+          if(s.isNull("digest")) null else s.getString("digest"), s.optBoolean("integrity_checked", false))
       }
     }.getOrDefault(emptyList())
   }
