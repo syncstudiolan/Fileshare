@@ -2055,25 +2055,53 @@ bool _isCloudImage(String name) {
 }
 
 /// Preview images stream from the authenticated Worker to private app cache.
+/// Network thumbnails are requested ONLY when a card remains mounted after
+/// scrolling has stopped. Flying past 100 QR cards must not start 100 remote
+/// downloads, nor decode 240px images for intermediate offscreen cards.
 class CloudImageThumbnail extends StatefulWidget {
-  const CloudImageThumbnail({super.key,required this.file,required this.onOpen});
+  const CloudImageThumbnail({
+    super.key,required this.file,required this.onOpen,this.scrolling,
+  });
   final CloudFile file;
   final VoidCallback onOpen;
+  final ValueListenable<bool>? scrolling;
   @override
   State<CloudImageThumbnail> createState()=>_CloudImageThumbnailState();
 }
 class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
   Future<File>? _image;
+  Timer? _idle;
   @override
-  void initState(){super.initState();_load();}
+  void initState(){
+    super.initState();
+    widget.scrolling?.addListener(_schedule);
+    _schedule();
+  }
   @override
   void didUpdateWidget(covariant CloudImageThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if(oldWidget.file.id!=widget.file.id)_load();
+    if(oldWidget.scrolling!=widget.scrolling){
+      oldWidget.scrolling?.removeListener(_schedule);
+      widget.scrolling?.addListener(_schedule);
+    }
+    if(oldWidget.file.id!=widget.file.id)_image=null;
+    _schedule();
   }
-  void _load(){
-    _image=_isCloudImage(widget.file.name) && widget.file.size<=10*1024*1024
-      ?PersonalCloud.instance.download(widget.file):null;
+  void _schedule(){
+    _idle?.cancel();
+    if(_image!=null || widget.scrolling?.value==true ||
+      !_isCloudImage(widget.file.name) ||
+      widget.file.size>10*1024*1024)return;
+    _idle=Timer(const Duration(milliseconds:140),(){
+      if(!mounted || widget.scrolling?.value==true || _image!=null)return;
+      setState(()=>_image=PersonalCloud.instance.download(widget.file));
+    });
+  }
+  @override
+  void dispose(){
+    _idle?.cancel();
+    widget.scrolling?.removeListener(_schedule);
+    super.dispose();
   }
   @override
   Widget build(BuildContext context)=>InkWell(
@@ -2083,18 +2111,19 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
       child:SizedBox.expand(
         child:_image==null
           ?const Icon(Icons.insert_drive_file_outlined,
-              color:FileTheme.pink,size:30)
+              color:Colors.white70,size:30)
           :FutureBuilder<File>(
               future:_image,
               builder:(context,snapshot){
                 if(snapshot.hasData){
                   return Image.file(snapshot.data!,fit:BoxFit.cover,
-                    cacheWidth:240,
+                    cacheWidth:240,filterQuality:FilterQuality.low,
+                    gaplessPlayback:true,
                     errorBuilder:(_,__,___)=>const Icon(
-                      Icons.broken_image_outlined,color:FileTheme.pink));
+                      Icons.broken_image_outlined,color:Colors.white70));
                 }
                 if(snapshot.hasError)return const Icon(
-                  Icons.broken_image_outlined,color:FileTheme.pink);
+                  Icons.broken_image_outlined,color:Colors.white70);
                 return const Center(child:SizedBox(width:24,height:24,
                   child:CircularProgressIndicator(strokeWidth:2)));
               }),
@@ -2286,53 +2315,8 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
 }
 
 
-//// Compositor-friendly scroll depth: visible cards receive a tiny perspective
-//// tilt and parallax, while their contents remain isolated repaint layers.
-//// Never calls setState on Dashboard as the scroll offset changes.
-class FileShareScrollDepth extends StatelessWidget {
-  const FileShareScrollDepth({super.key,required this.position,
-    required this.child});
-  final ScrollController position;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context){
-    if(MediaQuery.disableAnimationsOf(context)){
-      return RepaintBoundary(child:child);
-    }
-    final viewportHeight=MediaQuery.sizeOf(context).height;
-    // SizedBox supplies a stable RenderBox. Using the AnimatedBuilder's own
-    // context would sometimes find its ancestor RenderSliver instead.
-    return SizedBox(child:Builder(builder:(cardContext){
-      return AnimatedBuilder(
-        animation:position,
-        child:RepaintBoundary(child:child),
-        builder:(context,painted){
-          final render=cardContext.findRenderObject();
-          if(!position.hasClients || render is! RenderBox ||
-              !render.hasSize || viewportHeight<=0){
-            return painted!;
-          }
-          final y=render.localToGlobal(
-            Offset(0,render.size.height/2)).dy;
-          final progress=((y-viewportHeight/2)/
-            (viewportHeight*.60)).clamp(-1.0,1.0).toDouble();
-          // Maximum ~1.5°: a gentle depth impression without text shimmer.
-          final angle=progress*.026;
-          final lift=progress.abs()*.008;
-          final matrix=Matrix4.identity()
-            ..setEntry(3,2,.00065)
-            ..translateByDouble(0.0,-progress*2.4,0.0,1.0)
-            ..rotateX(angle)
-            ..scaleByDouble(1-lift,1-lift,1.0,1.0);
-          return Transform(
-            transform:matrix,alignment:Alignment.center,
-            transformHitTests:true,child:painted);
-        },
-      );
-    }));
-  }
-}
+// No per-card perspective AnimatedBuilder while the user scrolls: that code
+// queried each card's RenderBox on every frame and introduced frame jitter.
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
@@ -2360,6 +2344,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   final Set<String> _pendingArrivalKeys=<String>{};
 
   final ScrollController _dashboardScroll=ScrollController();
+  // Emits only when scrolling starts/stops, not every pixel. It is shared
+  // only with visible thumbnails, never rebuilds the entire dashboard.
+  final ValueNotifier<bool> _dashboardScrolling=ValueNotifier<bool>(false);
   final Map<String,TimelineGroup> _selectedCards={};
   final Set<String> _selectedFiles=<String>{};
   bool get _selectionActive=>_selectedCards.isNotEmpty||_selectedFiles.isNotEmpty;
@@ -2917,6 +2904,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _midnight?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _dashboardScroll.dispose();
+    _dashboardScrolling.dispose();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -3725,23 +3713,39 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ]),
             ),
             Expanded(child: groups.isNotEmpty
-              ? ListView.builder(
-                  // Lazy sliver: keep only a small surrounding cache and
-                  // reuse GPU repaint layers rather than repainting the feed.
-                  controller:_dashboardScroll,
-                  reverse:true,
-                  cacheExtent:260,
-                  addAutomaticKeepAlives:false,
-                  addRepaintBoundaries:false,
-                  padding:EdgeInsets.fromLTRB(wide?28:15,12,wide?28:15,10),
-                  itemCount:groups.length,
-                  itemBuilder:(_,i){
-                    final group=groups[i];
-                    return FileShareScrollDepth(
-                      key:ValueKey('scroll-depth:${_keyOf(group)}'),
-                      position:_dashboardScroll,
-                      child:_multiSelectCard(group));
-                  })
+              ? NotificationListener<ScrollNotification>(
+                  onNotification:(notification){
+                    if(notification.depth!=0)return false;
+                    if(notification is ScrollStartNotification &&
+                        !_dashboardScrolling.value){
+                      _dashboardScrolling.value=true;
+                    }else if((notification is ScrollEndNotification ||
+                        (notification is UserScrollNotification &&
+                          notification.direction==ScrollDirection.idle)) &&
+                        _dashboardScrolling.value){
+                      _dashboardScrolling.value=false;
+                    }
+                    return false;
+                  },
+                  child:ListView.builder(
+                    // Flutter's Skia/Impeller compositor already uses GPU.
+                    // Avoid a per-card matrix/RenderBox walk on every scroll
+                    // frame; keep only near-viewport cards mounted and decode
+                    // 88px previews during a fling, 240px after an idle hold.
+                    controller:_dashboardScroll,
+                    reverse:true,
+                    cacheExtent:90,
+                    addAutomaticKeepAlives:false,
+                    addRepaintBoundaries:true,
+                    padding:EdgeInsets.fromLTRB(wide?28:15,12,wide?28:15,10),
+                    itemCount:groups.length,
+                    itemBuilder:(_,i){
+                      final group=groups[i];
+                      return RepaintBoundary(
+                        key:ValueKey('card:${_keyOf(group)}'),
+                        child:_multiSelectCard(group));
+                    }),
+                )
               : Center(child: Text('No transfers yet. Choose files with +',
                     style: TextStyle(color: FileTheme.muted(context))))),
             if(_sendingPreview!=null)
