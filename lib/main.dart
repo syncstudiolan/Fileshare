@@ -1949,6 +1949,7 @@ class LiveTransferCard extends StatelessWidget {
         final side=compact?(constraints.maxWidth<290?70.0:84.0):88.0;
         final selected=isFileSelected?.call(file)??false;
         final preview=GestureDetector(
+          key:ValueKey('lan-file-preview-${file.id}'),
           onLongPress:onFileSelect==null?null:()=>onFileSelect!(file),
           onTap:fileSelectionActive&&onFileSelect!=null
             ?()=>onFileSelect!(file):()=>_preview(context,file),
