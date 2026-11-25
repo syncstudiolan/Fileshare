@@ -89,11 +89,21 @@ class DscLegacyPolicyTest {
 
   @Test fun visualCopyNeverTreatsUnknownOrRevokedAsVerified() {
     for (status in DscStatus.entries) {
-      val sig = DscResult("a","signer",status,"test",integrity=true,trusted=true)
-      assertEquals(status == DscStatus.VALID || status == DscStatus.LEGACY_NATIVE_VERIFIED || status == DscStatus.NATIVE_VERIFIED, hasVerifiedAppearance(sig))
+      val sig = DscResult("a","signer",status,"test",integrity=true,trusted=true,
+        revocation=if(status == DscStatus.VALID) "Good" else "Not established",
+        nativeVerdict=if(status == DscStatus.NATIVE_VERIFIED ||
+          status == DscStatus.LEGACY_NATIVE_VERIFIED) "valid" else null)
+      val eligible = status == DscStatus.VALID ||
+        status == DscStatus.LEGACY_NATIVE_VERIFIED ||
+        status == DscStatus.NATIVE_VERIFIED
+      assertEquals("Unexpected visual-copy eligibility: $status",eligible,hasVerifiedAppearance(sig))
       assertFalse(hasVerifiedAppearance(sig.copy(integrity=false)))
       assertFalse(hasVerifiedAppearance(sig.copy(trusted=false)))
       assertFalse(hasVerifiedAppearance(sig.copy(revocation="Revoked")))
+      if(status == DscStatus.NATIVE_VERIFIED ||
+          status == DscStatus.LEGACY_NATIVE_VERIFIED) {
+        assertFalse(hasVerifiedAppearance(sig.copy(nativeVerdict="unknown")))
+      }
     }
   }
 
