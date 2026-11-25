@@ -64,7 +64,7 @@ internal fun replaceDscNamedStatusLayers(
     }
     val appearance = PDAppearanceStream(pdf).apply {
       bBox = box
-      resources = PDResources()
+      this.resources = PDResources()
     }
     // The original status layer may have a matrix and optional-content
     // visibility. Retain these from the REAL PDF (never invent coordinates).
