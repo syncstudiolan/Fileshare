@@ -61,26 +61,7 @@ internal suspend fun prepareDscViewerAppearance(
     try {
       var changed = 0
       PDDocument.load(bytes, password.orEmpty()).use { pdf ->
-        // Match the signature dictionary to the actual AcroForm signature
-        // field, not by coordinates or a guessed page OCR area.
-        val fields = pdf.documentCatalog.acroForm?.fieldTree
-          ?.filterIsInstance<PDSignatureField>().orEmpty()
-        pdf.signatureDictionaries.forEachIndexed { index, signed ->
-          val sig = result.signatures.firstOrNull { it.id.startsWith("$"+"{index}:") }
-            ?: return@forEachIndexed
-          val verdict = dscAppearanceVerdict(sig)
-          if (verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
-          val field = fields.firstOrNull { it.signature?.cosObject === signed.cosObject }
-            ?: return@forEachIndexed
-          for (widget in field.widgets) {
-            val rect = widget.rectangle ?: continue
-            if (rect.width <= 0f || rect.height <= 0f ||
-                !rect.width.isFinite() || !rect.height.isFinite()) continue
-            drawViewerSignature(pdf, widget, sig, verdict,
-              signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
-            changed++
-          }
-        }
+        changed = applyDscPreviewAppearances(pdf, result)
         if (changed > 0) {
           pdf.documentInformation.setCustomMetadataValue(
             "FileSharePreviewOnly", "UNSIGNED_RENDER_COPY_NEVER_VERIFY")
@@ -99,6 +80,32 @@ internal suspend fun prepareDscViewerAppearance(
       null
     }
   }
+
+/** Replace ONLY a signed widget's normal /AP in an unsigned, in-memory
+ * rendering derivative. The original document is NEVER passed to this
+ * function for persistence or signing. */
+internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): Int {
+  val fields = pdf.documentCatalog.acroForm?.fieldTree
+    ?.filterIsInstance<PDSignatureField>().orEmpty()
+  var changed = 0
+  pdf.signatureDictionaries.forEachIndexed { index, signed ->
+    val sig = result.signatures.firstOrNull { it.id.startsWith("$"+"{index}:") }
+      ?: return@forEachIndexed
+    val verdict = dscAppearanceVerdict(sig)
+    if(verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
+    val field = fields.firstOrNull { it.signature?.cosObject === signed.cosObject }
+      ?: return@forEachIndexed
+    for(widget in field.widgets){
+      val rect=widget.rectangle ?: continue
+      if(rect.width<=0f||rect.height<=0f||
+          !rect.width.isFinite()||!rect.height.isFinite())continue
+      drawViewerSignature(pdf,widget,sig,verdict,
+        signed.name.orEmpty(),signed.reason.orEmpty(),signed.location.orEmpty())
+      changed++
+    }
+  }
+  return changed
+}
 
 private fun drawViewerSignature(
   document: PDDocument, widget: PDAnnotationWidget, sig: DscResult,
