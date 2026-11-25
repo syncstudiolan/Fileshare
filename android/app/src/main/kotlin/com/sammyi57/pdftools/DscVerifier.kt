@@ -38,6 +38,7 @@ internal data class DscResult(
   val canTrustSigner: Boolean = false,
   val nativeVerdict: String? = null,
   val certificateHosts: List<String> = emptyList(),
+  val claimedSigningDate: String? = null,
 )
 internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
 
@@ -264,7 +265,14 @@ internal object DscVerifier {
                     else -> DscStatus.UNKNOWN
                   }
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
-                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust, nativeResult?.status, hosts)
+                    chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust, nativeResult?.status, hosts,
+                    claimedSigningDate = runCatching {
+                      sig.signDate?.let { calendar ->
+                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm z", java.util.Locale.ROOT).apply {
+                          timeZone = calendar.timeZone
+                        }.format(calendar.time)
+                      }
+                    }.getOrNull())
                 }
           } catch(e: Exception) {
             // Preserve the native engine's signer metadata even if Java's

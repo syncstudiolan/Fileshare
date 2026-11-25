@@ -49,6 +49,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material3.Text
@@ -58,9 +60,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.pdf.ExperimentalPdfApi
 import androidx.pdf.view.Highlight
 import androidx.pdf.PdfDocument
@@ -351,26 +350,11 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
         // never rewrite /AP or any signed bytes. Keep qualifications visible.
         val legacy = displayStatus == DscStatus.LEGACY_NATIVE_VERIFIED
         val full = displayStatus == DscStatus.VALID
-        val w = with(density) { width.toDp().value }
-        val h = with(density) { height.toDp().value }
-        if (!showOriginal && (full || legacy) && w >= 100f && h >= 90f) {
-          Column(Modifier.fillMaxSize().background(Color.White).border(1.dp,color).padding(4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center) {
-            Text("✓", color = color, fontSize = (minOf(w,h)*0.27f).coerceIn(20f,64f).sp,
-              lineHeight = (minOf(w,h)*0.30f).coerceIn(24f,70f).sp)
-            val font = (minOf(w,h)*0.095f).coerceIn(9f,16f).sp
-            Text(if (legacy) "Signature verified (SHA-1)" else "Signature valid", color = color,
-              fontSize = font, lineHeight = font, maxLines = 2, textAlign = TextAlign.Center)
-            Text(if (legacy && sig.revocation != "Good") "Revocation unconfirmed" else if (legacy) "Legacy weak algorithm" else "File Share verification",
-              color = if (legacy) Color(0xff946200) else Color(0xff333333), fontSize = font,
-              lineHeight = font, maxLines = 2, textAlign = TextAlign.Center)
-            if (h >= 145f) {
-              Text(sig.certificate?.let(DscCertificates::displayName) ?: "Signer", color = Color(0xff333333),
-                fontSize = font, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-              Text("File Share viewer overlay", color = Color(0xff555555), fontSize = font, maxLines = 1)
-            }
-          }
+        if (DscVerdictPolicy.replaceAppearance(full || legacy, showOriginal, width, height)) {
+          // Use the full widget's pixel dimensions, not a minimum dp threshold.
+          // Canvas masks the stale /AP at every zoom and scales all content
+          // together. The original signed file remains untouched.
+          DscVerifiedAppearance(sig, legacy, Modifier.fillMaxSize())
         } else {
           Text(when(displayStatus) {
             DscStatus.VALID -> "✓"
@@ -381,6 +365,65 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
           }, color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
         }
       }
+    }
+  }
+}
+
+/** Display-only appearance; signed PDF bytes and annotations are never edited.
+ * Legacy and revocation limitations remain part of the visible status. */
+@Composable
+private fun DscVerifiedAppearance(sig: DscResult, legacy: Boolean, modifier: Modifier) {
+  val signer = remember(sig.certificate, sig.name) {
+    sig.certificate?.let(DscCertificates::displayName) ?: sig.name
+  }
+  val paint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
+  androidx.compose.foundation.Canvas(modifier) {
+    if (size.width < 1f || size.height < 1f) return@Canvas
+    drawIntoCanvas { canvas ->
+      val c = canvas.nativeCanvas
+      c.save()
+      c.clipRect(0f, 0f, size.width, size.height)
+      // A fully opaque background replaces the old yellow question mark.
+      c.drawColor(android.graphics.Color.WHITE)
+      c.scale(size.width / 240f, size.height / 200f)
+      val green = 0xff18834b.toInt()
+      val dark = 0xff20252a.toInt()
+      fun line(value: String, y: Float, maxSize: Float, color: Int, bold: Boolean = false) {
+        paint.style = android.graphics.Paint.Style.FILL
+        paint.color = color
+        paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+        paint.textAlign = android.graphics.Paint.Align.LEFT
+        paint.textSize = maxSize
+        val measured = paint.measureText(value)
+        if (measured > 224f) paint.textSize = maxSize * 224f / measured
+        c.drawText(value, 8f, y, paint)
+      }
+      line(if (legacy) "Signature verified*" else "Signature valid", 26f, 22f, dark, true)
+      line("Digitally signed by", 43f, 13f, dark)
+      line(signer.take(100), 57f, 15f, dark)
+      // Draw a real scalable check, not an emoji or a tiny corner badge.
+      val tick = android.graphics.Path().apply {
+        moveTo(63f, 99f)
+        lineTo(103f, 133f)
+        lineTo(178f, 68f)
+      }
+      paint.style = android.graphics.Paint.Style.STROKE
+      paint.strokeCap = android.graphics.Paint.Cap.ROUND
+      paint.strokeJoin = android.graphics.Paint.Join.ROUND
+      paint.strokeWidth = 21f
+      paint.color = 0xff163b25.toInt()
+      c.drawPath(tick, paint)
+      paint.strokeWidth = 15f
+      paint.color = green
+      c.drawPath(tick, paint)
+      sig.claimedSigningDate?.let { line("Claimed date: " + it, 153f, 12f, dark) }
+      if (legacy) {
+        line("* Legacy SHA-1", 167f, 14f, 0xff805400.toInt(), true)
+        line(if (sig.revocation == "Good") "Revocation checked" else "Revocation unconfirmed",
+          182f, 13f, 0xff805400.toInt())
+      }
+      line("File Share viewer verification", 195f, 11f, dark)
+      c.restore()
     }
   }
 }

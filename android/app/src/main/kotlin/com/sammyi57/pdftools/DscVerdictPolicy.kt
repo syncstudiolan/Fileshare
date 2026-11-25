@@ -17,4 +17,10 @@ internal object DscVerdictPolicy {
   fun legacyNativeVerified(legacyVerified: Boolean, nativeValid: Boolean,
       nativeIntegrity: Boolean): Boolean =
     legacyVerified && nativeValid && nativeIntegrity
+  // Display eligibility is independent of density and zoom. Never promote
+  // unknown, revoked, or in-progress results through the rendering path.
+  fun replaceAppearance(verified: Boolean, showOriginal: Boolean,
+      widthPx: Float, heightPx: Float): Boolean =
+    verified && !showOriginal && widthPx.isFinite() && heightPx.isFinite() &&
+      widthPx >= 1f && heightPx >= 1f
 }

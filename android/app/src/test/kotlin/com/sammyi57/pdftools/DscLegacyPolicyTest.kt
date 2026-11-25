@@ -74,6 +74,19 @@ class DscLegacyPolicyTest {
     assertFalse(DscVerdictPolicy.legacyNativeVerified(true,true,false))
   }
 
+  @Test fun verifiedAppearanceDoesNotDependOnZoomOrDisplayDensity() {
+    for (width in listOf(1f, 24f, 64f, 95f, 190f, 600f, 1500f)) {
+      for (height in listOf(1f, 20f, 80f, 180f, 600f)) {
+        assertTrue(DscVerdictPolicy.replaceAppearance(true,false,width,height))
+        assertFalse(DscVerdictPolicy.replaceAppearance(false,false,width,height))
+        assertFalse(DscVerdictPolicy.replaceAppearance(true,true,width,height))
+      }
+    }
+    assertFalse(DscVerdictPolicy.replaceAppearance(true,false,Float.NaN,100f))
+    assertFalse(DscVerdictPolicy.replaceAppearance(true,false,100f,Float.POSITIVE_INFINITY))
+    assertFalse(DscVerdictPolicy.replaceAppearance(true,false,0f,100f))
+  }
+
   @Test fun onlyExplicitCleartextEvidenceHostsAreAllowed() {
     assertTrue(DscHttpPolicy.allowed("OCVS.GOV.IN"))
     assertTrue(DscHttpPolicy.allowed("cca.gov.in"))
