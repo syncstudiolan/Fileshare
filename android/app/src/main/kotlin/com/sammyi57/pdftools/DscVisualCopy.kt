@@ -105,7 +105,7 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
       snapshot.writeBytes(bytes)
       val verified = DscVerifier.read(snapshot.path, password, online = false)
       require(verified.hash == expectedHash && verified.signatures.isNotEmpty() &&
-        verified.signatures.all { dscAppearanceVerdict(it)==DscAppearanceVerdict.VALID } &&
+        verified.signatures.all { dscAppearanceVerdict(it) in setOf(DscAppearanceVerdict.VALID, DscAppearanceVerdict.VERIFIED_WITH_WARNINGS) } &&
         verified.signatures.all { it.widgets.isNotEmpty() }) {
         "Visual copy requires verified visible signatures; share the original instead."
       }
