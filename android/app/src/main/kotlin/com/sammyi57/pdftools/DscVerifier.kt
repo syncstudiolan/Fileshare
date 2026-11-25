@@ -76,6 +76,7 @@ internal object DscVerifier {
     val bytes = file.readBytes()
     require(bytes.size.toLong() <= MAX_PDF) { "PDF exceeds DSC verification safety limit" }
     val trust = (DscRoots.bundled() + DscTrust.load()).distinctBy { DscSignedBytes.sha256(it.encoded) }
+    val cachedIssuers = (DscImportedIssuers.load() + DscIndiaCatalog.bundled()).distinctBy { DscSignedBytes.sha256(it.encoded) }
     val fetchedCrls = mutableMapOf<String, X509CRL?>()
     val fetchedOcsp = mutableMapOf<String, ByteArray?>()
     val fetchedIssuers = mutableMapOf<String, List<X509Certificate>>()
@@ -129,9 +130,9 @@ internal object DscVerifier {
               parts.whole || (result?.status == "valid" && result.modification == "allowed")
             if (sig.subFilter == "ETSI.RFC3161") {
               val stamp = DscTimestamp.document(parts.cms, parts.signed)
-              var chain = buildChain(stamp.signer, stamp.certificates + dss.certificates, trust, stamp.time)
+              var chain = buildChain(stamp.signer, stamp.certificates + dss.certificates + cachedIssuers, trust, stamp.time)
               if(chain.isEmpty() && online && trust.isNotEmpty()) {
-                val extra = discoverIssuers(stamp.signer, stamp.certificates + dss.certificates, trust, fetchedIssuers)
+                val extra = discoverIssuers(stamp.signer, stamp.certificates + dss.certificates + cachedIssuers, trust, fetchedIssuers)
                 chain = buildChain(stamp.signer, extra, trust, stamp.time)
               }
               val rev = if(chain.size >= 2) checkRevocation(chain, stamp.cms, dss, online,
@@ -159,7 +160,7 @@ internal object DscVerifier {
               val pool = rawCerts.flatMap { DscTrust.parse(it) }
               val cert = pool.first()
               val intact = DscLegacy.verify(parts.signed, parts.cms, cert)
-              val chain = if(intact) buildChain(cert, pool + dss.certificates, trust) else emptyList()
+              val chain = if(intact) buildChain(cert, pool + dss.certificates + cachedIssuers, trust) else emptyList()
               return@mapIndexed DscResult(id, cert.subjectX500Principal.name,
                 if(!intact || nativeFor(cert)?.status == "invalid") DscStatus.INVALID else DscStatus.UNKNOWN,
                 if(!intact) "Legacy RSA signature does not match signed bytes"
@@ -176,7 +177,7 @@ internal object DscVerifier {
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
-                  var pool = embedded + dss.certificates + DscImportedIssuers.load() + DscIndiaCatalog.bundled()
+                  var pool = embedded + dss.certificates + cachedIssuers
                   val personalTrust = DscSignerTrust.contains(cert)
                   val stamp = DscTimestamp.attached(cms)
                   val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
