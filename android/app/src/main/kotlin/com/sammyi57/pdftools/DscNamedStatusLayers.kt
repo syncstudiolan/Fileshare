@@ -17,6 +17,7 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget
 internal fun replaceDscNamedStatusLayers(
   pdf: PDDocument, widget: PDAnnotationWidget, verdict: DscAppearanceVerdict,
 ): Boolean {
+  if (verdict == DscAppearanceVerdict.UNKNOWN) return false
   val stream = widget.appearance?.normalAppearance
     ?.takeIf { it.isStream }?.appearanceStream ?: return false
   val resources = stream.resources ?: return false
