@@ -491,7 +491,7 @@ class MainActivity : FlutterActivity() {
         if(uri==null || uri.scheme !in setOf("content","file"))return false
         val mime=incoming.type ?: contentResolver.getType(uri)
         if(mime!=null && mime!="application/pdf" &&
-            mime!="application/octet-stream")return false
+            mime!="application/octet-stream" && mime!="*/*")return false
         lifecycleScope.launch {
             try {
                 val local=withContext(Dispatchers.IO) {
