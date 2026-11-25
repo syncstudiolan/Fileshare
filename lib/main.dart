@@ -2707,8 +2707,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               decoration:BoxDecoration(
                 color:selected?FileTheme.violet.withValues(alpha:.08):null,
                 borderRadius:BorderRadius.circular(26),
-                border:Border.all(color:selected
-                  ?FileTheme.violet:Colors.transparent,width:1.5)),
+                boxShadow:selected?[BoxShadow(
+                  color:FileTheme.violet.withValues(alpha:.24),
+                  blurRadius:14,offset:const Offset(0,5))]:null),
               child:card)),
           if(active)Positioned(top:10,right:10,
             child:AnimatedContainer(
