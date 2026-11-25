@@ -246,7 +246,48 @@ internal object DscVerifier {
                   DscResult(id, cert.subjectX500Principal.name, status, detail, cert, chain, true,
                     chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust)
                 }
-          } catch(e: Exception) { unknown("Signature could not be completely checked: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}") }
+          } catch(e: Exception) {
+            // Preserve the native engine's signer metadata even if Java's
+            // provider has trouble. Only native integrity proof for the exact
+            // field/byte-range counts; never infer it from a certificate alone.
+            val covered = sig.byteRange[2].toLong() + sig.byteRange[3].toLong()
+            val match = native.singleOrNull { field != null &&
+              it.field == field.fullyQualifiedName && it.length == covered }
+            val cert = match?.certificate
+            if (match == null || cert == null) {
+              unknown("Signature could not be completely checked: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
+            } else {
+              val personal = DscSignerTrust.contains(cert)
+              val result = if(personal) DscRustBridge.inspect(bytes,password,(trust + cert).distinctBy {
+                DscSignedBytes.sha256(it.encoded)
+              }).singleOrNull { it.field == match.field && it.length == covered &&
+                it.fingerprint == match.fingerprint } ?: match else match
+              val bad = result.status == "invalid"
+              // Native-only fallback is deliberately limited to ordinary
+              // detached CMS and provider failures. CAdES ESS binding and
+              // legacy/other formats must still pass their stricter checks.
+              val providerFailure = generateSequence<Throwable>(e) { it.cause }
+                .take(8).any { it is java.security.NoSuchAlgorithmException ||
+                  it is java.security.cert.CertificateException || it is java.security.ProviderException }
+              val current = runCatching { cert.checkValidity(); true }.getOrDefault(false)
+              val usage = cert.keyUsage?.let { it.getOrElse(0){false} || it.getOrElse(1){false} } ?: true
+              val eku = cert.extendedKeyUsage?.any { it in setOf("2.5.29.37.0", "1.3.6.1.5.5.7.3.36",
+                "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12") } ?: true
+              val policy = providerFailure && sig.subFilter == "adbe.pkcs7.detached" &&
+                result.digest in setOf("SHA-256","SHA-384","SHA-512") &&
+                ((cert.publicKey as? java.security.interfaces.RSAPublicKey)?.modulus?.bitLength() ?: 2048) >= 2048 &&
+                usage && eku && current && (parts.whole || result.modification == "allowed")
+              val accepted = DscPersonalPolicy.accepted(personal,result.integrityChecked,policy,current,
+                result.status == "valid",bad)
+              DscResult(id,cert.subjectX500Principal.name,
+                if(bad) DscStatus.INVALID else if(accepted) DscStatus.PERSONALLY_TRUSTED else DscStatus.UNKNOWN,
+                if(bad) "PDF Craft rejected this signature"
+                else if(accepted) "PDF Craft verified the signed bytes; personally trusted signer. CA/revocation check unavailable."
+                else "PDF Craft signer recovered; Android certificate check incomplete: ${e.javaClass.simpleName}: ${e.message.orEmpty()}",
+                cert, integrity = result.integrityChecked, widgets = widgets,
+                personalTrust = personal, canTrustSigner = policy && result.integrityChecked && !bad)
+            }
+          }
         }
       }
     }
