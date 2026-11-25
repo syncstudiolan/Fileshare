@@ -37,9 +37,10 @@ fun PdfSendPicker(
   currentPage: Int,
   pageCount: Int,
   toCart: Boolean,
-  onClose: () -> Unit,
   preserveSigned: Boolean = false,
   expectedSignedHash: String? = null,
+  // Keep the callback last: legacy scanner/editor callers use trailing lambdas.
+  onClose: () -> Unit,
 ) {
   val scope = rememberCoroutineScope()
   var selection by remember(preserveSigned) { mutableStateOf(if (preserveSigned) "all" else "current") }
