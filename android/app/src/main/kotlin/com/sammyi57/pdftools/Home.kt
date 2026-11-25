@@ -24,6 +24,10 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,6 +58,20 @@ private fun matches(target: String, tokens: List<String>) = target.lowercase().l
 @Composable
 fun Home() {
   val nav = LocalNav.current
+  val scope = rememberCoroutineScope()
+  var openFailure by remember { mutableStateOf<String?>(null) }
+  val directPdfPicker = rememberLauncherForActivityResult(
+    ActivityResultContracts.GetContent()) { uri ->
+    if(uri!=null) scope.launch {
+      try {
+        val imported=importIncoming(uri)
+          ?: error("The selected PDF could not be imported")
+        nav.viewer(imported.path, imported.name)
+      }catch(e:Exception){
+        openFailure=e.message ?: "Cannot open PDF"
+      }
+    }
+  }
   var q by rememberSaveable { mutableStateOf("") }
   var sendTarget by remember { mutableStateOf<Pair<Saved, Boolean>?>(null) }
   var targetPages by remember { mutableStateOf(0) }
@@ -75,6 +93,14 @@ fun Home() {
 
   Screen {
     LargeTitle("Tools", "${TOOLS.size} tools. Everything runs on this phone.")
+    // Always accessible: no need to start a new scan or choose an editing
+    // workflow merely to open an existing PDF for viewing and editing.
+    Btn("Open PDF from device",Modifier.fillMaxWidth(),
+      I.fileDocumentEditOutline,kind=BtnKind.Secondary,
+      onClick={ directPdfPicker.launch("application/pdf") })
+    openFailure?.let { error ->
+      T(error,Type.small,c.sub)
+    }
     SearchField(q, { q = it }, "Merge, split, compress…")
 
     if (!searching) {

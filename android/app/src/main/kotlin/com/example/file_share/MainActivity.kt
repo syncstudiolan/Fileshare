@@ -32,6 +32,10 @@ import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * One cached FlutterEngine remains alive while the UI Activity is removed.
@@ -474,9 +478,71 @@ class MainActivity : FlutterActivity() {
 
     override fun shouldDestroyEngineWithHost(): Boolean = false
 
+    /** Android Open With / Share-to-PDF: immediately open PDF Pro viewer,
+     * never queue an unrequested transfer. Content URIs must be copied under
+     * the app's own storage while Android's temporary read grant is active.
+     */
+    private fun openExternalPdf(incoming: Intent?): Boolean {
+        if(incoming==null || incoming.action !in setOf(
+            Intent.ACTION_VIEW,Intent.ACTION_SEND))return false
+        val uri=if(incoming.action==Intent.ACTION_VIEW)incoming.data
+            else androidx.core.content.IntentCompat.getParcelableExtra(
+                incoming,Intent.EXTRA_STREAM,Uri::class.java)
+        if(uri==null || uri.scheme !in setOf("content","file"))return false
+        val mime=incoming.type ?: contentResolver.getType(uri)
+        if(mime!=null && mime!="application/pdf" &&
+            mime!="application/octet-stream" && mime!="*/*")return false
+        lifecycleScope.launch {
+            try {
+                val local=withContext(Dispatchers.IO) {
+                    val folder=File(cacheDir,"external_pdf_view").apply{mkdirs()}
+                    val temp=File.createTempFile("open_",".pdf",folder)
+                    try{
+                        val input=contentResolver.openInputStream(uri)
+                            ?: throw java.io.FileNotFoundException("Cannot read PDF")
+                        input.use { source ->
+                            temp.outputStream().use { dest ->
+                                val buffer=ByteArray(32768)
+                                var count=0L
+                                while(true){
+                                    val n=source.read(buffer)
+                                    if(n<0)break
+                                    count+=n
+                                    require(count<=128L*1024*1024){"PDF too large"}
+                                    dest.write(buffer,0,n)
+                                }
+                            }
+                        }
+                        require(temp.length()>=5L){"Empty PDF"}
+                        val magic=ByteArray(5)
+                        temp.inputStream().use { require(it.read(magic)==5) }
+                        require(String(magic,Charsets.US_ASCII)=="%PDF-"){
+                            "File is not a PDF"
+                        }
+                        temp
+                    }catch(error:Exception){temp.delete();throw error}
+                }
+                val launch=Intent(this@MainActivity,
+                    com.sammyi57.pdftools.MainActivity::class.java).apply{
+                    action=Intent.ACTION_VIEW
+                    putExtra("fileshare.pdf.path",local.absolutePath)
+                    putExtra("fileshare.pdf.embedded",true)
+                    putExtra("fileshare.pdf.theme","system")
+                }
+                startActivity(launch)
+            }catch(e:Exception){
+                android.widget.Toast.makeText(this@MainActivity,
+                    "Cannot open PDF: "+(e.message?:"unreadable file"),
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+        return true
+    }
+
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        (application as FileShareApplication).collectShared(intent)
+        if(!openExternalPdf(intent))
+            (application as FileShareApplication).collectShared(intent)
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
                 PackageManager.PERMISSION_GRANTED) {
@@ -487,7 +553,8 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        (application as FileShareApplication).collectShared(intent)
+        if(!openExternalPdf(intent))
+            (application as FileShareApplication).collectShared(intent)
     }
 
     override fun onResume() {

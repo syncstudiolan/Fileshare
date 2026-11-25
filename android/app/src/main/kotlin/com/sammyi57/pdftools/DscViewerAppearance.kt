@@ -112,15 +112,16 @@ internal suspend fun prepareDscViewerAppearance(
         }
       }
       if (changed == 0) {
-        output.delete()
-        return@withContext null
+        throw IllegalStateException(
+          "No matching editable signature widget was found. " +
+          "The original signed PDF and its cryptographic result are unchanged.")
       }
       require(output.length() in 1L..(64L*1024*1024)) { "Preview PDF too large" }
       output
     } catch (e: Exception) {
       output.delete()
       Log.w("FileShareDSC", "Unable to compose signature preview; show original PDF", e)
-      null
+      throw e
     }
   }
 
@@ -128,6 +129,22 @@ internal suspend fun prepareDscViewerAppearance(
  * rendering derivative. The original document is NEVER passed to this
  * function for persistence or signing. */
 /** Fail-closed match for a signed PDF /V dictionary and its field value. */
+/** PDF signature /Contents may be returned by PDFBox either with its
+ * reserved trailing zero bytes or with the ASN.1 DER payload alone.
+ * Compare the common bytes and allow ONLY zero-valued extra padding;
+ * always require the exact same signed /ByteRange to avoid accidental
+ * binding to another field. This never establishes cryptographic validity.
+ */
+internal fun dscSameSignatureContents(a: ByteArray, b: ByteArray): Boolean {
+  if(a.contentEquals(b))return true
+  val length=minOf(a.size,b.size)
+  if(length==0)return false
+  for(i in 0 until length)if(a[i]!=b[i])return false
+  val longer=if(a.size>b.size)a else b
+  for(i in length until longer.size)if(longer[i].toInt()!=0)return false
+  return true
+}
+
 internal fun dscSameSignedData(
   fieldRange: IntArray?, fieldContents: ByteArray?,
   signatureRange: IntArray?, signatureContents: ByteArray?,
@@ -135,7 +152,7 @@ internal fun dscSameSignedData(
   fieldRange != null && signatureRange != null &&
     fieldContents != null && signatureContents != null &&
     fieldRange.contentEquals(signatureRange) &&
-    fieldContents.contentEquals(signatureContents)
+    dscSameSignatureContents(fieldContents,signatureContents)
 
 /**
  * COSDictionary object identity (===) is not stable across PDFBox wrappers.
@@ -156,7 +173,10 @@ internal fun signaturePreviewFields(pdf: PDDocument, result: DscDocument): List<
         signed.byteRange, signed.contents)
     }
     if (candidate.size != 1) {
-      Log.w("FileShareDSC", "Signature ${index + 1}: expected exactly one matching signature widget field, found ${candidate.size}")
+      Log.w("FileShareDSC",
+        "Signature ${index + 1}: matched ${candidate.size} signed fields " +
+        "(AcroForm fields=${fields.size}, PDF signatures=${pdf.signatureDictionaries.size}); " +
+        "cannot replace appearance without an unambiguous signed widget")
       return@forEachIndexed
     }
     val field = candidate.single()
@@ -188,8 +208,26 @@ internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): I
       val rect = widget.rectangle ?: continue
       if (rect.width <= 0f || rect.height <= 0f ||
           !rect.width.isFinite() || !rect.height.isFinite()) continue
-      drawViewerSignature(pdf, widget, sig, verdict,
-        signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
+      // Adobe/UIDAI-style signature widgets already contain a dedicated
+      // FRM with n0..n4 layers. Preserve original n0/n2 instead of erasing
+      // the whole signer box. For shared/multi-signature appearances use the
+      // existing conservative isolated-widget fallback.
+      val named=dscHasNamedStatusLayers(widget)
+      // The original n0/n2 signer artwork is authoritative. A failed
+      // Adobe-style named-layer rewrite MUST NOT silently fall back to an
+      // opaque replacement that deletes that artwork.
+      val layered = pdf.signatureDictionaries.size == 1 &&
+        field.widgets.size == 1 &&
+        replaceDscNamedStatusLayers(pdf, widget, verdict)
+      if(named && !layered) {
+        throw IllegalStateException(
+          "Named signature status layers could not be rewritten safely; " +
+          "the original PDF appearance was preserved")
+      }
+      if(!layered) {
+        drawViewerSignature(pdf, widget, sig, verdict,
+          signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
+      }
       changed++
     }
   }

@@ -200,7 +200,7 @@ fun PdfViewerScreen(path: String, name: String) {
       signaturePreview=null
       signaturePreviewFile=null
       if(needsPreview && signaturePreviewError==null)
-        signaturePreviewError="The PDF signature appearance could not be replaced; original mark is shown."
+        signaturePreviewError="Signature appearance preview unavailable. The original PDF is preserved; open Signature Properties to see the actual verification result."
       if(!needsPreview) signaturePreviewError=null
       runCatching { old?.close() }
       oldFile?.delete()
@@ -316,14 +316,21 @@ fun PdfViewerScreen(path: String, name: String) {
         onUrlLinkClicked = { uri -> openUrl(uri.toString()); true },
       )
       SelectionHandles(state, c.accent)
+      // An appearance rendering failure is NOT a failed digital signature.
+      // Offer the real validation details without obscuring the PDF page
+      // with an alarming full-width banner or pretending a green tick exists.
       if(!dscBusy && !showOriginalSignature && signaturePreviewError != null) {
         Text(
-          signaturePreviewError!!,
-          color = Color(0xFF9D620A),
-          modifier = Modifier.align(Alignment.TopCenter)
-            .padding(horizontal=18.dp, vertical=12.dp)
-            .background(c.panel.copy(alpha=0.96f), RoundedCornerShape(10.dp))
-            .padding(10.dp),
+          "Appearance preview unavailable · View signature details",
+          color=c.ink,
+          modifier=Modifier.align(Alignment.TopCenter)
+            .padding(horizontal=18.dp, vertical=8.dp)
+            .background(c.panel.copy(alpha=.94f), RoundedCornerShape(10.dp))
+            .clickable {
+              selectedSignature=null
+              dscPanel=true
+            }
+            .padding(horizontal=10.dp,vertical=7.dp),
         )
       }
       if (!searching) dsc?.let { result ->

@@ -38,7 +38,9 @@ internal object DscOcsp {
         val authorized = candidate == issuer || (
           candidate.issuerX500Principal == issuer.subjectX500Principal &&
           candidate.extendedKeyUsage?.contains("1.3.6.1.5.5.7.3.9") == true &&
-          candidate.getExtensionValue("1.3.6.1.5.5.7.48.1.5") != null &&
+          // id-pkix-ocsp-nocheck (RFC 6960 §4.2.2.2.1) is optional.
+          // Requiring it wrongly rejects legitimate issuer-delegated,
+          // cryptographically signed OCSP responses.
           !candidate.hasUnsupportedCriticalExtension() &&
           (candidate.keyUsage?.getOrElse(0){false} ?: true) &&
           run { candidate.verify(issuer.publicKey, provider); true }
