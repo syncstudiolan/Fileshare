@@ -104,6 +104,8 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
         }
         val renderer = PDFRenderer(input)
         PDDocument().use { out ->
+          out.documentInformation.title = "Unsigned visual verification copy"
+          out.documentInformation.setCustomMetadataValue("FileShareCopyType", "UNSIGNED_VISUAL_COPY_V1")
           for (index in 0 until input.numberOfPages) {
             val page = input.getPage(index)
             val box = page.cropBox
@@ -111,7 +113,8 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
             val w = if (rotated) box.height else box.width
             val h = if (rotated) box.width else box.height
             require(w.isFinite() && h.isFinite() && w > 0f && h > 0f) { "Invalid PDF page dimensions" }
-            val scale = minOf(3f, 2400f/maxOf(w,h))
+            // 300 dpi target; cap the longest edge to keep per-page memory bounded.
+            val scale = minOf(300f/72f, 3500f/maxOf(w,h))
             val bitmap = renderer.renderImage(index, scale)
             try {
               val canvas = Canvas(bitmap)
@@ -124,7 +127,7 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
                 }
                 paintDscAppearance(canvas, RectF(widget.left*sx,widget.top*sy,widget.right*sx,widget.bottom*sy), sig, true)
               }
-              val img = JPEGFactory.createFromImage(out, bitmap, 0.96f)
+              val img = JPEGFactory.createFromImage(out, bitmap, 0.98f)
               val header = 46f
               val pw = maxOf(w, 360f)
               val newPage = PDPage(PDRectangle(pw,h+header))
@@ -147,7 +150,14 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
           out.save(target)
         }
       }
-      require(target.isFile && target.length() > 0L) { "Visual copy was not created" }
+      require(target.isFile && target.length() in 1L..(64L*1024*1024)) { "Visual copy exceeds the 64 MB size limit" }
+      PDDocument.load(target).use { check ->
+        require(!check.isEncrypted && check.signatureDictionaries.isEmpty() &&
+          check.documentInformation.getCustomMetadataValue("FileShareCopyType") == "UNSIGNED_VISUAL_COPY_V1") {
+          "Visual copy must be password-free and explicitly unsigned"
+        }
+        require(check.numberOfPages > 0)
+      }
       target
     } catch (e: Throwable) {
       output?.delete()

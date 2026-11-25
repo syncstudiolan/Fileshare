@@ -305,12 +305,13 @@ fun PdfViewerScreen(path: String, name: String) {
   }
   sendMode?.let { mode ->
     PdfSendPicker(path, name, page, pages, mode == "cart", onClose = { sendMode = null },
-      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isEmpty() != true,
-      expectedSignedHash = dsc?.takeIf { it.signatures.isNotEmpty() }?.hash,
+      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isEmpty() != true || dsc?.visualCopy == true,
+      alreadyVisualCopy = dsc?.visualCopy == true,
+      expectedSignedHash = dsc?.takeIf { it.signatures.isNotEmpty() || it.visualCopy }?.hash,
       signedEvidenceCopy = dsc?.takeIf { !dscBusy && it.signatures.isNotEmpty() && it.signatures.all(::hasVerifiedAppearance) }?.let { verified ->
         suspend { prepareDscEvidenceCopy(path, name, password, verified.hash) }
       },
-      visualCopy = dsc?.takeIf { !dscBusy && it.signatures.isNotEmpty() && it.signatures.all(::hasVerifiedAppearance) }?.let { verified ->
+      visualCopy = dsc?.takeIf { !dscBusy && it.signatures.isNotEmpty() && it.signatures.all { sig -> hasVerifiedAppearance(sig) && sig.widgets.isNotEmpty() } }?.let { verified ->
         suspend { prepareDscVisualCopy(path, name, password, verified.hash) }
       })
   }

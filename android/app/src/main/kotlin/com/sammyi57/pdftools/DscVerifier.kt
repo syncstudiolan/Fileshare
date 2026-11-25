@@ -40,7 +40,7 @@ internal data class DscResult(
   val certificateHosts: List<String> = emptyList(),
   val claimedSigningDate: String? = null,
 )
-internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
+internal data class DscDocument(val hash: String, val signatures: List<DscResult>, val visualCopy: Boolean = false)
 
 /** Only evidence already authenticated against the signer/issuer is collected. */
 internal class DscValidatedEvidence {
@@ -93,7 +93,10 @@ internal object DscVerifier {
     val fetchedCrls = mutableMapOf<String, X509CRL?>()
     val fetchedOcsp = mutableMapOf<String, ByteArray?>()
     val fetchedIssuers = mutableMapOf<String, List<X509Certificate>>()
+    var visualCopy = false
     val results = PDDocument.load(bytes, password.orEmpty()).use { pdf ->
+      // This untrusted metadata is only a preservation hint, never evidence of DSC validity.
+      visualCopy = pdf.documentInformation.getCustomMetadataValue("FileShareCopyType") == "UNSIGNED_VISUAL_COPY_V1" && pdf.signatureDictionaries.isEmpty()
       val dss = DscDss.read(pdf)
       val fields = pdf.documentCatalog.acroForm?.fieldTree?.filterIsInstance<PDSignatureField>().orEmpty()
       val signatures = pdf.signatureDictionaries
@@ -280,7 +283,7 @@ internal object DscVerifier {
                     chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust, nativeResult?.status, hosts,
                     claimedSigningDate = runCatching {
                       sig.signDate?.let { calendar ->
-                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm z", java.util.Locale.ROOT).apply {
+                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", java.util.Locale.ROOT).apply {
                           timeZone = calendar.timeZone
                         }.format(calendar.time)
                       }
@@ -331,7 +334,7 @@ internal object DscVerifier {
         }
       }
     }
-    return DscDocument(DscSignedBytes.sha256(bytes), results)
+    return DscDocument(DscSignedBytes.sha256(bytes), results, visualCopy)
   }
 
   private fun buildChain(leaf: X509Certificate, embedded: List<X509Certificate>,

@@ -256,7 +256,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         }
       }
       if(message.isNotEmpty()) Text(message, color = c.ink)
-      Text("Save preserves the original signature. Share or Cart can add authenticated validation evidence if available and permitted; other viewers still validate independently.", color = c.sub)
+      Text("Save preserves the original signature. Share or Cart defaults to a high-resolution unsigned visual copy when eligible; the displayed verification remains part of the page image. The original is unchanged.", color = c.sub)
       TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Back to PDF") }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(enabled = !saving && !busy, onClick = {
