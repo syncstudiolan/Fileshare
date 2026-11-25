@@ -39,6 +39,15 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Register File Share as an Android PDF viewer. Android owns
+                 chooser ordering and the user's default-app choice. -->
+            <intent-filter android:label="File Share PDF">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="content" android:mimeType="application/pdf"/>
+                <data android:scheme="file" android:mimeType="application/pdf"/>
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
