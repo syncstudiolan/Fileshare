@@ -222,7 +222,7 @@ internal object DscVerifier {
                   val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
                   val currentValidity = runCatching { cert.checkValidity(at); true }.getOrDefault(false)
                   val nativeVerified = DscVerdictPolicy.nativeVerified(intact, revisionAccepted && signingUsage && documentEku && strong,
-                    currentValidity, chain.isNotEmpty(), nativeResult?.status == "valid" && nativeResult.integrityChecked,
+                    currentValidity, chain.isNotEmpty(), nativeResult?.status == "valid" && nativeResult?.integrityChecked == true,
                     rev == "Revoked" || nativeRejected)
                   val hosts = (if(revChain.isEmpty()) listOf(cert) else revChain.dropLast(1)).flatMap {
                     crlUrls(it) + aiaUrls(it, AccessDescription.id_ad_ocsp)
@@ -248,7 +248,7 @@ internal object DscVerifier {
                   }
                   val status = when {
                     rev == "Revoked" || nativeRejected -> DscStatus.INVALID
-                    revisionAccepted && signingUsage && documentEku && strong && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
+                    revisionAccepted && signingUsage && documentEku && strong && currentValidity && chain.isNotEmpty() && rev == "Good" -> DscStatus.VALID
                     nativeVerified -> DscStatus.NATIVE_VERIFIED
                     personalAccepted -> DscStatus.PERSONALLY_TRUSTED
                     else -> DscStatus.UNKNOWN
@@ -405,9 +405,12 @@ internal object DscVerifier {
       ip.isLinkLocalAddress || ip.isSiteLocalAddress || ip.isMulticastAddress) return false
     val a = ip.address[0].toInt() and 255
     val b = ip.address[1].toInt() and 255
-    // Conservatively exclude special-use, documentation and carrier-grade ranges.
-    return a in 1..223 && a !in listOf(10,127,169,192,198,203) &&
-      !(a == 100 && b in 64..127) && !(a == 172 && b in 16..31)
+    val c = ip.address[2].toInt() and 255
+    return a in 1..223 && a !in listOf(10,127,169) &&
+      !(a == 100 && b in 64..127) && !(a == 172 && b in 16..31) &&
+      !(a == 192 && (b == 168 || b == 0 || (b == 88 && c == 99))) &&
+      !(a == 198 && (b in 18..19 || (b == 51 && c == 100))) &&
+      !(a == 203 && b == 0 && c == 113)
   }
 
   private val http = OkHttpClient.Builder()
@@ -415,8 +418,10 @@ internal object DscVerifier {
       override fun lookup(hostname: String): List<InetAddress> {
         require(hostname.contains('.')) { "Public CA host required" }
         val ips = Dns.SYSTEM.lookup(hostname)
-        require(ips.isNotEmpty() && ips.all(::publicIpv4)) { "Non-public CA address refused" }
-        return ips
+        // Return only vetted IPv4 addresses; dual-stack DNS must not fail just because AAAA is present.
+        val ipv4 = ips.filter { it.address.size == 4 }
+        require(ipv4.isNotEmpty() && ipv4.all(::publicIpv4)) { "Non-public or unavailable CA address refused" }
+        return ipv4
       }
     })
     .proxy(Proxy.NO_PROXY)
