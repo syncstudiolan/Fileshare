@@ -5,7 +5,6 @@ import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers
 import org.bouncycastle.asn1.ess.SigningCertificateV2
 import org.bouncycastle.asn1.cms.CMSObjectIdentifiers
 import org.bouncycastle.cert.X509CertificateHolder
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cms.CMSProcessableByteArray
 import org.bouncycastle.cms.CMSSignedData
 import org.bouncycastle.cms.CMSSignerDigestMismatchException
@@ -46,9 +45,8 @@ internal object DscCms {
     val signer = cms.signerInfos.signers.singleOrNull() ?: error("Unsupported CMS signer count")
     val holders = cms.certificates.getMatches(null).filterIsInstance<X509CertificateHolder>()
     val holder = holders.singleOrNull { signer.sid.match(it) } ?: error("Missing or ambiguous signer certificate")
-    val converter = JcaX509CertificateConverter().setProvider(provider)
-    val cert = converter.getCertificate(holder)
-    val embedded = holders.map { converter.getCertificate(it) }
+    val cert = DscCertificates.certificate(holder)
+    val embedded = holders.map { DscCertificates.certificate(it) }
     val intact = legacyBinding && try {
       // Use the public key to check integrity separately from certificate dates.
       signer.verify(JcaSimpleSignerInfoVerifierBuilder().setProvider(provider).build(cert.publicKey))
