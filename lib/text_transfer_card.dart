@@ -47,16 +47,19 @@ class _TextTransferCardState extends State<TextTransferCard> {
   }
   @override Widget build(BuildContext context){
     final dark=Theme.of(context).brightness==Brightness.dark;
-    final ink=dark?const Color(0xFFEAF9FC):const Color(0xFF0A5262);
+    final ink=widget.incoming?Colors.white:
+      (dark?const Color(0xFFEAF9FC):const Color(0xFF0A5262));
     Widget action(String title,IconData icon,VoidCallback tap)=>
       Expanded(child:Container(
         height:34,
         decoration:BoxDecoration(
           gradient:LinearGradient(begin:Alignment.topLeft,
             end:Alignment.bottomRight,
-            colors:dark
-              ?const [Color(0xFF245768),Color(0xFF103A47)]
-              :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
+            colors:widget.incoming
+              ?const [Color(0xFF2B7954),Color(0xFF11452F)]
+              :dark
+                ?const [Color(0xFF245768),Color(0xFF103A47)]
+                :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
           borderRadius:BorderRadius.circular(17),
           border:Border.all(color:dark
             ?const Color(0xFF58939D):Colors.white,width:1.2),
@@ -71,12 +74,17 @@ class _TextTransferCardState extends State<TextTransferCard> {
           label:FittedBox(fit:BoxFit.scaleDown,
             child:Text(title,style:const TextStyle(
               fontSize:12,fontWeight:FontWeight.w700))))));
-    return widget.wrap(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+    return widget.wrap(DefaultTextStyle.merge(
+      style:TextStyle(color:widget.incoming?Colors.white:null),
+      child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
               Row(children:[
                 CircleAvatar(radius:15,
-                  backgroundColor:const Color(0xFF89EEE5),
+                  backgroundColor:widget.incoming
+                    ?Colors.white.withValues(alpha:.18):const Color(0xFF89EEE5),
                   child:Icon(widget.incoming?Icons.download_rounded
-                    :Icons.send_rounded,color:const Color(0xFF087F87),size:19)),
+                    :Icons.send_rounded,
+                    color:widget.incoming?Colors.white:const Color(0xFF087F87),
+                    size:19)),
                 const SizedBox(width:8),
                 Expanded(child:Text(widget.source,maxLines:1,
                   overflow:TextOverflow.ellipsis,
@@ -110,6 +118,6 @@ class _TextTransferCardState extends State<TextTransferCard> {
                 action('Delete Text',Icons.delete_outline_rounded,
                   ()=>unawaited(widget.onDelete())),
               ]),
-            ]));
+            ])));
   }
 }

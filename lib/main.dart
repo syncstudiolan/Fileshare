@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'file_share_text.dart';
 import 'text_transfer_card.dart';
+import 'dashboard_thumbnail.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
@@ -39,6 +40,8 @@ import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -498,9 +501,11 @@ class FileTheme {
       dark(context) ? const Color(0xFF111318) : const Color(0xFFE7F1FA);
 
   static Color foreground(BuildContext context) =>
+      TransferCardInk.isIncoming(context) ? Colors.white :
       dark(context) ? const Color(0xFFF5F6FF) : const Color(0xFF17263A);
 
   static Color muted(BuildContext context) =>
+      TransferCardInk.isIncoming(context) ? const Color(0xFFE1F3E9) :
       dark(context) ? const Color(0xFFB8C1D0) : const Color(0xFF617086);
 
   static Gradient background(BuildContext context) => LinearGradient(
@@ -1402,9 +1407,9 @@ class DesignFileCard extends StatelessWidget {
           gradient:LinearGradient(begin:Alignment.topLeft,end:Alignment.bottomRight,
             colors:FileTheme.dark(context)
               ?(sent?const [Color(0xFF236EAA),Color(0xFF123F72)]
-                  :const [Color(0xFFB08A27),Color(0xFF705514)])
+                  :const [Color(0xFF164B34),Color(0xFF071E16)])
               :(sent?const [Color(0xFFE2F4FF),Color(0xFF8DCBFF)]
-                  :const [Color(0xFFFFF6D5),Color(0xFFFFD65C)])),
+                  :const [Color(0xFF267A50),Color(0xFF0B432F)])),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(24), topRight: const Radius.circular(23),
             bottomLeft: Radius.circular(sent ? 23 : 6),
@@ -1649,6 +1654,20 @@ class SelectedFileToolsPage extends StatelessWidget {
 }
 
 
+/// Applies readable white foreground colors only inside received green cards.
+/// Does not mutate the global light/dark theme or the sent blue cards.
+class TransferCardInk extends InheritedWidget {
+  const TransferCardInk({super.key, required this.incoming,
+    required super.child});
+  final bool incoming;
+  static bool isIncoming(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<TransferCardInk>()?.incoming ??
+      false;
+  @override
+  bool updateShouldNotify(TransferCardInk oldWidget) =>
+      incoming != oldWidget.incoming;
+}
+
 /* Compact, direction-aware transfer bubble used by LAN and Guest QR.
    Draw the side tail with the card itself so it scales on both platforms. */
 class TransferBubble extends StatelessWidget {
@@ -1662,9 +1681,9 @@ class TransferBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark=FileTheme.dark(context);
     final fill=dark
-        ? (incoming?const Color(0xFF94721A):const Color(0xFF14517F))
-        : (incoming?const Color(0xFFFFDC72):const Color(0xFF9DD7FF));
-    final accent=incoming?FileTheme.violet:FileTheme.turquoise;
+        ? (incoming?const Color(0xFF123C2B):const Color(0xFF14517F))
+        : (incoming?const Color(0xFF186B44):const Color(0xFF9DD7FF));
+    final accent=incoming?const Color(0xFF318A55):FileTheme.turquoise;
     return LayoutBuilder(builder:(context,constraints){
       final width=constraints.hasBoundedWidth
         ?constraints.maxWidth:MediaQuery.sizeOf(context).width;
@@ -1682,7 +1701,7 @@ class TransferBubble extends StatelessWidget {
               child:Padding(
                 padding:EdgeInsets.fromLTRB(incoming?16:13,
                   textOnly?8:12,incoming?13:16,textOnly?8:12),
-                child:child),
+                child:TransferCardInk(incoming:incoming,child:child)),
             ),
           ),
         ),
@@ -1719,13 +1738,20 @@ class _TransferBubblePainter extends CustomPainter {
     // Raised 3D depth, subtle bevel and cool top-left highlight.
     canvas.drawShadow(path,Colors.black.withValues(alpha:dark ? .46 : .23),13,false);
     canvas.drawShadow(path,accent.withValues(alpha:dark ? .18 : .19),6,false);
+    // Deep leafy green on incoming/received cards, and the unchanged cool
+    // blue gradient on sent cards. Avoid pale green stops: white text must
+    // remain legible on every part of the raised surface.
     final gradient=LinearGradient(
       begin:Alignment.topLeft,end:Alignment.bottomRight,
-      colors:[
-        Color.lerp(fill,Colors.white,dark ? .08 : .37)!,
-        fill,
-        Color.lerp(fill,Colors.black,dark ? .15 : .06)!,
-      ]);
+      colors:incoming
+        ?(dark
+          ?const [Color(0xFF174B34),Color(0xFF0E3023),Color(0xFF071E16)]
+          :const [Color(0xFF267A50),Color(0xFF165B3C),Color(0xFF0B432F)])
+        :[
+          Color.lerp(fill,Colors.white,dark ? .08 : .37)!,
+          fill,
+          Color.lerp(fill,Colors.black,dark ? .15 : .06)!,
+        ]);
     canvas.drawPath(path,Paint()..shader=gradient.createShader(
       Rect.fromLTWH(0,0,size.width,size.height)));
     canvas.drawPath(path,Paint()
@@ -1746,6 +1772,7 @@ class TransferCardActions extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder:(context,constraints){
       if(actions.isEmpty)return const SizedBox.shrink();
+      final onGreen=TransferCardInk.isIncoming(context);
       final available=constraints.hasBoundedWidth
         ?constraints.maxWidth:actions.length*44.0+7*(actions.length-1);
       final gap=available<175?3.0:7.0;
@@ -1761,13 +1788,16 @@ class TransferCardActions extends StatelessWidget {
           decoration:BoxDecoration(
             gradient:LinearGradient(
               begin:Alignment.topLeft,end:Alignment.bottomRight,
-              colors:FileTheme.dark(context)
-                ?const [Color(0xFF245768),Color(0xFF103A47)]
-                :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
+              colors:onGreen
+                ?const [Color(0xFF2B7954),Color(0xFF11452F)]
+                :FileTheme.dark(context)
+                  ?const [Color(0xFF245768),Color(0xFF103A47)]
+                  :const [Color(0xFFF0FCFF),Color(0xFFBCE8EC)]),
             borderRadius:BorderRadius.circular(15),
             border:Border.all(
-              color:FileTheme.dark(context)
-                ?const Color(0xFF367987):Colors.white,width:1.25),
+              color:onGreen?Colors.white.withValues(alpha:.64)
+                :FileTheme.dark(context)
+                  ?const Color(0xFF367987):Colors.white,width:1.25),
             boxShadow:[BoxShadow(
               color:Colors.black.withValues(alpha:.20),
               offset:const Offset(0,5),blurRadius:7)],
@@ -1787,7 +1817,9 @@ class TransferCardTime extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
     decoration: BoxDecoration(
-      color: FileTheme.turquoise.withValues(alpha: .10),
+      color: TransferCardInk.isIncoming(context)
+        ?Colors.white.withValues(alpha:.12)
+        :FileTheme.turquoise.withValues(alpha: .10),
       border:Border.all(color:FileTheme.dark(context)
         ?const Color(0xFF58939D):Colors.white,width:1.1),
       borderRadius: BorderRadius.circular(22)),
@@ -1806,7 +1838,9 @@ class LiveTransferCard extends StatelessWidget {
     super.key, required this.items, required this.onSave,
     required this.onDelete, required this.onShare, required this.onTools,
     this.isFileSelected, this.fileSelectionActive=false, this.onFileSelect,
+    this.scrolling,
   });
+  final ValueListenable<bool>? scrolling;
   final bool Function(LanFile)? isFileSelected;
   final bool fileSelectionActive;
   final void Function(LanFile)? onFileSelect;
@@ -1824,17 +1858,21 @@ class LiveTransferCard extends StatelessWidget {
   }
 
   Widget _visual(LanFile file) {
-    if (_photo(file.name) && File(file.path).existsSync()) {
-      return ClipRRect(borderRadius: BorderRadius.circular(12),
-        child: Image.file(File(file.path), fit: BoxFit.cover,
-          cacheWidth: 280,
-          errorBuilder: (_, __, ___) => const Icon(
-            Icons.image_not_supported_outlined,
-            color: FileTheme.pink, size: 34)));
+    // Avoid synchronous filesystem stat for every card during a fling. The
+    // Image widget has an errorBuilder if this file has since disappeared.
+    if (_photo(file.name)) {
+      return scrolling == null
+        ?Image.file(File(file.path),fit:BoxFit.cover,cacheWidth:160,
+          errorBuilder:(_,__,___)=>const Icon(
+            Icons.image_not_supported_outlined,size:34))
+        :DashboardThumbnail(
+            key:ValueKey('lan-thumb-${file.id}'),
+            path:file.path,scrolling:scrolling!);
     }
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: FileTheme.pink.withValues(alpha: .12),
+        color: incoming?Colors.white.withValues(alpha:.12):
+          FileTheme.pink.withValues(alpha:.12),
         borderRadius: BorderRadius.circular(12)),
       child: Center(child: Icon(
         file.name.toLowerCase().endsWith('.pdf')
@@ -1842,7 +1880,7 @@ class LiveTransferCard extends StatelessWidget {
           : (file.name.toLowerCase().endsWith('.mp4')
              ? Icons.play_circle_outline_rounded
              : Icons.insert_drive_file_outlined),
-        color: FileTheme.pink, size: 42)));
+        color:incoming?Colors.white:FileTheme.pink, size:42)));
   }
 
   void _preview(BuildContext context, LanFile file) {
@@ -1869,7 +1907,8 @@ class LiveTransferCard extends StatelessWidget {
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         icon: Icon(icon, color: onTap == null
-          ? FileTheme.pink.withValues(alpha: .25) : FileTheme.pink));
+          ? (incoming?Colors.white38:FileTheme.pink.withValues(alpha:.25))
+          : (incoming?Colors.white:FileTheme.pink)));
     return TransferCardActions(actions: [
       // NEW disappears only after a successful export, never after preview.
       if (file.incoming)
@@ -1896,7 +1935,8 @@ class LiveTransferCard extends StatelessWidget {
         : file.state == TransferState.failed ? Icons.error_outline_rounded
         : Icons.done_rounded,
       size: 15,
-      color: delivered ? FileTheme.pink : FileTheme.violet);
+      color: incoming ? Colors.white :
+        (delivered ? FileTheme.pink : FileTheme.violet));
   }
 
   Widget _file(BuildContext context, LanFile file) {
@@ -1929,8 +1969,8 @@ class LiveTransferCard extends StatelessWidget {
             style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
           if(active||file.state==TransferState.failed)...[
             const SizedBox(height:3),
-            Text(file.state.name,style:const TextStyle(fontSize:10,
-              color:FileTheme.pink)),
+            Text(file.state.name,style:TextStyle(fontSize:10,
+              color:incoming?Colors.white:FileTheme.pink)),
             if(active)LinearProgressIndicator(value:file.progress,minHeight:2),
           ]
         ]);
@@ -1970,19 +2010,22 @@ class LiveTransferCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 15,
-            backgroundColor: const Color(0xFF89EEE5),
+            backgroundColor: incoming ? Colors.white.withValues(alpha:.18)
+              :const Color(0xFF89EEE5),
             child: Icon(incoming ? Icons.download_rounded : Icons.send_rounded,
-              size: 19, color: FileTheme.pink)),
+              size:19,color:incoming?Colors.white:FileTheme.pink)),
           const SizedBox(width: 8),
           Expanded(child: Text(origin,
             maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: FileTheme.foreground(context),
+            style: TextStyle(color:incoming?Colors.white:
+              FileTheme.foreground(context),
               fontWeight: FontWeight.w700, fontSize: 13))),
           TransferCardTime(created:first.created,
             status:_status(first)),
         ]),
         if(multiple) Text('${items.length} files',
-          style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
+          style:TextStyle(color:incoming?const Color(0xFFE1F3E9):
+            FileTheme.muted(context),fontSize:10)),
         for (final file in items) _file(context, file),
         if (incoming && multiple)
           Align(alignment: Alignment.centerRight,
@@ -2017,25 +2060,53 @@ bool _isCloudImage(String name) {
 }
 
 /// Preview images stream from the authenticated Worker to private app cache.
+/// Network thumbnails are requested ONLY when a card remains mounted after
+/// scrolling has stopped. Flying past 100 QR cards must not start 100 remote
+/// downloads, nor decode 240px images for intermediate offscreen cards.
 class CloudImageThumbnail extends StatefulWidget {
-  const CloudImageThumbnail({super.key,required this.file,required this.onOpen});
+  const CloudImageThumbnail({
+    super.key,required this.file,required this.onOpen,this.scrolling,
+  });
   final CloudFile file;
   final VoidCallback onOpen;
+  final ValueListenable<bool>? scrolling;
   @override
   State<CloudImageThumbnail> createState()=>_CloudImageThumbnailState();
 }
 class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
   Future<File>? _image;
+  Timer? _idle;
   @override
-  void initState(){super.initState();_load();}
+  void initState(){
+    super.initState();
+    widget.scrolling?.addListener(_schedule);
+    _schedule();
+  }
   @override
   void didUpdateWidget(covariant CloudImageThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if(oldWidget.file.id!=widget.file.id)_load();
+    if(oldWidget.scrolling!=widget.scrolling){
+      oldWidget.scrolling?.removeListener(_schedule);
+      widget.scrolling?.addListener(_schedule);
+    }
+    if(oldWidget.file.id!=widget.file.id)_image=null;
+    _schedule();
   }
-  void _load(){
-    _image=_isCloudImage(widget.file.name) && widget.file.size<=10*1024*1024
-      ?PersonalCloud.instance.download(widget.file):null;
+  void _schedule(){
+    _idle?.cancel();
+    if(_image!=null || widget.scrolling?.value==true ||
+      !_isCloudImage(widget.file.name) ||
+      widget.file.size>10*1024*1024)return;
+    _idle=Timer(const Duration(milliseconds:140),(){
+      if(!mounted || widget.scrolling?.value==true || _image!=null)return;
+      setState(()=>_image=PersonalCloud.instance.download(widget.file));
+    });
+  }
+  @override
+  void dispose(){
+    _idle?.cancel();
+    widget.scrolling?.removeListener(_schedule);
+    super.dispose();
   }
   @override
   Widget build(BuildContext context)=>InkWell(
@@ -2045,18 +2116,19 @@ class _CloudImageThumbnailState extends State<CloudImageThumbnail> {
       child:SizedBox.expand(
         child:_image==null
           ?const Icon(Icons.insert_drive_file_outlined,
-              color:FileTheme.pink,size:30)
+              color:Colors.white70,size:30)
           :FutureBuilder<File>(
               future:_image,
               builder:(context,snapshot){
                 if(snapshot.hasData){
                   return Image.file(snapshot.data!,fit:BoxFit.cover,
-                    cacheWidth:240,
+                    cacheWidth:240,filterQuality:FilterQuality.low,
+                    gaplessPlayback:true,
                     errorBuilder:(_,__,___)=>const Icon(
-                      Icons.broken_image_outlined,color:FileTheme.pink));
+                      Icons.broken_image_outlined,color:Colors.white70));
                 }
                 if(snapshot.hasError)return const Icon(
-                  Icons.broken_image_outlined,color:FileTheme.pink);
+                  Icons.broken_image_outlined,color:Colors.white70);
                 return const Center(child:SizedBox(width:24,height:24,
                   child:CircularProgressIndicator(strokeWidth:2)));
               }),
@@ -2069,7 +2141,9 @@ class CloudInboxCard extends StatelessWidget {
   const CloudInboxCard({super.key, required this.items,
     required this.onSave, required this.onDelete, required this.onShare,
     required this.onPreview, required this.onTools,
-    this.isFileSelected,this.fileSelectionActive=false,this.onFileSelect});
+    this.isFileSelected,this.fileSelectionActive=false,this.onFileSelect,
+    this.scrolling});
+  final ValueListenable<bool>? scrolling;
   final bool Function(CloudFile)? isFileSelected;
   final bool fileSelectionActive;
   final void Function(CloudFile)? onFileSelect;
@@ -2088,27 +2162,30 @@ class CloudInboxCard extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         constraints: const BoxConstraints(minWidth: 24, minHeight: 38),
         padding: EdgeInsets.zero,
-        icon: Icon(icon, color: FileTheme.pink));
+        icon: Icon(icon,color:sent?FileTheme.pink:Colors.white));
     return TransferBubble(
       incoming: !sent,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          CircleAvatar(radius: 15,
-            backgroundColor: const Color(0xFF89EEE5),
-            child: Icon(sent?Icons.send_rounded:Icons.download_rounded,
-              size:19,color:FileTheme.pink)),
+          CircleAvatar(radius:15,
+            backgroundColor:sent?const Color(0xFF89EEE5):
+              Colors.white.withValues(alpha:.18),
+            child:Icon(sent?Icons.send_rounded:Icons.download_rounded,
+              size:19,color:sent?FileTheme.pink:Colors.white)),
           const SizedBox(width: 8),
           Expanded(child: Text(device ? (sent ? 'Sent · Online / Cloud' : 'From '+items.first.senderName+' · Online / Cloud') : 'From Guest browser · Guest QR · Online',
             maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: FileTheme.foreground(context),
+            style: TextStyle(color:sent?FileTheme.foreground(context):
+              Colors.white,
               fontWeight: FontWeight.w700, fontSize: 13))),
           TransferCardTime(created:items.first.created,
             status:Icon(device && items.first.receivedAt==null
               ?Icons.done_rounded:Icons.done_all_rounded,
-              size:17,color:FileTheme.turquoise)),
+              size:17,color:sent?FileTheme.turquoise:Colors.white)),
         ]),
         if(grouped)Text('${items.length} files',
-          style:TextStyle(color:FileTheme.muted(context),fontSize:10)),
+          style:TextStyle(color:sent?FileTheme.muted(context):
+            const Color(0xFFE1F3E9),fontSize:10)),
         for(final file in items)
           Padding(padding:const EdgeInsets.only(top:8),
             child:LayoutBuilder(builder:(context,constraints){
@@ -2121,7 +2198,8 @@ class CloudInboxCard extends StatelessWidget {
                   SizedBox(width:side,height:side,
                     child:CloudImageThumbnail(
                       key:ValueKey('qr-thumb-'+file.id),
-                      file:file,onOpen:()=>fileSelectionActive&&onFileSelect!=null
+                      file:file,scrolling:scrolling,
+                      onOpen:()=>fileSelectionActive&&onFileSelect!=null
                         ?onFileSelect!(file):onPreview(file))),
                   if(fileSelectionActive)Positioned(right:2,top:2,
                     child:Icon(selected?Icons.check_circle_rounded:
@@ -2242,53 +2320,8 @@ class _FileShareCardArrivalState extends State<FileShareCardArrival>
 }
 
 
-//// Compositor-friendly scroll depth: visible cards receive a tiny perspective
-//// tilt and parallax, while their contents remain isolated repaint layers.
-//// Never calls setState on Dashboard as the scroll offset changes.
-class FileShareScrollDepth extends StatelessWidget {
-  const FileShareScrollDepth({super.key,required this.position,
-    required this.child});
-  final ScrollController position;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context){
-    if(MediaQuery.disableAnimationsOf(context)){
-      return RepaintBoundary(child:child);
-    }
-    final viewportHeight=MediaQuery.sizeOf(context).height;
-    // SizedBox supplies a stable RenderBox. Using the AnimatedBuilder's own
-    // context would sometimes find its ancestor RenderSliver instead.
-    return SizedBox(child:Builder(builder:(cardContext){
-      return AnimatedBuilder(
-        animation:position,
-        child:RepaintBoundary(child:child),
-        builder:(context,painted){
-          final render=cardContext.findRenderObject();
-          if(!position.hasClients || render is! RenderBox ||
-              !render.hasSize || viewportHeight<=0){
-            return painted!;
-          }
-          final y=render.localToGlobal(
-            Offset(0,render.size.height/2)).dy;
-          final progress=((y-viewportHeight/2)/
-            (viewportHeight*.60)).clamp(-1.0,1.0).toDouble();
-          // Maximum ~1.5°: a gentle depth impression without text shimmer.
-          final angle=progress*.026;
-          final lift=progress.abs()*.008;
-          final matrix=Matrix4.identity()
-            ..setEntry(3,2,.00065)
-            ..translateByDouble(0.0,-progress*2.4,0.0,1.0)
-            ..rotateX(angle)
-            ..scaleByDouble(1-lift,1-lift,1.0,1.0);
-          return Transform(
-            transform:matrix,alignment:Alignment.center,
-            transformHitTests:true,child:painted);
-        },
-      );
-    }));
-  }
-}
+// No per-card perspective AnimatedBuilder while the user scrolls: that code
+// queried each card's RenderBox on every frame and introduced frame jitter.
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.mode, required this.onMode,
@@ -2316,6 +2349,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   final Set<String> _pendingArrivalKeys=<String>{};
 
   final ScrollController _dashboardScroll=ScrollController();
+  // Emits only when scrolling starts/stops, not every pixel. It is shared
+  // only with visible thumbnails, never rebuilds the entire dashboard.
+  final ValueNotifier<bool> _dashboardScrolling=ValueNotifier<bool>(false);
   final Map<String,TimelineGroup> _selectedCards={};
   final Set<String> _selectedFiles=<String>{};
   bool get _selectionActive=>_selectedCards.isNotEmpty||_selectedFiles.isNotEmpty;
@@ -2628,7 +2664,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           ?'From ${g.lan!.first.peer} · Received':'Sent · Offline LAN',
         created:g.lan!.first.created,
         status:Icon(g.lan!.first.state==TransferState.delivered
-          ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,color:FileTheme.pink))
+          ?Icons.done_all_rounded:Icons.schedule_rounded,size:15,
+          color:g.lan!.first.incoming?Colors.white:FileTheme.pink))
       :cloudText
       ?TextTransferCard(
         key:ValueKey('text-cloud-${g.cloud!.first.id}'),
@@ -2643,15 +2680,19 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           :'From ${g.cloud!.first.senderName} · Online / Cloud',
         created:g.cloud!.first.created,
         status:Icon(g.cloud!.first.receivedAt==null
-          ?Icons.done_rounded:Icons.done_all_rounded,size:15,color:FileTheme.pink))
+          ?Icons.done_rounded:Icons.done_all_rounded,size:15,
+          color:g.cloud!.first.senderId!=appLan.deviceId
+            ?Colors.white:FileTheme.pink))
       :g.upload!=null ? _cloudUploadCard(g.upload!)
       :g.lan!=null
       ?LiveTransferCard(items:g.lan!,onSave:_saveReceived,
         onDelete:_delete,onShare:_share,onTools:_openFileTools,
+        scrolling:_dashboardScrolling,
         isFileSelected:(f)=>_selectedFiles.contains(_lanFileKey(f)),
         fileSelectionActive:active,onFileSelect:_selectLanFile)
       :CloudInboxCard(items:g.cloud!,onSave:_saveCloud,
         onDelete:_deleteCloud,onShare:_shareCloud,
+        scrolling:_dashboardScrolling,
         onPreview:_previewCloud,onTools:_openCloudTools,
         isFileSelected:(f)=>_selectedFiles.contains(_cloudFileKey(f)),
         fileSelectionActive:active,onFileSelect:_selectCloudFile);
@@ -2868,6 +2909,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _midnight?.cancel();
     PersonalCloud.instance.stopLiveInbox();
     _dashboardScroll.dispose();
+    _dashboardScrolling.dispose();
     _sidebarVisibleNotifier.dispose();
     _messageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -3676,23 +3718,41 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
               ]),
             ),
             Expanded(child: groups.isNotEmpty
-              ? ListView.builder(
-                  // Lazy sliver: keep only a small surrounding cache and
-                  // reuse GPU repaint layers rather than repainting the feed.
-                  controller:_dashboardScroll,
-                  reverse:true,
-                  cacheExtent:260,
-                  addAutomaticKeepAlives:false,
-                  addRepaintBoundaries:false,
-                  padding:EdgeInsets.fromLTRB(wide?28:15,12,wide?28:15,10),
-                  itemCount:groups.length,
-                  itemBuilder:(_,i){
-                    final group=groups[i];
-                    return FileShareScrollDepth(
-                      key:ValueKey('scroll-depth:${_keyOf(group)}'),
-                      position:_dashboardScroll,
-                      child:_multiSelectCard(group));
-                  })
+              ? NotificationListener<ScrollNotification>(
+                  onNotification:(notification){
+                    if(notification.depth!=0)return false;
+                    if(notification is ScrollStartNotification &&
+                        !_dashboardScrolling.value){
+                      _dashboardScrolling.value=true;
+                    }else if((notification is ScrollEndNotification ||
+                        (notification is UserScrollNotification &&
+                          notification.direction==ScrollDirection.idle)) &&
+                        _dashboardScrolling.value){
+                      _dashboardScrolling.value=false;
+                    }
+                    return false;
+                  },
+                  child:ListView.builder(
+                    // Flutter's Skia/Impeller compositor already uses GPU.
+                    // Avoid a per-card matrix/RenderBox walk on every scroll
+                    // frame; keep only near-viewport cards mounted and decode
+                    // 88px previews during a fling, 240px after an idle hold.
+                    controller:_dashboardScroll,
+                    reverse:true,
+                    cacheExtent:90,
+                    addAutomaticKeepAlives:false,
+                    addRepaintBoundaries:true,
+                    padding:EdgeInsets.fromLTRB(wide?28:15,12,wide?28:15,10),
+                    itemCount:groups.length,
+                    itemBuilder:(_,i){
+                      final group=groups[i];
+                      // ListView.addRepaintBoundaries already supplies the GPU
+                    // layer; avoid redundant nested boundaries per card.
+                    return KeyedSubtree(
+                        key:ValueKey('card:${_keyOf(group)}'),
+                        child:_multiSelectCard(group));
+                    }),
+                )
               : Center(child: Text('No transfers yet. Choose files with +',
                     style: TextStyle(color: FileTheme.muted(context))))),
             if(_sendingPreview!=null)

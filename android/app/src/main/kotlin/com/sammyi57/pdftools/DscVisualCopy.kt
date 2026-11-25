@@ -32,8 +32,7 @@ internal fun paintDscAppearance(canvas: Canvas, rect: RectF, sig: DscResult, vis
   val save = canvas.save()
   try {
     canvas.clipRect(rect)
-    p.color = Color.WHITE
-    canvas.drawRect(rect, p)
+    // No opaque patch: retain original page art beneath the status mark.
     canvas.translate(rect.left, rect.top)
     canvas.scale(rect.width()/240f, rect.height()/200f)
     // Reference layout: left-aligned black heading and signer/date lines,
@@ -52,13 +51,9 @@ internal fun paintDscAppearance(canvas: Canvas, rect: RectF, sig: DscResult, vis
       canvas.drawText(value, 8f, y, p)
     }
     val qualified = legacy || sig.revocation != "Good" || sig.status != DscStatus.VALID
-    line(if (qualified) "Signature verified*" else "Signature valid", 34f, 26f)
-    line("Digitally signed by", 60f, 18f)
-    line(signer.take(160), 81f, 18f)
     val date = sig.claimedSigningDate
-    line(if (date != null) "Date: " + date else "Date: Not available", 103f, 16f)
-    // Filled angular tick with black outline and offset dark shadow,
-    // matching the reference rather than using a corner badge or glyph.
+    // Paint the mark first so source-derived signer/date lines are readable
+    // above it rather than hidden behind a large final green sticker.
     val tick = Path().apply {
       moveTo(88f, 78f)
       lineTo(109f, 99f)
@@ -81,6 +76,10 @@ internal fun paintDscAppearance(canvas: Canvas, rect: RectF, sig: DscResult, vis
     p.strokeJoin = Paint.Join.MITER
     p.color = 0xff183b23.toInt()
     canvas.drawPath(tick,p)
+    line(if (qualified) "Signature verified*" else "Signature valid", 34f, 26f)
+    line("Digitally signed by", 60f, 18f)
+    line(signer.take(160), 81f, 18f)
+    if (date != null) line("Date: " + date, 103f, 16f)
     // Keep material qualifications readable below the reference-style
     // block. A static copy cannot represent a live digital signature.
     if (legacy) line("* Legacy SHA-1", 146f, 14f, warning)
@@ -106,7 +105,8 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
       snapshot.writeBytes(bytes)
       val verified = DscVerifier.read(snapshot.path, password, online = false)
       require(verified.hash == expectedHash && verified.signatures.isNotEmpty() &&
-        verified.signatures.all(::hasVerifiedAppearance) && verified.signatures.all { it.widgets.isNotEmpty() }) {
+        verified.signatures.all { dscAppearanceVerdict(it)==DscAppearanceVerdict.VALID } &&
+        verified.signatures.all { it.widgets.isNotEmpty() }) {
         "Visual copy requires verified visible signatures; share the original instead."
       }
       val basename = cleanName(name.substringBeforeLast('.', name)).ifBlank { "document" }
@@ -119,6 +119,12 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
         require(input.numberOfPages in 1..50) { "Visual copy supports up to 50 pages" }
         require(verified.signatures.flatMap { it.widgets }.all { it.page in 0 until input.numberOfPages }) {
           "Signature widget page could not be mapped safely"
+        }
+        // In this temporary unsigned raster source, replace the annotation
+        // /AP itself, rather than laying a white rectangle over old '?' text.
+        val changed=applyDscPreviewAppearances(input, verified)
+        require(changed >= verified.signatures.sumOf { it.widgets.size }) {
+          "All verified signature appearances must be replaceable"
         }
         val renderer = PDFRenderer(input)
         PDDocument().use { out ->
@@ -135,16 +141,8 @@ internal suspend fun prepareDscVisualCopy(path: String, name: String, password: 
             val scale = minOf(300f/72f, 3500f/maxOf(w,h))
             val bitmap = renderer.renderImage(index, scale)
             try {
-              val canvas = Canvas(bitmap)
-              val sx = bitmap.width/w; val sy = bitmap.height/h
-              for (sig in verified.signatures) for (widget in sig.widgets.filter { it.page == index }) {
-                require(listOf(widget.left,widget.top,widget.right,widget.bottom).all { it.isFinite() } &&
-                  widget.right > widget.left && widget.bottom > widget.top &&
-                  widget.left >= -0.5f && widget.top >= -0.5f && widget.right <= w+0.5f && widget.bottom <= h+0.5f) {
-                  "Signature widget is outside the rendered page"
-                }
-                paintDscAppearance(canvas, RectF(widget.left*sx,widget.top*sy,widget.right*sx,widget.bottom*sy), sig, true)
-              }
+              // The renderer has one in-PDF status appearance; never draw
+              // a separate overlay and never show original '?'/new tick twice.
               val img = JPEGFactory.createFromImage(out, bitmap, 0.98f)
               val header = 46f
               val pw = maxOf(w, 360f)
