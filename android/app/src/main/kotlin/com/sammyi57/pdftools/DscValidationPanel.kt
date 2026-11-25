@@ -78,6 +78,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
       }
       if(message.isNotEmpty()) Text(message, color = c.ink)
       Button(enabled = !busy && !trusting, onClick = onValidate, modifier = Modifier.fillMaxWidth()) { Text(if(busy) "Validating…" else "Validate signature") }
+      OutlinedButton(enabled = !busy && !trusting, onClick = { managing = true; pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import downloaded certificate") }
       val signatures = document.signatures.sortedBy { if (it.id == selected) 0 else 1 }
       for (sig in signatures) {
         val displayStatus = if(busy) DscStatus.UNKNOWN else sig.status
@@ -97,19 +98,6 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           }, color = statusColor, style = MaterialTheme.typography.titleMedium)
           Text(sig.name, color = c.ink)
           Text(if(busy) "Rechecking — previous verdict is not current" else sig.detail, color = c.sub)
-          Text("Integrity: " + if(sig.integrity) "Verified" else "Not established", color = c.sub)
-          Text("Trust: " + when { sig.trusted -> "CA chain verified"; sig.personalTrust -> "Personally trusted signer (not CA verified)"; else -> "Not established" }, color = c.sub)
-          Text("Revocation: ${sig.revocation}", color = c.sub)
-          sig.nativeVerdict?.let { Text("PDF Craft result: $it", color = c.sub) }
-          if(sig.certificateHosts.isNotEmpty()) Text("Certificate servers: " + sig.certificateHosts.joinToString(", "), color = c.sub)
-          Text("Validation time: " + (sig.trustedTime?.toString() ?: "Current device time; no trusted timestamp"), color = c.sub)
-          sig.certificate?.let { cert ->
-            Text("Issued by: ${cert.issuerX500Principal.name}", color = c.sub)
-            Text("Serial: ${cert.serialNumber.toString(16)}", color = c.sub)
-            Text("Validity: ${cert.notBefore} — ${cert.notAfter}", color = c.sub)
-            Text("SHA-256: ${DscSignedBytes.sha256(cert.encoded)}", color = c.sub)
-          }
-          for (cert in sig.chain.drop(1)) Text("CA: ${cert.subjectX500Principal.name}", color = c.sub)
           if (sig.status == DscStatus.UNKNOWN && sig.canTrustSigner && !sig.personalTrust) {
             sig.certificate?.let { cert ->
               Text("Trust this signer only if you recognize the displayed identity. This is your personal trust decision, not automatic CA certification.", color = c.sub)
@@ -130,13 +118,29 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
               }, modifier = Modifier.fillMaxWidth()) { Text("Trust signer & validate") }
             }
           }
+          if (sig.personalTrust) Text("Signer trust saved on this device", color = c.sub)
+          else if(sig.trusted) Text("CA chain already trusted — no manual root download needed", color = c.sub)
+          Text("Integrity: " + if(sig.integrity) "Verified" else "Not established", color = c.sub)
+          Text("Trust: " + when { sig.trusted -> "CA chain verified"; sig.personalTrust -> "Personally trusted signer (not CA verified)"; else -> "Not established" }, color = c.sub)
+          Text("Revocation: ${sig.revocation}", color = c.sub)
+          sig.nativeVerdict?.let { Text("PDF Craft result: $it", color = c.sub) }
+          if(sig.certificateHosts.isNotEmpty()) Text("Certificate servers: " + sig.certificateHosts.joinToString(", "), color = c.sub)
+          Text("Validation time: " + (sig.trustedTime?.toString() ?: "Current device time; no trusted timestamp"), color = c.sub)
+          sig.certificate?.let { cert ->
+            Text("Issued by: ${cert.issuerX500Principal.name}", color = c.sub)
+            Text("Serial: ${cert.serialNumber.toString(16)}", color = c.sub)
+            Text("Validity: ${cert.notBefore} — ${cert.notAfter}", color = c.sub)
+            Text("SHA-256: ${DscSignedBytes.sha256(cert.encoded)}", color = c.sub)
+          }
+          for (cert in sig.chain.drop(1)) Text("CA: ${cert.subjectX500Principal.name}", color = c.sub)
+
         }
       }
       if (signatures.isEmpty()) Text("No digital signature found", color = c.sub)
-      OutlinedButton(enabled = !busy && !trusting, onClick = { managing = true; pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import downloaded certificate") }
       TextButton(onClick = { managing = !managing }) { Text(if(managing) "Hide certificate manager" else "Manage trusted certificates") }
       if (managing) {
         Text("Personally trusted signers", style = MaterialTheme.typography.titleMedium, color = c.ink)
+        if(signers.isEmpty()) Text("No personally trusted signer yet. Use Trust signer & validate on an eligible signature, not this manager button.", color = c.sub)
         for (cert in signers) {
           Text(cert.subjectX500Principal.name, color = c.ink)
           Text(DscSignedBytes.sha256(cert.encoded), color = c.sub)
@@ -227,6 +231,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
       }
       if(message.isNotEmpty()) Text(message, color = c.ink)
       Text("Save and Cart preserve the original signed bytes, not a flattened green tick.", color = c.sub)
+      TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Back to PDF") }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(enabled = !saving && !busy, onClick = {
           saving = true
