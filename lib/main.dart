@@ -40,6 +40,7 @@ import 'account_directory.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -1964,8 +1965,8 @@ class LiveTransferCard extends StatelessWidget {
             style:TextStyle(color:FileTheme.muted(context),fontSize:11)),
           if(active||file.state==TransferState.failed)...[
             const SizedBox(height:3),
-            Text(file.state.name,style:const TextStyle(fontSize:10,
-              color:FileTheme.pink)),
+            Text(file.state.name,style:TextStyle(fontSize:10,
+              color:incoming?Colors.white:FileTheme.pink)),
             if(active)LinearProgressIndicator(value:file.progress,minHeight:2),
           ]
         ]);
