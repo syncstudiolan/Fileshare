@@ -15,6 +15,21 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget
  * Preserve /FRM transforms, original n0 background and actual n2 signer data.
  * Never modify the original signed PDF or promote a status from a visual mark.
  */
+/** A named Adobe status appearance must never be flattened into an opaque
+ * invented replacement on failure. A failed layer update is reported
+ * instead so the original signer artwork is preserved exactly.
+ */
+internal fun dscHasNamedStatusLayers(widget: PDAnnotationWidget): Boolean = runCatching {
+  val normal=widget.appearance?.normalAppearance
+    ?.takeIf { it.isStream }?.appearanceStream ?: return@runCatching false
+  val resources=normal.resources ?: return@runCatching false
+  val frame=resources.getXObject(COSName.getPDFName("FRM"))
+    as? PDFormXObject ?: return@runCatching false
+  val layers=frame.resources ?: return@runCatching false
+  layers.getXObject(COSName.getPDFName("n1")) is PDFormXObject &&
+    layers.getXObject(COSName.getPDFName("n3")) is PDFormXObject
+}.getOrDefault(false)
+
 internal fun replaceDscNamedStatusLayers(
   pdf: PDDocument, widget: PDAnnotationWidget, verdict: DscAppearanceVerdict,
 ): Boolean {
