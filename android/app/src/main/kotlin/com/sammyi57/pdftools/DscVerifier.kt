@@ -176,7 +176,7 @@ internal object DscVerifier {
                 if (!intact) DscResult(id, cert.subjectX500Principal.name, DscStatus.INVALID,
                   "Cryptographic signature does not match signed bytes", cert, widgets=widgets)
                 else {
-                  var pool = embedded + dss.certificates + DscImportedIssuers.load()
+                  var pool = embedded + dss.certificates + DscImportedIssuers.load() + DscIndiaCatalog.bundled()
                   val personalTrust = DscSignerTrust.contains(cert)
                   val stamp = DscTimestamp.attached(cms)
                   val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
@@ -459,10 +459,43 @@ internal object DscVerifier {
           pool.addAll(cache[url].orEmpty().filter(::issuerOf))
         }
         parent = pool.firstOrNull(::issuerOf)
+        if (parent == null) {
+          // Official directory fallback when a PDF omits its CA or AIA fails.
+          for (entry in runCatching { DscIndiaCatalog.matching(current.issuerX500Principal.name) }.getOrDefault(emptyList()).take(2)) {
+            if (entry.url !in cache && cache.size < 6) {
+              cache[entry.url] = fetchEvidence(entry.url, 128 * 1024)?.let { raw ->
+                runCatching { DscTrust.parse(raw).filter { DscIndiaCatalog.authenticIssuer(it, DscRoots.bundled()) } }.getOrDefault(emptyList())
+              }.orEmpty()
+            }
+            for (candidate in cache[entry.url].orEmpty()) {
+              if (issuerOf(candidate)) {
+                pool.add(candidate)
+                runCatching { DscImportedIssuers.add(candidate) }
+              }
+            }
+          }
+          parent = pool.firstOrNull(::issuerOf)
+        }
       }
       current = parent ?: return pool
     }
     return pool
+  }
+
+  /** Explicit one-time refresh; all fetched certificates must chain to a pinned root. */
+  fun syncIndianIssuers(onProgress: (Int, Int) -> Unit = { _, _ -> }): Pair<Int, Int> {
+    val roots = DscRoots.bundled()
+    require(roots.isNotEmpty()) { "Pinned CCA root unavailable" }
+    val entries = DscIndiaCatalog.entries()
+    var success = 0
+    for ((index, entry) in entries.withIndex()) {
+      val raw = fetchEvidence(entry.url, 128 * 1024)
+      val certs = raw?.let { runCatching { DscTrust.parse(it) }.getOrDefault(emptyList()) }.orEmpty()
+      if (certs.any { cert -> DscIndiaCatalog.authenticIssuer(cert, roots) &&
+            runCatching { DscImportedIssuers.add(cert); true }.getOrDefault(false) }) success++
+      onProgress(index + 1, entries.size)
+    }
+    return success to entries.size
   }
 
   private fun fetchCrl(address: String): X509CRL? = fetchEvidence(address, 4 * 1024 * 1024)?.let {
