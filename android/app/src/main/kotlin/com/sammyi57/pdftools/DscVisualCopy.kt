@@ -18,8 +18,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 internal fun hasVerifiedAppearance(sig: DscResult): Boolean =
-  sig.integrity && sig.trusted && sig.revocation != "Revoked" &&
-    (sig.status == DscStatus.VALID || sig.status == DscStatus.LEGACY_NATIVE_VERIFIED || sig.status == DscStatus.NATIVE_VERIFIED)
+  dscAppearanceVerdict(sig) in setOf(
+    DscAppearanceVerdict.VALID, DscAppearanceVerdict.VERIFIED_WITH_WARNINGS,
+  )
 
 /** One shared painter for viewport and the clearly identified unsigned visual copy.
  * Never edits the original PDF or claims that a flattened image is a DSC. */
