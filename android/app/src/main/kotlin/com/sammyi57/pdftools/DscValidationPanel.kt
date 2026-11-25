@@ -96,9 +96,9 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           verticalArrangement = Arrangement.spacedBy(5.dp)) {
           Text(when(displayStatus) {
             DscStatus.VALID -> "✓ Signature valid"
-            DscStatus.NATIVE_VERIFIED -> "✓* Signature verified — revocation unconfirmed"
+            DscStatus.NATIVE_VERIFIED -> "✓ Signature verified by PDF Craft*"
             DscStatus.PERSONALLY_TRUSTED -> "✓ Signature valid — personally trusted"
-            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ Signature verified by PDF Craft — legacy SHA-1"
+            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ Signature verified by PDF Craft*"
             DscStatus.LEGACY_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
@@ -132,7 +132,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
           else if(sig.trusted) Text("CA chain already trusted — no manual root download needed", color = c.sub)
           Text("Integrity: " + if(sig.integrity) "Verified" else "Not established", color = c.sub)
           Text("Trust: " + when { sig.trusted -> "CA chain verified"; sig.personalTrust -> "Personally trusted signer (not CA verified)"; else -> "Not established" }, color = c.sub)
-          Text("Revocation: ${sig.revocation}", color = c.sub)
+          Text("Certificate revocation: " + if(sig.revocation == "Not established") "CA response not available; cancellation status not confirmed" else sig.revocation, color = c.sub)
           sig.nativeVerdict?.let { Text("PDF Craft result: $it", color = c.sub) }
           if(sig.certificateHosts.isNotEmpty()) Text("Certificate servers: " + sig.certificateHosts.joinToString(", "), color = c.sub)
           Text("Validation time: " + (sig.trustedTime?.toString() ?: "Current device time; no trusted timestamp"), color = c.sub)
@@ -256,7 +256,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
         }
       }
       if(message.isNotEmpty()) Text(message, color = c.ink)
-      Text("Save and Cart preserve the original signed bytes, not a flattened green tick.", color = c.sub)
+      Text("Save preserves the original signature. Share or Cart defaults to a high-resolution unsigned visual copy when eligible; the displayed verification remains part of the page image. The original is unchanged.", color = c.sub)
       TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Back to PDF") }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(enabled = !saving && !busy, onClick = {

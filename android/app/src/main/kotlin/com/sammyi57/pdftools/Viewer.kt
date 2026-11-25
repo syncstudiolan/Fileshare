@@ -305,8 +305,15 @@ fun PdfViewerScreen(path: String, name: String) {
   }
   sendMode?.let { mode ->
     PdfSendPicker(path, name, page, pages, mode == "cart", onClose = { sendMode = null },
-      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isEmpty() != true,
-      expectedSignedHash = dsc?.takeIf { it.signatures.isNotEmpty() }?.hash)
+      preserveSigned = dscBusy || dscError.isNotEmpty() || dsc?.signatures?.isEmpty() != true || dsc?.visualCopy == true,
+      alreadyVisualCopy = dsc?.visualCopy == true,
+      expectedSignedHash = dsc?.takeIf { it.signatures.isNotEmpty() || it.visualCopy }?.hash,
+      signedEvidenceCopy = dsc?.takeIf { !dscBusy && it.signatures.isNotEmpty() && it.signatures.all(::hasVerifiedAppearance) }?.let { verified ->
+        suspend { prepareDscEvidenceCopy(path, name, password, verified.hash) }
+      },
+      visualCopy = dsc?.takeIf { !dscBusy && it.signatures.isNotEmpty() && it.signatures.all { sig -> hasVerifiedAppearance(sig) && sig.widgets.isNotEmpty() } }?.let { verified ->
+        suspend { prepareDscVisualCopy(path, name, password, verified.hash) }
+      })
   }
   if (renameOpen) PromptDialog(
     "Rename PDF", stem(name), "File name", "New name", "Rename",
@@ -329,6 +336,21 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
   val density = LocalDensity.current
   state.zoom; state.firstVisiblePageOffset
   Box(Modifier.fillMaxSize().clipToBounds()) {
+    // Paint in the viewer's own viewport coordinate system. A child Box's
+    // measured size/offset may be clamped by Compose at low or high zoom.
+    if (!busy && !showOriginal) androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+      drawIntoCanvas { canvas ->
+        for (sig in result.signatures.filter(::hasVerifiedAppearance)) for (widget in sig.widgets) {
+          val a = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.left, widget.top)) ?: continue
+          val b = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.right, widget.bottom)) ?: continue
+          val left = minOf(a.x, b.x); val top = minOf(a.y, b.y)
+          val right = maxOf(a.x, b.x); val bottom = maxOf(a.y, b.y)
+          if (listOf(left,top,right,bottom).any { !it.isFinite() } || right <= left || bottom <= top ||
+              right <= 0f || bottom <= 0f || left >= size.width || top >= size.height) continue
+          paintDscAppearance(canvas.nativeCanvas, android.graphics.RectF(left,top,right,bottom), sig, visualCopy = false)
+        }
+      }
+    }
     for (sig in result.signatures) for (widget in sig.widgets) {
       val a = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.left, widget.top)) ?: continue
       val b = state.pdfPointToVisibleOffset(PdfPoint(widget.page, widget.right, widget.bottom)) ?: continue
@@ -343,19 +365,11 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
       }
       Box(Modifier.offset { IntOffset(minOf(a.x,b.x).roundToInt(), minOf(a.y,b.y).roundToInt()) }
         .size(with(density){width.toDp()}, with(density){height.toDp()})
-        .border(1.dp,color).clickable { onTap(sig.id) }) {
+        .then(if (!busy && !showOriginal && hasVerifiedAppearance(sig)) Modifier else Modifier.border(1.dp,color)).clickable { onTap(sig.id) }) {
 
-        // The embedded PDF appearance is static and untrusted. Render the
-        // app's independently verified verdict as a reversible viewer overlay,
-        // never rewrite /AP or any signed bytes. Keep qualifications visible.
-        val legacy = displayStatus == DscStatus.LEGACY_NATIVE_VERIFIED
-        val full = displayStatus == DscStatus.VALID
-        if (DscVerdictPolicy.replaceAppearance(full || legacy, showOriginal, width, height)) {
-          // Use the full widget's pixel dimensions, not a minimum dp threshold.
-          // Canvas masks the stale /AP at every zoom and scales all content
-          // together. The original signed file remains untouched.
-          DscVerifiedAppearance(sig, legacy, Modifier.fillMaxSize())
-        } else {
+        // The viewport Canvas already paints the verified appearance.
+        // Keep only a transparent tap target over it, not a second badge.
+        if (busy || showOriginal || !hasVerifiedAppearance(sig)) {
           Text(when(displayStatus) {
             DscStatus.VALID -> "✓"
             DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ SHA-1*"
@@ -365,65 +379,6 @@ private fun DscSignatureOverlay(state: PdfViewerState, result: DscDocument, busy
           }, color = Color.White, modifier = Modifier.align(Alignment.TopEnd).background(color).padding(horizontal=4.dp))
         }
       }
-    }
-  }
-}
-
-/** Display-only appearance; signed PDF bytes and annotations are never edited.
- * Legacy and revocation limitations remain part of the visible status. */
-@Composable
-private fun DscVerifiedAppearance(sig: DscResult, legacy: Boolean, modifier: Modifier) {
-  val signer = remember(sig.certificate, sig.name) {
-    sig.certificate?.let(DscCertificates::displayName) ?: sig.name
-  }
-  val paint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
-  androidx.compose.foundation.Canvas(modifier) {
-    if (size.width < 1f || size.height < 1f) return@Canvas
-    drawIntoCanvas { canvas ->
-      val c = canvas.nativeCanvas
-      c.save()
-      c.clipRect(0f, 0f, size.width, size.height)
-      // A fully opaque background replaces the old yellow question mark.
-      c.drawColor(android.graphics.Color.WHITE)
-      c.scale(size.width / 240f, size.height / 200f)
-      val green = 0xff18834b.toInt()
-      val dark = 0xff20252a.toInt()
-      fun line(value: String, y: Float, maxSize: Float, color: Int, bold: Boolean = false) {
-        paint.style = android.graphics.Paint.Style.FILL
-        paint.color = color
-        paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-        paint.textAlign = android.graphics.Paint.Align.LEFT
-        paint.textSize = maxSize
-        val measured = paint.measureText(value)
-        if (measured > 224f) paint.textSize = maxSize * 224f / measured
-        c.drawText(value, 8f, y, paint)
-      }
-      line(if (legacy) "Signature verified*" else "Signature valid", 26f, 22f, dark, true)
-      line("Digitally signed by", 43f, 13f, dark)
-      line(signer.take(100), 57f, 15f, dark)
-      // Draw a real scalable check, not an emoji or a tiny corner badge.
-      val tick = android.graphics.Path().apply {
-        moveTo(63f, 99f)
-        lineTo(103f, 133f)
-        lineTo(178f, 68f)
-      }
-      paint.style = android.graphics.Paint.Style.STROKE
-      paint.strokeCap = android.graphics.Paint.Cap.ROUND
-      paint.strokeJoin = android.graphics.Paint.Join.ROUND
-      paint.strokeWidth = 21f
-      paint.color = 0xff163b25.toInt()
-      c.drawPath(tick, paint)
-      paint.strokeWidth = 15f
-      paint.color = green
-      c.drawPath(tick, paint)
-      sig.claimedSigningDate?.let { line("Claimed date: " + it, 153f, 12f, dark) }
-      if (legacy) {
-        line("* Legacy SHA-1", 167f, 14f, 0xff805400.toInt(), true)
-        line(if (sig.revocation == "Good") "Revocation checked" else "Revocation unconfirmed",
-          182f, 13f, 0xff805400.toInt())
-      }
-      line("File Share viewer verification", 195f, 11f, dark)
-      c.restore()
     }
   }
 }

@@ -40,7 +40,18 @@ internal data class DscResult(
   val certificateHosts: List<String> = emptyList(),
   val claimedSigningDate: String? = null,
 )
-internal data class DscDocument(val hash: String, val signatures: List<DscResult>)
+internal data class DscDocument(val hash: String, val signatures: List<DscResult>, val visualCopy: Boolean = false)
+
+/** Only evidence already authenticated against the signer/issuer is collected. */
+internal class DscValidatedEvidence {
+  val crls = linkedMapOf<String, ByteArray>()
+  val ocsps = linkedMapOf<String, ByteArray>()
+  fun add(target: MutableMap<String, ByteArray>, bytes: ByteArray) {
+    val key = DscSignedBytes.sha256(bytes)
+    if (key !in target && crls.size + ocsps.size < 64 &&
+        crls.values.sumOf { it.size.toLong() } + ocsps.values.sumOf { it.size.toLong() } + bytes.size <= 12L*1024*1024) target[key] = bytes
+  }
+}
 
 internal object DscTrust {
   private val factory get() = CertificateFactory.getInstance("X.509")
@@ -71,7 +82,8 @@ internal object DscVerifier {
   private const val MAX_PDF = 64 * 1024 * 1024L
   private val supported = setOf("adbe.pkcs7.detached", "ETSI.CAdES.detached", "ETSI.RFC3161", "adbe.pkcs7.sha1", "adbe.x509.rsa_sha1")
 
-  fun read(path: String, password: String?, online: Boolean = false): DscDocument {
+  fun read(path: String, password: String?, online: Boolean = false,
+      collected: DscValidatedEvidence? = null): DscDocument {
     val file = File(path)
     require(file.length() in 1..MAX_PDF) { "PDF exceeds DSC verification safety limit (64 MB)" }
     val bytes = file.readBytes()
@@ -81,7 +93,10 @@ internal object DscVerifier {
     val fetchedCrls = mutableMapOf<String, X509CRL?>()
     val fetchedOcsp = mutableMapOf<String, ByteArray?>()
     val fetchedIssuers = mutableMapOf<String, List<X509Certificate>>()
+    var visualCopy = false
     val results = PDDocument.load(bytes, password.orEmpty()).use { pdf ->
+      // This untrusted metadata is only a preservation hint, never evidence of DSC validity.
+      visualCopy = pdf.documentInformation.getCustomMetadataValue("FileShareCopyType") == "UNSIGNED_VISUAL_COPY_V1" && pdf.signatureDictionaries.isEmpty()
       val dss = DscDss.read(pdf)
       val fields = pdf.documentCatalog.acroForm?.fieldTree?.filterIsInstance<PDSignatureField>().orEmpty()
       val signatures = pdf.signatureDictionaries
@@ -137,7 +152,7 @@ internal object DscVerifier {
                 chain = buildChain(stamp.signer, extra, trust, stamp.time)
               }
               val rev = if(chain.size >= 2) checkRevocation(chain, stamp.cms, dss, online,
-                fetchedCrls, fetchedOcsp, stamp.time) else "Not established"
+                fetchedCrls, fetchedOcsp, stamp.time, collected) else "Not established"
               val trustedTime = if(rev == "Good" && chain.size >= 2) stamp.time else null
               val nativeResult = nativeFor(stamp.signer)
               val status = when {
@@ -183,7 +198,7 @@ internal object DscVerifier {
                   val stamp = DscTimestamp.attached(cms)
                   val tsaChain = stamp?.let { buildChain(it.signer, it.certificates + pool, trust, it.time) }.orEmpty()
                   val trustedTime = if (stamp != null && tsaChain.size >= 2 &&
-                    checkRevocation(tsaChain, stamp.cms, dss, online, fetchedCrls, fetchedOcsp, stamp.time) == "Good")
+                    checkRevocation(tsaChain, stamp.cms, dss, online, fetchedCrls, fetchedOcsp, stamp.time, collected) == "Good")
                     stamp.time else null
                   val at = trustedTime ?: Date()
                   var chain = buildChain(cert, pool, trust, at)
@@ -221,7 +236,7 @@ internal object DscVerifier {
                     }
                     if (issuer == null) emptyList() else listOf(cert, issuer)
                   }
-                  val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at)
+                  val rev = if (revChain.size < 2) "Not established" else checkRevocation(revChain, cms, dss, online, fetchedCrls, fetchedOcsp, at, collected)
                   val currentValidity = runCatching { cert.checkValidity(at); true }.getOrDefault(false)
                   val nativeVerified = DscVerdictPolicy.nativeVerified(intact, revisionAccepted && signingUsage && documentEku && strong,
                     currentValidity, chain.isNotEmpty(), nativeResult?.status == "valid" && nativeResult?.integrityChecked == true,
@@ -268,7 +283,7 @@ internal object DscVerifier {
                     chain.isNotEmpty(), rev, widgets, trustedTime, personalTrust, canTrust, nativeResult?.status, hosts,
                     claimedSigningDate = runCatching {
                       sig.signDate?.let { calendar ->
-                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm z", java.util.Locale.ROOT).apply {
+                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", java.util.Locale.ROOT).apply {
                           timeZone = calendar.timeZone
                         }.format(calendar.time)
                       }
@@ -319,7 +334,7 @@ internal object DscVerifier {
         }
       }
     }
-    return DscDocument(DscSignedBytes.sha256(bytes), results)
+    return DscDocument(DscSignedBytes.sha256(bytes), results, visualCopy)
   }
 
   private fun buildChain(leaf: X509Certificate, embedded: List<X509Certificate>,
@@ -342,7 +357,8 @@ internal object DscVerifier {
   }.getOrDefault(emptyList())
 
   private fun checkRevocation(chain: List<X509Certificate>, cms: CMSSignedData, dss: DscDss.Evidence,
-      online: Boolean, fetched: MutableMap<String, X509CRL?>, ocspCache: MutableMap<String, ByteArray?>, at: Date): String {
+      online: Boolean, fetched: MutableMap<String, X509CRL?>, ocspCache: MutableMap<String, ByteArray?>, at: Date,
+      collected: DscValidatedEvidence? = null): String {
     val now = Date()
     val crls = cms.getCRLs().getMatches(null).mapNotNull { holder ->
       runCatching { DscCertificates.crl(holder) }.getOrNull()
@@ -369,10 +385,15 @@ internal object DscVerifier {
             .getOrNull()?.let(evidence::add)
         }
       }
-      val ocsp = dss.ocsps.map { DscOcsp.check(it, cert, issuer, at, now) }.toMutableList()
+      fun checkOcsp(raw: ByteArray): DscOcsp.Verdict {
+        val verdict = DscOcsp.check(raw, cert, issuer, at, now)
+        if (verdict == DscOcsp.Verdict.GOOD) collected?.let { it.add(it.ocsps, raw) }
+        return verdict
+      }
+      val ocsp = dss.ocsps.map(::checkOcsp).toMutableList()
       for (url in ocspEndpoints) {
         DscEvidenceCache.read("ocsp", identity + ":" + url, 1024 * 1024)?.let {
-          ocsp.add(DscOcsp.check(it, cert, issuer, at, now))
+          ocsp.add(checkOcsp(it))
         }
       }
       var valid = evidence.filter(::validCrl)
@@ -382,10 +403,21 @@ internal object DscVerifier {
         for (url in ocspEndpoints) {
           val key = url + ":" + identity
           if (key !in ocspCache && ocspCache.size < 4) {
-            ocspCache[key] = fetchEvidence(url, 1024 * 1024, DscOcsp.request(cert, issuer))
+            val request = DscOcsp.request(cert, issuer)
+            val post = fetchEvidence(url, 1024 * 1024, request)
+            // Some CA responders accept only RFC 5019 GET. Retain the same
+            // host/address policy and authenticate the returned OCSP payload.
+            ocspCache[key] = if (post != null && checkOcsp(post) != DscOcsp.Verdict.UNKNOWN) post
+              else {
+                val get = runCatching {
+                  url.toHttpUrl().newBuilder().addPathSegment(
+                    android.util.Base64.encodeToString(request, android.util.Base64.NO_WRAP)).build().toString()
+                }.getOrNull()
+                get?.let { fetchEvidence(it, 1024 * 1024) } ?: post
+              }
           }
           ocspCache[key]?.let { raw ->
-            val verdict = DscOcsp.check(raw, cert, issuer, at, now)
+            val verdict = checkOcsp(raw)
             ocsp.add(verdict)
             if (verdict != DscOcsp.Verdict.UNKNOWN)
               DscEvidenceCache.write("ocsp", identity + ":" + url, raw, 1024 * 1024)
@@ -402,6 +434,7 @@ internal object DscVerifier {
         valid = evidence.filter(::validCrl)
       }
       if (valid.any { it.getRevokedCertificate(cert)?.revocationDate?.let { date -> date <= at } == true }) return "Revoked"
+      collected?.let { sink -> valid.forEach { sink.add(sink.crls, it.encoded) } }
       if (valid.isEmpty() && DscOcsp.Verdict.GOOD !in ocsp) complete = false
     }
     return if (complete) "Good" else "Not established"

@@ -39,6 +39,9 @@ fun PdfSendPicker(
   toCart: Boolean,
   preserveSigned: Boolean = false,
   expectedSignedHash: String? = null,
+  visualCopy: (suspend () -> File)? = null,
+  signedEvidenceCopy: (suspend () -> File)? = null,
+  alreadyVisualCopy: Boolean = false,
   // Keep the callback last: legacy scanner/editor callers use trailing lambdas.
   onClose: () -> Unit,
 ) {
@@ -48,12 +51,32 @@ fun PdfSendPicker(
   var compressResult by remember(preserveSigned) { mutableStateOf(false) }
   var busy by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf("") }
+  var signedMode by remember(visualCopy != null, signedEvidenceCopy != null) { mutableStateOf(if (visualCopy != null) "visual" else "original") }
   AlertDialog(
     onDismissRequest = { if (!busy) onClose() },
     title = { Text(if (toCart) "Add PDF to File Share Cart" else "Share PDF") },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (preserveSigned) Text("Signed or unverified PDF: the complete original file will be sent unchanged. Page extraction and compression are disabled.")
+        if (preserveSigned) {
+          if (alreadyVisualCopy) Text("This is an unsigned visual copy. Send all pages unchanged, including the recorded signature appearance. No DSC revalidation is performed on a visual copy.")
+          else if (visualCopy == null && signedEvidenceCopy == null) Text("Signed or unverified PDF: the complete original file will be sent unchanged. Page extraction and compression are disabled.")
+          else {
+            if (signedEvidenceCopy != null) Row(verticalAlignment = Alignment.CenterVertically) {
+              RadioButton(selected = signedMode == "evidence", enabled = !busy, onClick = { signedMode = "evidence" })
+              Text("Signed PDF + authenticated validation evidence")
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              RadioButton(selected = signedMode == "original", enabled = !busy, onClick = { signedMode = "original" })
+              Text("Original signed PDF (unchanged)")
+            }
+            if (visualCopy != null) Row(verticalAlignment = Alignment.CenterVertically) {
+              RadioButton(selected = signedMode == "visual", enabled = !busy, onClick = { signedMode = "visual" })
+              Text("High-resolution visual copy (unsigned, password-free)")
+            }
+            if (signedMode == "evidence") Text("Keeps original signed bytes and appends verified CA evidence only when permitted. Other viewers determine trust independently. If evidence is unavailable, choose Original signed PDF.")
+            if (signedMode == "visual") Text("All pages, signer name, date/time and verification appearance become permanent page images. The new PDF has no password. The original is kept unchanged. This copy is visibly marked UNSIGNED VISUAL COPY and is not a digital signature. Tap to confirm export.")
+          }
+        }
         else listOf("current" to "Current page ($currentPage)", "all" to "Whole document ($pageCount pages)", "range" to "Choose pages").forEach { (id, label) ->
           Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = selection == id, onClick = { selection = id })
@@ -78,7 +101,11 @@ fun PdfSendPicker(
         busy = true
         scope.launch {
           try {
-            val file = preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned, expectedSignedHash)
+            val file = if (signedMode == "evidence" && preserveSigned) {
+              requireNotNull(signedEvidenceCopy) { "Validation evidence is unavailable." }.invoke()
+            } else if (signedMode == "visual" && preserveSigned) {
+              requireNotNull(visualCopy) { "Verification copy is unavailable; reopen and verify the original PDF." }.invoke()
+            } else preparePdfSend(path, name, if(preserveSigned) "all" else selection, currentPage, pages, !preserveSigned && compressResult, preserveSigned, expectedSignedHash)
             if (toCart) {
               val app = appContext as FileShareApplication
               check(app.stagePdfFromTools(file, file.name)) { "Unable to stage this PDF in File Share" }
