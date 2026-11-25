@@ -82,23 +82,25 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
       Button(enabled = !busy && !trusting, onClick = onValidate, modifier = Modifier.fillMaxWidth()) { Text(if(busy) "Validating…" else "Validate signature") }
       OutlinedButton(enabled = !busy && !trusting, onClick = { managing = true; pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import downloaded certificate") }
       TextButton(onClick = onToggleOriginal) {
-        Text(if (showOriginal) "Show verification overlay" else "Show original signature appearance")
+        Text(if (showOriginal) "Show validated signature appearance" else "Show original signature appearance")
       }
       val signatures = document.signatures.sortedBy { if (it.id == selected) 0 else 1 }
       for (sig in signatures) {
         val displayStatus = if(busy) DscStatus.UNKNOWN else sig.status
         val statusColor = when(displayStatus) {
-          DscStatus.VALID, DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED, DscStatus.LEGACY_NATIVE_VERIFIED -> Color(0xff18834b)
-          DscStatus.LEGACY_VERIFIED, DscStatus.UNKNOWN -> Color(0xffb57b13)
+          DscStatus.VALID -> Color(0xff18834b)
+          DscStatus.PERSONALLY_TRUSTED, DscStatus.NATIVE_VERIFIED,
+          DscStatus.LEGACY_NATIVE_VERIFIED, DscStatus.LEGACY_VERIFIED,
+          DscStatus.UNKNOWN -> Color(0xffb57b13)
           DscStatus.INVALID -> Color(0xffc33232)
         }
         Column(Modifier.fillMaxWidth().border(1.dp, statusColor).padding(12.dp),
           verticalArrangement = Arrangement.spacedBy(5.dp)) {
           Text(when(displayStatus) {
             DscStatus.VALID -> "✓ Signature valid"
-            DscStatus.NATIVE_VERIFIED -> "✓ Signature verified by PDF Craft*"
-            DscStatus.PERSONALLY_TRUSTED -> "✓ Signature valid — personally trusted"
-            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓ Signature verified by PDF Craft*"
+            DscStatus.NATIVE_VERIFIED -> "? Signature integrity verified; full CA/revocation status pending"
+            DscStatus.PERSONALLY_TRUSTED -> "? Signer personally trusted; CA validity not established"
+            DscStatus.LEGACY_NATIVE_VERIFIED -> "? Legacy signature integrity verified; modern validity not established"
             DscStatus.LEGACY_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
