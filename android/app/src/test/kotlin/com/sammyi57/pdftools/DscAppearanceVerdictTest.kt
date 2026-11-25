@@ -86,6 +86,20 @@ class DscAppearanceVerdictTest {
     assertEquals("Signature valid",dscAppearanceLabel(DscAppearanceVerdict.VALID))
   }
 
+  @Test fun signedFieldMatchAllowsOnlyTrailingZeroPaddingAndExactRanges() {
+    val range=intArrayOf(0, 20, 120, 40)
+    val original=byteArrayOf(0x30,0x03,0x02,0x01,0x01)
+    val padded=original+byteArrayOf(0,0,0,0)
+    assertEquals(true,dscSameSignedData(range,original,range.copyOf(),padded))
+    assertEquals(true,dscSameSignedData(range,padded,range.copyOf(),original))
+    assertEquals(false,dscSameSignedData(range,original,
+      intArrayOf(0,20,121,39),padded))
+    assertEquals(false,dscSameSignedData(range,original,
+      range.copyOf(),original+byteArrayOf(0,1)))
+    assertEquals(false,dscSameSignatureContents(
+      original,byteArrayOf(0x30,0x03,0x02,0x01,0x02)))
+  }
+
   @Test fun signedFieldMatchingRejectsReferencesWithDifferentByteRangeOrContents() {
     val range = intArrayOf(0, 15, 45, 20)
     val cms = byteArrayOf(1, 2, 3, 4)
