@@ -98,6 +98,16 @@ internal suspend fun prepareDscViewerAppearance(
 /** Replace ONLY a signed widget's normal /AP in an unsigned, in-memory
  * rendering derivative. The original document is NEVER passed to this
  * function for persistence or signing. */
+/** Fail-closed match for a signed PDF /V dictionary and its field value. */
+internal fun dscSameSignedData(
+  fieldRange: IntArray?, fieldContents: ByteArray?,
+  signatureRange: IntArray?, signatureContents: ByteArray?,
+): Boolean =
+  fieldRange != null && signatureRange != null &&
+    fieldContents != null && signatureContents != null &&
+    fieldRange.contentEquals(signatureRange) &&
+    fieldContents.contentEquals(signatureContents)
+
 /**
  * COSDictionary object identity (===) is not stable across PDFBox wrappers.
  * Match actual signature contents + ByteRange instead, and reject ambiguous
@@ -113,8 +123,8 @@ internal fun signaturePreviewFields(pdf: PDDocument, result: DscDocument): List<
     if (dscAppearanceVerdict(sig) == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
     val candidate = fields.filter { field ->
       val value = field.signature ?: return@filter false
-      value.byteRange?.contentEquals(signed.byteRange) == true &&
-        value.contents?.contentEquals(signed.contents) == true
+      dscSameSignedData(value.byteRange, value.contents,
+        signed.byteRange, signed.contents)
     }
     if (candidate.size != 1) {
       Log.w("FileShareDSC", "Signature ${index + 1}: expected exactly one matching signature widget field, found ${candidate.size}")
@@ -142,8 +152,8 @@ internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): I
     if (verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
     val field = selected.singleOrNull { candidate ->
       val value = candidate.signature ?: return@singleOrNull false
-      value.byteRange?.contentEquals(signed.byteRange) == true &&
-        value.contents?.contentEquals(signed.contents) == true
+      dscSameSignedData(value.byteRange, value.contents,
+        signed.byteRange, signed.contents)
     } ?: return@forEachIndexed
     for (widget in field.widgets) {
       val rect = widget.rectangle ?: continue
