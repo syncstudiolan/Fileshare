@@ -100,7 +100,7 @@ internal fun DscValidationPanel(document: DscDocument, selected: String?,
             DscStatus.VALID -> "✓ Signature valid"
             DscStatus.NATIVE_VERIFIED -> "? Signature integrity verified; full CA/revocation status pending"
             DscStatus.PERSONALLY_TRUSTED -> "? Signer personally trusted; CA validity not established"
-            DscStatus.LEGACY_NATIVE_VERIFIED -> "? Legacy signature integrity verified; modern validity not established"
+            DscStatus.LEGACY_NATIVE_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
             DscStatus.LEGACY_VERIFIED -> "✓* Signature integrity verified — legacy SHA-1"
             DscStatus.UNKNOWN -> "? Validity unknown"
             DscStatus.INVALID -> "✕ Signature invalid"
