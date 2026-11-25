@@ -1,10 +1,10 @@
 {
   "android": {
-    "build": 635,
+    "build": 636,
     "notes": "Production signed Android ARM64 APK; approve OS installation.",
-    "sha256": "e436d274d1b9f97d4c89c6116945ac96abf4b545e3ec0dc93f0ee548d4cc6391",
-    "size": 117434266,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-635/FileShare-Android-ARM64-Release.apk",
+    "sha256": "78905a589a6145aa0547ac44241a90cc5109ad108d686a099b41243cfc5f4e65",
+    "size": 117450650,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-636/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
