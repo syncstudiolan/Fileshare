@@ -14,10 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Only cryptographically established full validity earns a green check.
- * A cryptographic mismatch/invalid revision earns a red cross. All partial,
- * legacy-only, personally trusted or pending states remain UNKNOWN.
- * Visual status never changes DscVerifier's underlying signed-byte verdict.
+/** Full validation and integrity-only legacy verification remain distinct.
+ * The qualified mark never claims a valid current-policy certificate or a
+ * successful revocation check. The original PDF signature remains untouched.
  */
 internal enum class DscAppearanceVerdict { VALID, VERIFIED_WITH_WARNINGS, INVALID, UNKNOWN }
 
@@ -69,6 +68,15 @@ internal suspend fun prepareDscViewerAppearance(
       PDDocument.load(bytes, password.orEmpty()).use { pdf ->
         changed = applyDscPreviewAppearances(pdf, result)
         if (changed > 0) {
+          // Jetpack PDF does not consistently paint every widget /AP. Bake
+          // the replacement into page content of this UNSIGNED preview only.
+          // false = preserve the appearance we just authored, do not
+          // regenerate the original '?' from the field value.
+          val matched = signaturePreviewFields(pdf, result)
+          check(matched.isNotEmpty()) {
+            "No signature widget can be flattened into the preview"
+          }
+          pdf.documentCatalog.acroForm?.flatten(matched, false)
           pdf.documentInformation.setCustomMetadataValue(
             "FileSharePreviewOnly", "UNSIGNED_RENDER_COPY_NEVER_VERIFY")
           pdf.save(output)
@@ -90,23 +98,59 @@ internal suspend fun prepareDscViewerAppearance(
 /** Replace ONLY a signed widget's normal /AP in an unsigned, in-memory
  * rendering derivative. The original document is NEVER passed to this
  * function for persistence or signing. */
-internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): Int {
+/**
+ * COSDictionary object identity (===) is not stable across PDFBox wrappers.
+ * Match actual signature contents + ByteRange instead, and reject ambiguous
+ * fields. Never assign a green appearance to an unrelated PDF field.
+ */
+internal fun signaturePreviewFields(pdf: PDDocument, result: DscDocument): List<PDSignatureField> {
   val fields = pdf.documentCatalog.acroForm?.fieldTree
     ?.filterIsInstance<PDSignatureField>().orEmpty()
+  val selected = mutableListOf<PDSignatureField>()
+  pdf.signatureDictionaries.forEachIndexed { index, signed ->
+    val sig = result.signatures.firstOrNull { it.id.substringBefore(":").toIntOrNull() == index }
+      ?: return@forEachIndexed
+    if (dscAppearanceVerdict(sig) == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
+    val candidate = fields.filter { field ->
+      val value = field.signature ?: return@filter false
+      value.byteRange?.contentEquals(signed.byteRange) == true &&
+        value.contents?.contentEquals(signed.contents) == true
+    }
+    if (candidate.size != 1) {
+      Log.w("FileShareDSC", "Signature ${index + 1}: expected exactly one matching signature widget field, found ${candidate.size}")
+      return@forEachIndexed
+    }
+    val field = candidate.single()
+    if (field.widgets.any { widget ->
+        widget.rectangle?.let { it.width.isFinite() && it.height.isFinite() &&
+          it.width > 0f && it.height > 0f } == true
+      } && field !in selected) selected.add(field)
+  }
+  return selected
+}
+
+/** Replaces the annotation appearance only in a temporary unsigned document.
+ * It is later flattened for reliable rendering by Android's Jetpack PDF.
+ */
+internal fun applyDscPreviewAppearances(pdf: PDDocument, result: DscDocument): Int {
+  val selected = signaturePreviewFields(pdf, result)
   var changed = 0
   pdf.signatureDictionaries.forEachIndexed { index, signed ->
-    val sig = result.signatures.firstOrNull { it.id.startsWith(index.toString() + ":") }
+    val sig = result.signatures.firstOrNull { it.id.substringBefore(":").toIntOrNull() == index }
       ?: return@forEachIndexed
     val verdict = dscAppearanceVerdict(sig)
-    if(verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
-    val field = fields.firstOrNull { it.signature?.cosObject === signed.cosObject }
-      ?: return@forEachIndexed
-    for(widget in field.widgets){
-      val rect=widget.rectangle ?: continue
-      if(rect.width<=0f||rect.height<=0f||
-          !rect.width.isFinite()||!rect.height.isFinite())continue
-      drawViewerSignature(pdf,widget,sig,verdict,
-        signed.name.orEmpty(),signed.reason.orEmpty(),signed.location.orEmpty())
+    if (verdict == DscAppearanceVerdict.UNKNOWN) return@forEachIndexed
+    val field = selected.singleOrNull { candidate ->
+      val value = candidate.signature ?: return@singleOrNull false
+      value.byteRange?.contentEquals(signed.byteRange) == true &&
+        value.contents?.contentEquals(signed.contents) == true
+    } ?: return@forEachIndexed
+    for (widget in field.widgets) {
+      val rect = widget.rectangle ?: continue
+      if (rect.width <= 0f || rect.height <= 0f ||
+          !rect.width.isFinite() || !rect.height.isFinite()) continue
+      drawViewerSignature(pdf, widget, sig, verdict,
+        signed.name.orEmpty(), signed.reason.orEmpty(), signed.location.orEmpty())
       changed++
     }
   }
