@@ -87,19 +87,32 @@ internal fun replaceDscNamedStatusLayers(
     val side = minOf(box.width, box.height)
     val x = box.lowerLeftX + (box.width-side)*.5f
     val y = box.lowerLeftY + (box.height-side)*.5f
-    stream.setStrokingColor(ink[0], ink[1], ink[2])
-    stream.setLineWidth((side*.085f).coerceAtLeast(.25f))
-    if (checked) {
-      stream.moveTo(x+side*.17f,y+side*.53f)
-      stream.lineTo(x+side*.40f,y+side*.30f)
-      stream.lineTo(x+side*.84f,y+side*.77f)
-    } else {
-      stream.moveTo(x+side*.20f,y+side*.20f)
-      stream.lineTo(x+side*.80f,y+side*.80f)
-      stream.moveTo(x+side*.20f,y+side*.80f)
-      stream.lineTo(x+side*.80f,y+side*.20f)
+    // Reference look: a bold emerald check with a narrow dark edge,
+    // not a thin line or a second icon pasted over the existing '?'.
+    // Both passes paint into the *replacement n1/n3 status XObject*.
+    fun traceMark() {
+      if (checked) {
+        stream.moveTo(x+side*.13f,y+side*.50f)
+        stream.lineTo(x+side*.39f,y+side*.24f)
+        stream.lineTo(x+side*.88f,y+side*.82f)
+      } else {
+        stream.moveTo(x+side*.19f,y+side*.19f)
+        stream.lineTo(x+side*.81f,y+side*.81f)
+        stream.moveTo(x+side*.19f,y+side*.81f)
+        stream.lineTo(x+side*.81f,y+side*.19f)
+      }
+      stream.stroke()
     }
-    stream.stroke()
+    val stroke=(side*.115f).coerceAtLeast(.25f)
+    stream.setLineCapStyle(1)
+    stream.setLineJoinStyle(1)
+    stream.setStrokingColor(19, 27, 22)
+    stream.setLineWidth(stroke+side*.039f)
+    traceMark()
+    stream.setStrokingColor(23, 166, 69)
+    if (!checked) stream.setStrokingColor(196, 43, 42)
+    stream.setLineWidth(stroke)
+    traceMark()
   }
   val blank = layer(blankLayer) { _, _ -> }
   // Write a standard PDF Type1 Helvetica font resource directly. Android
@@ -109,15 +122,15 @@ internal fun replaceDscNamedStatusLayers(
   val caption = layer("n4") { _, _ -> }
   val box = caption.bBox
   val label = when (verdict) {
-    DscAppearanceVerdict.VALID -> "Signature Valid"
-    DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Integrity Verified*"
+    DscAppearanceVerdict.VALID -> "Signature valid"
+    DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Integrity verified*"
     DscAppearanceVerdict.INVALID -> "Signature Invalid"
     DscAppearanceVerdict.UNKNOWN -> "Not Verified"
   }
   val font = COSDictionary().apply {
     setName(COSName.TYPE, "Font")
     setName(COSName.SUBTYPE, "Type1")
-    setName(COSName.BASE_FONT, "Helvetica-Bold")
+    setName(COSName.BASE_FONT, "Helvetica")
     setName(COSName.ENCODING, "WinAnsiEncoding")
   }
   val fonts = COSDictionary().apply {
@@ -131,7 +144,8 @@ internal fun replaceDscNamedStatusLayers(
   val x = box.lowerLeftX + box.width*.03f
   val y = box.lowerLeftY + (box.height-size*.72f)*.5f
   fun n(v: Float) = String.format(java.util.Locale.US, "%.3f", v)
-  val pdfOps = "q ${n(ink[0]/255f)} ${n(ink[1]/255f)} ${n(ink[2]/255f)} rg " +
+  // Keep the reference title dark, not green; the check itself carries color.
+  val pdfOps = "q 0.10 0.10 0.12 rg " +
     "BT /FS ${n(size)} Tf 1 0 0 1 ${n(x)} ${n(y)} Tm ($label) Tj ET Q\\n"
   caption.cosObject.createOutputStream().use {
     it.write(pdfOps.toByteArray(Charsets.US_ASCII))
