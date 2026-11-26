@@ -23,7 +23,7 @@ class DscNamedStatusLayersTest {
     PDDocument().use { pdf ->
       pdf.addPage(PDPage())
       pdf.protect(StandardProtectionPolicy(
-        "owner-test-secret", "user-test-secret", AccessPermission(), 128))
+        "owner-test-secret", "user-test-secret", AccessPermission()))
       pdf.save(original)
     }
     PDDocument.load(original.toByteArray(),"user-test-secret").use { source ->
