@@ -2,6 +2,10 @@ package com.sammyi57.pdftools
 
 import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
+import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
+import java.io.ByteArrayOutputStream
 import com.tom_roush.pdfbox.pdmodel.PDResources
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary
@@ -14,6 +18,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DscNamedStatusLayersTest {
+  @Test fun encryptedOriginalCanProducePasswordFreeUnsignedViewerCopy() {
+    val original=ByteArrayOutputStream()
+    PDDocument().use { pdf ->
+      pdf.addPage(PDPage())
+      pdf.protect(StandardProtectionPolicy(
+        "owner-test-secret", "user-test-secret", AccessPermission(), 128))
+      pdf.save(original)
+    }
+    PDDocument.load(original.toByteArray(),"user-test-secret").use { source ->
+      assertTrue(source.isEncrypted)
+      source.setAllSecurityToBeRemoved(true)
+      val display=ByteArrayOutputStream()
+      source.save(display)
+      PDDocument.load(display.toByteArray()).use { preview ->
+        assertFalse(preview.isEncrypted)
+        assertTrue(preview.numberOfPages == 1)
+      }
+    }
+  }
+
   @Test fun statusLayerRewritePreservesRealBackgroundAndSignerStream() {
     PDDocument().use { document ->
       fun xobject(width: Float, height: Float) = PDAppearanceStream(document).apply {
