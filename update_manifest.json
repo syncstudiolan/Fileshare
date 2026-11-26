@@ -1,35 +1,35 @@
 {
   "android": {
-    "build": 647,
+    "build": 651,
     "notes": "Production signed Android ARM64 APK; approve OS installation.",
-    "sha256": "698751d457259e720baec868fb462be6125314fc2611a4a18b47055ff94fb8e2",
+    "sha256": "27593ad3dd83c0da0d524135c7fb1ea1dbfe0b61fb5d35e595527d4135c8abfb",
     "size": 117516290,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-647/FileShare-Android-ARM64-Release.apk",
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-651/FileShare-Android-ARM64-Release.apk",
     "version": "0.1.0"
   },
   "ios": {
-    "build": 625,
+    "build": 651,
     "notes": "Unsigned iOS IPA; sign externally with compatible original identity before installation.",
-    "sha256": "170385a198810208eab66ad88813de2b796299c14781a47f5684c4a1f430d3a6",
-    "size": 21190730,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-iOS-UNSIGNED.ipa",
+    "sha256": "62c842fa5544f9c3d41f2f71be49d33c4e880a6cd994cd92e2452970ae8af564",
+    "size": 21185228,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-651/FileShare-iOS-UNSIGNED.ipa",
     "version": "0.1.0"
   },
   "macos": {
-    "build": 625,
+    "build": 651,
     "notes": "Apple Silicon DMG; replace the app in Applications using Finder.",
-    "sha256": "cb27fd93803d091f08da23079e0837999d36d4a79f72ed6f7afc9cec51f9ead0",
-    "size": 55598606,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-macOS-AppleSilicon.dmg",
+    "sha256": "8b7c5da01c15d8ade252c52a4fb2d31af92fb5a4bf8fe307a6399f997acc04ce",
+    "size": 55671421,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-651/FileShare-macOS-AppleSilicon.dmg",
     "version": "0.1.0"
   },
   "schema": 1,
   "windows": {
-    "build": 625,
+    "build": 651,
     "notes": "Windows x64 Setup installer; approve UAC.",
-    "sha256": "430fccbe70f0004861b64056a2169ff7991a68c31e9aef10e4afad5757c9e1b3",
-    "size": 19179134,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-625/FileShare-Windows-Setup.exe",
+    "sha256": "02a1d6ff0d2e5aaceee8320dbed7b03cb0edf7a9aca696cecb099edce0d41c00",
+    "size": 19178391,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-651/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
