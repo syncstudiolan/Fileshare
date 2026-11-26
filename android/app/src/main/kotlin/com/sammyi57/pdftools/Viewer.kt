@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.material3.Text
@@ -321,11 +322,16 @@ fun PdfViewerScreen(path: String, name: String) {
       // with an alarming full-width banner or pretending a green tick exists.
       if(!dscBusy && !showOriginalSignature && signaturePreviewError != null) {
         Text(
-          "Appearance preview unavailable · View signature details",
-          color=c.ink,
+          // Keep the actual safe failed step visible rather than a generic
+          // dark-on-dark banner that hides the reason the '?' remains.
+          signaturePreviewError!!.substringBefore("The original PDF"),
+          color=Color.White,
+          maxLines=2,
+          overflow=TextOverflow.Ellipsis,
+          style=androidx.compose.material3.MaterialTheme.typography.labelSmall,
           modifier=Modifier.align(Alignment.TopCenter)
             .padding(horizontal=18.dp, vertical=8.dp)
-            .background(c.panel.copy(alpha=.94f), RoundedCornerShape(10.dp))
+            .background(Color(0xFF49345C), RoundedCornerShape(10.dp))
             .clickable {
               selectedSignature=null
               dscPanel=true
