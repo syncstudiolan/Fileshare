@@ -94,27 +94,32 @@ internal suspend fun prepareDscViewerAppearance(
     val output = File.createTempFile("preview-only-", ".pdf", folder)
     try {
       var changed = 0
+      var stage = "load original PDF"
       PDDocument.load(bytes, password.orEmpty()).use { pdf ->
         // The original e-Aadhaar is encrypted. Only this private, unsigned
         // viewer copy is opened without a password by SandboxedPdfLoader.
         // PDFBox otherwise persists the source encryption on save, so
         // loader.openDocument(preview, null) fails after validation succeeded.
         pdf.setAllSecurityToBeRemoved(true)
+        stage = "replace signed appearance status layers"
         changed = applyDscPreviewAppearances(pdf, result)
         if (changed > 0) {
           // Jetpack PDF does not consistently paint every widget /AP. Bake
           // the replacement into page content of this UNSIGNED preview only.
           // false = preserve the appearance we just authored, do not
           // regenerate the original '?' from the field value.
+          stage = "match signature fields for display flattening"
           val matched = signaturePreviewFields(pdf, result)
           check(matched.isNotEmpty()) {
             "No signature widget can be flattened into the preview"
           }
           // Flatten only verified widget APs into this disposable display
           // copy, not over the original signed bytes. No second overlay.
+          stage = "flatten replacement appearance into the unsigned viewer copy"
           pdf.documentCatalog.acroForm?.flatten(matched, false)
           pdf.documentInformation.setCustomMetadataValue(
             "FileSharePreviewOnly", "UNSIGNED_RENDER_COPY_NEVER_VERIFY")
+          stage = "save password-free viewer copy"
           pdf.save(output)
           Log.i("FileShareDSC", "Unsigned DSC display preview saved; appearance fields=$changed")
         }
@@ -125,11 +130,17 @@ internal suspend fun prepareDscViewerAppearance(
           "The original signed PDF and its cryptographic result are unchanged.")
       }
       require(output.length() in 1L..(64L*1024*1024)) { "Preview PDF too large" }
+      stage = "verify saved preview is password-free"
+      PDDocument.load(output).use { preview ->
+        require(!preview.isEncrypted) { "Preview is still encrypted" }
+        require(preview.numberOfPages > 0) { "Preview has no pages" }
+      }
       output
     } catch (e: Exception) {
       output.delete()
-      Log.w("FileShareDSC", "Unable to compose signature preview; show original PDF", e)
-      throw e
+      Log.e("FileShareDSC", "DSC preview failed at: $stage", e)
+      // Do not leak a signer, filename, PDF text, or password to the UI.
+      throw IllegalStateException("DSC viewer preview failed at: $stage", e)
     }
   }
 
