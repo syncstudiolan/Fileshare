@@ -82,37 +82,24 @@ internal fun replaceDscNamedStatusLayers(
   val iconLayer = if (checked) "n1" else "n3"
   val blankLayer = if (checked) "n3" else "n1"
   val icon = layer(iconLayer) { stream, box ->
-    // Lucide-style check/cross, centred *inside the original n1/n3 bbox*.
-    // Fixed 100-unit drawing coordinates would overflow UIDAI signatures.
     val side = minOf(box.width, box.height)
-    val x = box.lowerLeftX + (box.width-side)*.5f
-    val y = box.lowerLeftY + (box.height-side)*.5f
-    // Reference look: a bold emerald check with a narrow dark edge,
-    // not a thin line or a second icon pasted over the existing '?'.
-    // Both passes paint into the *replacement n1/n3 status XObject*.
-    fun traceMark() {
-      if (checked) {
-        stream.moveTo(x+side*.13f,y+side*.50f)
-        stream.lineTo(x+side*.39f,y+side*.24f)
-        stream.lineTo(x+side*.88f,y+side*.82f)
-      } else {
-        stream.moveTo(x+side*.19f,y+side*.19f)
-        stream.lineTo(x+side*.81f,y+side*.81f)
-        stream.moveTo(x+side*.19f,y+side*.81f)
-        stream.lineTo(x+side*.81f,y+side*.19f)
-      }
+    val x = box.lowerLeftX + (box.width - side) * .5f
+    val y = box.lowerLeftY + (box.height - side) * .5f
+    if (checked) {
+      // Replace the genuine n1 status XObject with tapered beveled artwork;
+      // never paste a second tick above the existing PDF question mark.
+      drawReferenceBeveledCheck(stream, x, y, side, side)
+    } else {
+      // Keep the current invalid appearance behavior; style change must not
+      // upgrade warnings, unknown or invalid signatures.
+      stream.setStrokingColor(196, 43, 42)
+      stream.setLineWidth((side * .115f).coerceAtLeast(.25f))
+      stream.moveTo(x+side*.19f,y+side*.19f)
+      stream.lineTo(x+side*.81f,y+side*.81f)
+      stream.moveTo(x+side*.19f,y+side*.81f)
+      stream.lineTo(x+side*.81f,y+side*.19f)
       stream.stroke()
     }
-    val stroke=(side*.115f).coerceAtLeast(.25f)
-    stream.setLineCapStyle(1)
-    stream.setLineJoinStyle(1)
-    stream.setStrokingColor(19, 27, 22)
-    stream.setLineWidth(stroke+side*.039f)
-    traceMark()
-    stream.setStrokingColor(23, 166, 69)
-    if (!checked) stream.setStrokingColor(196, 43, 42)
-    stream.setLineWidth(stroke)
-    traceMark()
   }
   val blank = layer(blankLayer) { _, _ -> }
   // Write a standard PDF Type1 Helvetica font resource directly. Android
@@ -130,7 +117,7 @@ internal fun replaceDscNamedStatusLayers(
   val font = COSDictionary().apply {
     setName(COSName.TYPE, "Font")
     setName(COSName.SUBTYPE, "Type1")
-    setName(COSName.BASE_FONT, "Helvetica")
+    setName(COSName.BASE_FONT, "Helvetica-Bold")
     setName(COSName.ENCODING, "WinAnsiEncoding")
   }
   val fonts = COSDictionary().apply {
@@ -138,7 +125,7 @@ internal fun replaceDscNamedStatusLayers(
   }
   caption.resources.cosObject.setItem(COSName.FONT, fonts)
   val estimatedWidth = label.length * .60f
-  val size = minOf(box.height*.62f, box.width*.94f/estimatedWidth)
+  val size = minOf(box.height*.82f, box.width*.94f/estimatedWidth)
     .coerceAtLeast(.25f)
   // Inputs are fixed ASCII verdicts; no untrusted PDF strings enter operators.
   val x = box.lowerLeftX + box.width*.03f
