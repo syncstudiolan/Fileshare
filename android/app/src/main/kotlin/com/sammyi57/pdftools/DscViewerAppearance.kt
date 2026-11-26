@@ -92,9 +92,9 @@ internal suspend fun prepareDscViewerAppearance(
     }
     val folder = File(appContext.cacheDir, "pdf_signature_previews").apply { mkdirs() }
     val output = File.createTempFile("preview-only-", ".pdf", folder)
+    var stage = "load original PDF"
     try {
       var changed = 0
-      var stage = "load original PDF"
       PDDocument.load(bytes, password.orEmpty()).use { pdf ->
         // The original e-Aadhaar is encrypted. Only this private, unsigned
         // viewer copy is opened without a password by SandboxedPdfLoader.
