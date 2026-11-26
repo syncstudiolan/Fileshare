@@ -274,36 +274,23 @@ private fun drawViewerSignature(
     val green = verdict == DscAppearanceVerdict.VALID || verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
     val title = if(verdict == DscAppearanceVerdict.VALID)
       "Signature valid" else dscAppearanceLabel(verdict)
-    // Same emerald-green, dark-edged check silhouette as the provided
-    // reference. This is only an /AP rendering style; the verdict and
-    // original signature data are untouched.
-    val markW = width * .31f
-    val markH = height * .46f
-    val x = width * .53f
-    val y = height * .15f
-    fun traceMark() {
-      if (green) {
-        stream.moveTo(x, y + markH*.51f)
-        stream.lineTo(x + markW*.37f, y)
-        stream.lineTo(x + markW, y + markH)
-      } else {
-        stream.moveTo(x, y)
-        stream.lineTo(x+markW, y+markH)
-        stream.moveTo(x, y+markH)
-        stream.lineTo(x+markW, y)
-      }
+    // Reference silhouette: solid, 3D-like tapered check, rather than a
+    // uniform stroke. Draw into this widget's temporary replacement /AP.
+    val markW = width * .34f
+    val markH = height * .52f
+    val x = width * .48f
+    val y = height * .14f
+    if (green) {
+      drawReferenceBeveledCheck(stream, x, y, markW, markH)
+    } else {
+      stream.setStrokingColor(191,40,40)
+      stream.setLineWidth((minOf(width,height)*.065f).coerceIn(1.2f,8f))
+      stream.moveTo(x,y)
+      stream.lineTo(x+markW,y+markH)
+      stream.moveTo(x,y+markH)
+      stream.lineTo(x+markW,y)
       stream.stroke()
     }
-    val stroke = (minOf(width,height)*.065f).coerceIn(1.2f,8f)
-    stream.setLineCapStyle(1)
-    stream.setLineJoinStyle(1)
-    stream.setStrokingColor(19,27,22)
-    stream.setLineWidth(stroke + minOf(width,height)*.020f)
-    traceMark()
-    stream.setStrokingColor(if(green)23 else 196,
-      if(green)166 else 43,if(green)69 else 42)
-    stream.setLineWidth(stroke)
-    traceMark()
 
     // PDF appearance text is NOT substituted with a made-up signer or date.
     // Read actual signature properties, with certificate name as fallback.
@@ -311,7 +298,11 @@ private fun drawViewerSignature(
       sig.certificate?.let(DscCertificates::displayName).orEmpty()
         .ifBlank { sig.name }
     }
+    // Appearance is intentionally compact: title, genuine signer and date
+    // only. The full warning/revocation/reason remains in Signature Properties,
+    // and the cryptographic verdict logic stays completely unchanged.
     val facts = dscAppearanceFacts(sig, signer, originalReason, originalLocation, verdict)
+      .filter { it.startsWith("Digitally signed by ") || it.startsWith("Date: ") }
     fun line(text: String, baseline: Float, fontSize: Float, bold: Boolean = false) {
       // Built-in Helvetica has WinAnsi coverage only. Do not invent glyphs:
       // skip unsupported code points rather than crash the viewer.
@@ -331,14 +322,34 @@ private fun drawViewerSignature(
     }
     // Content-aware layout rather than the PAN-card template dimensions.
     // Keep the full source-derived signature identity before optional details.
-    val titleSize = (height * .14f).coerceIn(5f, 19f)
-    line(title, height*.84f, titleSize, true)
-    val availableHeight = (height*.56f).coerceAtLeast(0f)
-    val targetLineSize = (height*.095f).coerceIn(4f, 12f)
-    val perLine = targetLineSize*1.24f
-    val lines = minOf(facts.size, (availableHeight / perLine).toInt().coerceAtLeast(0))
-    facts.take(lines).forEachIndexed { index, fact ->
-      line(fact, height*.66f-index*perLine, targetLineSize)
+    val titleSize = (height * .18f).coerceIn(6f, 22f)
+    line(title, height*.81f, titleSize, true)
+    val factSize = (height*.100f).coerceIn(4f, 12f)
+    val leading = factSize * 1.18f
+    var baseline = height*.61f
+    for (fact in facts) {
+      // Never invent certificate names or signing dates. Wrap actual signer
+      // text on available space rather than shrinking to an unreadable point.
+      val wrapped = if(fact.startsWith("Digitally signed by ")) {
+        val words=fact.split(" ")
+        val segments=mutableListOf<String>()
+        var current=""
+        val maxChars=(width/(factSize*.52f)).toInt().coerceIn(12,64)
+        for(word in words) {
+          val candidate=if(current.isEmpty())word else "$current $word"
+          if(candidate.length>maxChars && current.isNotEmpty()) {
+            segments.add(current)
+            current=word
+          } else current=candidate
+        }
+        if(current.isNotEmpty())segments.add(current)
+        segments
+      } else listOf(fact)
+      for (part in wrapped) {
+        if(baseline < height*.07f)break
+        line(part, baseline, factSize)
+        baseline -= leading
+      }
     }
     // The renderer itself—not a second Compose overlay—now owns the status.
   }
