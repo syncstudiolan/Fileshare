@@ -272,26 +272,38 @@ private fun drawViewerSignature(
   // art and its original colored background remain as drawn in the PDF.
   PDPageContentStream(document, appearance).use { stream ->
     val green = verdict == DscAppearanceVerdict.VALID || verdict == DscAppearanceVerdict.VERIFIED_WITH_WARNINGS
-    val accent = if (green) intArrayOf(0, 135, 74) else intArrayOf(191, 40, 40)
-    val title = dscAppearanceLabel(verdict)
-    // The mark sits BELOW the heading, not through it.
-    val markW = width * .26f
-    val markH = height * .28f
-    val x = width * .55f
-    val y = height * .14f
-    stream.setStrokingColor(accent[0], accent[1], accent[2])
-    stream.setLineWidth((minOf(width,height) * .035f).coerceIn(1.1f, 5f))
-    if (green) {
-      stream.moveTo(x, y + markH*.44f)
-      stream.lineTo(x + markW*.36f, y)
-      stream.lineTo(x + markW, y + markH)
-    } else {
-      stream.moveTo(x, y)
-      stream.lineTo(x+markW, y+markH)
-      stream.moveTo(x, y+markH)
-      stream.lineTo(x+markW, y)
+    val title = if(verdict == DscAppearanceVerdict.VALID)
+      "Signature valid" else dscAppearanceLabel(verdict)
+    // Same emerald-green, dark-edged check silhouette as the provided
+    // reference. This is only an /AP rendering style; the verdict and
+    // original signature data are untouched.
+    val markW = width * .31f
+    val markH = height * .46f
+    val x = width * .53f
+    val y = height * .15f
+    fun traceMark() {
+      if (green) {
+        stream.moveTo(x, y + markH*.51f)
+        stream.lineTo(x + markW*.37f, y)
+        stream.lineTo(x + markW, y + markH)
+      } else {
+        stream.moveTo(x, y)
+        stream.lineTo(x+markW, y+markH)
+        stream.moveTo(x, y+markH)
+        stream.lineTo(x+markW, y)
+      }
+      stream.stroke()
     }
-    stream.stroke()
+    val stroke = (minOf(width,height)*.065f).coerceIn(1.2f,8f)
+    stream.setLineCapStyle(1)
+    stream.setLineJoinStyle(1)
+    stream.setStrokingColor(19,27,22)
+    stream.setLineWidth(stroke + minOf(width,height)*.020f)
+    traceMark()
+    stream.setStrokingColor(if(green)23 else 196,
+      if(green)166 else 43,if(green)69 else 42)
+    stream.setLineWidth(stroke)
+    traceMark()
 
     // PDF appearance text is NOT substituted with a made-up signer or date.
     // Read actual signature properties, with certificate name as fallback.
