@@ -95,6 +95,11 @@ internal suspend fun prepareDscViewerAppearance(
     try {
       var changed = 0
       PDDocument.load(bytes, password.orEmpty()).use { pdf ->
+        // The original e-Aadhaar is encrypted. Only this private, unsigned
+        // viewer copy is opened without a password by SandboxedPdfLoader.
+        // PDFBox otherwise persists the source encryption on save, so
+        // loader.openDocument(preview, null) fails after validation succeeded.
+        pdf.setAllSecurityToBeRemoved(true)
         changed = applyDscPreviewAppearances(pdf, result)
         if (changed > 0) {
           // Jetpack PDF does not consistently paint every widget /AP. Bake
@@ -105,10 +110,13 @@ internal suspend fun prepareDscViewerAppearance(
           check(matched.isNotEmpty()) {
             "No signature widget can be flattened into the preview"
           }
+          // Flatten only verified widget APs into this disposable display
+          // copy, not over the original signed bytes. No second overlay.
           pdf.documentCatalog.acroForm?.flatten(matched, false)
           pdf.documentInformation.setCustomMetadataValue(
             "FileSharePreviewOnly", "UNSIGNED_RENDER_COPY_NEVER_VERIFY")
           pdf.save(output)
+          Log.i("FileShareDSC", "Unsigned DSC display preview saved; appearance fields=$changed")
         }
       }
       if (changed == 0) {
