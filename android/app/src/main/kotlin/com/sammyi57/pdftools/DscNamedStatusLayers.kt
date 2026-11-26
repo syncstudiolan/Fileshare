@@ -1,11 +1,11 @@
 package com.sammyi57.pdftools
 
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.cos.COSDictionary
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.PDResources
-import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget
@@ -102,23 +102,39 @@ internal fun replaceDscNamedStatusLayers(
     stream.stroke()
   }
   val blank = layer(blankLayer) { _, _ -> }
-  val caption = layer("n4") { stream, box ->
-    val label = when (verdict) {
-      DscAppearanceVerdict.VALID -> "Signature Valid"
-      DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Integrity Verified*"
-      DscAppearanceVerdict.INVALID -> "Signature Invalid"
-      DscAppearanceVerdict.UNKNOWN -> "Not Verified"
-    }
-    val width = (box.width*.94f).coerceAtLeast(1f)
-    val measured = PDType1Font.HELVETICA_BOLD.getStringWidth(label)/1000f
-    val size = minOf(box.height*.62f, width/measured).coerceAtLeast(.25f)
-    stream.setNonStrokingColor(ink[0], ink[1], ink[2])
-    stream.beginText()
-    stream.setFont(PDType1Font.HELVETICA_BOLD, size)
-    stream.newLineAtOffset(box.lowerLeftX+box.width*.03f,
-      box.lowerLeftY+(box.height-size*.72f)*.5f)
-    stream.showText(label)
-    stream.endText()
+  // Write a standard PDF Type1 Helvetica font resource directly. Android
+  // PdfBox's PDType1Font static initializer loads AFM resources through an
+  // Android Context, which crashes plain JVM unit tests. Helvetica is a PDF
+  // Standard 14 font and needs no embedded binary or Android resource loader.
+  val caption = layer("n4") { _, _ -> }
+  val box = caption.bBox
+  val label = when (verdict) {
+    DscAppearanceVerdict.VALID -> "Signature Valid"
+    DscAppearanceVerdict.VERIFIED_WITH_WARNINGS -> "Integrity Verified*"
+    DscAppearanceVerdict.INVALID -> "Signature Invalid"
+    DscAppearanceVerdict.UNKNOWN -> "Not Verified"
+  }
+  val font = COSDictionary().apply {
+    setName(COSName.TYPE, "Font")
+    setName(COSName.SUBTYPE, "Type1")
+    setName(COSName.BASE_FONT, "Helvetica-Bold")
+    setName(COSName.ENCODING, "WinAnsiEncoding")
+  }
+  val fonts = COSDictionary().apply {
+    setItem(COSName.getPDFName("FS"), font)
+  }
+  caption.resources.cosObject.setItem(COSName.FONT, fonts)
+  val estimatedWidth = label.length * .60f
+  val size = minOf(box.height*.62f, box.width*.94f/estimatedWidth)
+    .coerceAtLeast(.25f)
+  // Inputs are fixed ASCII verdicts; no untrusted PDF strings enter operators.
+  val x = box.lowerLeftX + box.width*.03f
+  val y = box.lowerLeftY + (box.height-size*.72f)*.5f
+  fun n(v: Float) = String.format(java.util.Locale.US, "%.3f", v)
+  val pdfOps = "q ${n(ink[0]/255f)} ${n(ink[1]/255f)} ${n(ink[2]/255f)} rg " +
+    "BT /FS ${n(size)} Tf 1 0 0 1 ${n(x)} ${n(y)} Tm ($label) Tj ET Q\\n"
+  caption.cosObject.createOutputStream().use {
+    it.write(pdfOps.toByteArray(Charsets.US_ASCII))
   }
   // Only rewrite an isolated, uniquely matched signature widget's resources.
   // Real verification is performed on unmodified bytes by DscVerifier.
