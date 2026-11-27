@@ -1,0 +1,59 @@
+name: file_share
+description: Native-feeling cross-platform LAN and personal QR file sharing.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^13.3.3
+  archive: ^4.7.1
+  xml: ^7.0.1
+  flutter_inappwebview: ^6.1.5
+  image_picker: ^1.2.1
+  camera: ^0.12.2
+  camera_windows: ^0.3.1
+  path_provider: ^2.1.5
+  share_plus: ^13.3.1
+  open_filex: ^5.0.0
+  flutter_secure_storage: ^11.2.0
+  qr_flutter: ^4.1.0
+  printing: ^5.15.1
+  pdf: ^3.11.3
+  shared_preferences: ^2.5.6
+  window_manager: ^0.5.1
+  tray_manager: ^0.5.2
+  local_notifier: ^0.1.6
+  http: ^1.4.0
+  http_parser: ^4.1.1
+  image: ^4.13.1
+  google_mlkit_selfie_segmentation: ^0.12.1
+  flutter_onnxruntime: ^1.9.0
+  crypto: ^3.0.6
+  nsd: ^5.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  shared_preferences_platform_interface: ^2.4.2
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/branding/
+    - assets/gander/jszip3.min.js
+    - assets/gander/docx-preview.min.js
+    - assets/gander/marked.umd.js
+    - assets/gander/purify.min.js
+    - assets/gander/xlsx.full.min.js
+    - assets/gander/pptx/
+    - assets/gander/docx/
+    - assets/gander/epub/
+    - assets/gander/prose/
+    - cloudflare/worker.js
+    - cloudflare/schema.sql
+    - cloudflare/public/guest.html

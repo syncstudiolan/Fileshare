@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Private File Transfer</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#282039;background:#f4e7f6}
+*{box-sizing:border-box}body{margin:0;min-height:100dvh;background:linear-gradient(150deg,#f1d8ef,#e4e2ff,#fff1f8);display:grid;place-items:center;padding:24px}
+main{width:min(100%,460px);padding:28px 24px;border-radius:28px;background:#fffdfbe9;box-shadow:0 16px 52px #74529a32;border:1px solid #ffffffba}
+.logo{width:64px;height:64px;display:grid;place-items:center;border-radius:22px;color:#fff;font-size:32px;background:linear-gradient(130deg,#f05c9f,#8261d7);margin:auto}
+h1{font-size:25px;letter-spacing:-.7px;text-align:center;margin:20px 0 6px}
+.small{text-align:center;color:#756986;font-size:13px;line-height:1.55}
+.file-label{display:grid;gap:10px;place-items:center;margin:23px 0 13px;border:2px dashed #dfb7e4;padding:27px 15px;border-radius:22px;cursor:pointer;background:#fbf5ff;font-weight:700;text-align:center}
+.file-label small{font-size:12px;color:#8a718e;font-weight:400}
+input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
+progress{width:100%;height:12px;accent-color:#a65ace;border:0}
+#files{max-height:130px;overflow:auto;font-size:12px;color:#715c7c}
+#files div{padding:4px 2px;border-bottom:1px solid #e7dced;overflow-wrap:anywhere}
+#status{font-size:13px;min-height:34px;margin-top:10px;color:#80538d}
+button{border:0;width:100%;height:49px;border-radius:17px;font-weight:750;background:linear-gradient(105deg,#ef559a,#8d5fd7);color:white;cursor:pointer}
+button:disabled{opacity:.43;cursor:not-allowed}
+.note{margin:16px 0 0;font-size:11px;line-height:1.5;text-align:center;color:#81748a}
+@media(prefers-color-scheme:dark){:root{color:#f8efff;background:#17152a}body{background:linear-gradient(145deg,#19162a,#352044,#272139)}main{background:#2e2645;border-color:#473353;box-shadow:0 16px 52px #0005}.small,.note{color:#c1b2d2}.file-label{background:#3b3054;border-color:#865eaa}#files{color:#e6cbee}#files div{border-color:#48385c}#status{color:#e8b3ea}}
+</style>
+</head>
+<body>
+<main>
+<div class="logo" aria-hidden="true">⇧</div>
+<h1>Private File Transfer</h1>
+<p class="small">Choose files to send directly to the QR owner. No login or app needed.</p>
+<label class="file-label" for="picker">
+<span style="font-size:28px" aria-hidden="true">＋</span>
+Choose files
+<small>Up to 200 MB in 4 sessions per guest until midnight IST</small>
+</label>
+<input type="file" id="picker" multiple aria-label="Choose files">
+<div id="files" aria-live="polite"></div>
+<progress id="progress" value="0" max="100" aria-label="Upload progress"></progress>
+<div id="status" role="status">No files selected.</div>
+<button id="confirm" disabled>Upload (complete selection first)</button>
+<p class="note">Files selected here begin uploading automatically. The button unlocks only after every file is uploaded successfully. All temporary cloud files expire at midnight IST.</p>
+</main>
+<script>
+'use strict';
+const MAX = 200 * 1024 * 1024;
+const PART = 6 * 1024 * 1024;
+const select = document.getElementById('picker');
+const progress = document.getElementById('progress');
+const status = document.getElementById('status');
+const list = document.getElementById('files');
+const confirm = document.getElementById('confirm');
+const qr = location.pathname.split('/').filter(Boolean).pop();
+let busy = false, finished = false;
+
+function info(message){ status.textContent = message; }
+function displayFiles(files) {
+  list.replaceChildren();
+  files.slice(0,8).forEach(f=>{
+    const div=document.createElement('div');
+    div.textContent=f.name+' · '+(f.size/1024/1024).toFixed(2)+' MB';
+    list.appendChild(div);
+  });
+  if(files.length>8){
+    const div=document.createElement('div');
+    div.textContent='… and '+(files.length-8)+' more';
+    list.appendChild(div);
+  }
+}
+async function asJson(response) {
+  let result;
+  try { result=await response.json(); } catch(_){ throw new Error('Unexpected server response'); }
+  if(!response.ok || !result.ok) throw new Error(result.error || 'Request failed');
+  return result;
+}
+function xhrUpload(url, blob, onProgress) {
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open('PUT',url);
+    xhr.setRequestHeader('content-type','application/octet-stream');
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)onProgress(e.loaded);};
+    xhr.onload=()=>{try {
+      const body=JSON.parse(xhr.responseText);
+      if(xhr.status>=200 && xhr.status<300 && body.ok)resolve(body);
+      else reject(new Error(body.error || 'Upload rejected'));
+    } catch(e){reject(e);}
+    };
+    xhr.onerror=()=>reject(new Error('Network disconnected'));
+    xhr.send(blob);
+  });
+}
+async function pool(count, limit, operation) {
+  let cursor=0;
+  await Promise.all(Array.from({length:Math.min(count,limit)},async()=>{
+    while(cursor<count)await operation(cursor++);
+  }));
+}
+select.addEventListener('change',async()=>{
+  if(busy) return;
+  const chosen=Array.from(select.files || []);
+  if(!chosen.length)return;
+  const total=chosen.reduce((sum,f)=>sum+f.size,0);
+  if(total>MAX){info('Selected files exceed 200 MB.');return;}
+  busy=true;finished=false;select.disabled=true;confirm.disabled=true;
+  confirm.textContent='Uploading…';
+  displayFiles(chosen);
+  const sent=chosen.map(()=>0);
+  const update=(i,bytes)=>{
+    sent[i]=bytes;
+    const complete=sent.reduce((s,n)=>s+n,0);
+    progress.value=total?Math.min(100,complete/total*100):0;
+    info('Uploading · '+progress.value.toFixed(1)+'%');
+  };
+  try {
+    const session=await asJson(await fetch('/v1/guest/session',{
+      method:'POST',headers:{'content-type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({qr,files:chosen.map(f=>({name:f.name,size:f.size}))})
+    }));
+    await pool(chosen.length,3,async(i)=>{
+      const file=chosen[i],target=session.files[i];
+      const uri='/v1/guest/file/'+session.session+'/'+target.id;
+      if(file.size<=PART){
+        await xhrUpload(uri,file,loaded=>update(i,loaded));
+        update(i,file.size);
+        return;
+      }
+      await asJson(await fetch(uri+'/start',{method:'POST',credentials:'same-origin'}));
+      const pieces=Math.ceil(file.size/PART);
+      const chunkProgress=new Array(pieces).fill(0);
+      await pool(pieces,3,async(p)=>{
+        const chunk=file.slice(p*PART,Math.min((p+1)*PART,file.size));
+        await xhrUpload(uri+'/part/'+(p+1),chunk,loaded=>{
+          chunkProgress[p]=loaded;
+          update(i,chunkProgress.reduce((sum,n)=>sum+n,0));
+        });
+        chunkProgress[p]=chunk.size;
+        update(i,chunkProgress.reduce((sum,n)=>sum+n,0));
+      });
+      await asJson(await fetch(uri+'/complete',{
+        method:'POST',credentials:'same-origin'}));
+      update(i,file.size);
+    });
+    await asJson(await fetch('/v1/guest/finish/'+session.session,{
+      method:'POST',credentials:'same-origin'}));
+    progress.value=100;finished=true;
+    info('Upload complete. Files are available in the owner inbox.');
+    confirm.disabled=false;
+    confirm.textContent='Upload complete · Confirm';
+  }catch(e){
+    info('Upload failed: '+e.message+'. Reload this page to try again.');
+    confirm.disabled=true;
+    confirm.textContent='Upload incomplete';
+  }finally{busy=false;}
+});
+confirm.addEventListener('click',()=>{
+  if(!finished)return;
+  info('Success! The files were already uploaded; nothing is sent twice.');
+  confirm.disabled=true;
+  confirm.textContent='Done ✓';
+});
+</script>
+</body>
+</html>

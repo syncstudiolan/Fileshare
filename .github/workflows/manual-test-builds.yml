@@ -1,0 +1,64 @@
+name: Manual Android and Windows test builds
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android debug APK and Flutter tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Generate native Android runner
+        run: flutter create --project-name file_share --platforms=android .
+      - name: Install Flutter dependencies
+        run: flutter pub get
+      - name: Check Cloudflare Worker JavaScript syntax
+        run: node --input-type=module --check < cloudflare/worker.js
+      - name: Flutter static analysis
+        run: flutter analyze
+      - name: Flutter widget tests
+        run: flutter test
+      - name: Build Android debug APK
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-android-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+  windows:
+    name: Windows desktop debug and Flutter tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+      - name: Generate native Windows runner
+        run: flutter create --project-name file_share --platforms=windows .
+      - name: Install Flutter dependencies
+        run: flutter pub get
+      - name: Flutter static analysis
+        run: flutter analyze
+      - name: Flutter widget tests
+        run: flutter test
+      - name: Build Windows debug EXE bundle
+        run: flutter build windows --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-share-windows-debug-bundle
+          path: build/windows/x64/runner/Debug/**
+          if-no-files-found: error

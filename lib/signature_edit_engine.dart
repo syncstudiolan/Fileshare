@@ -1,0 +1,388 @@
+import 'dart:typed_data';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
+
+/// Normalized signature crop. The source file is never overwritten.
+class SignatureCrop {
+  const SignatureCrop(this.left,this.top,this.right,this.bottom,{this.quad});
+  final double left,top,right,bottom;
+  /// TL, TR, BR, BL coordinates for perspective rectification.
+  final List<double>? quad;
+  static const full=SignatureCrop(0,0,1,1);
+}
+
+/// Only the requested signature operations, without Image Editor's
+/// background-removal and unrelated photo tools.
+class SignatureEditEngine {
+  static Future<Uint8List> preview(Uint8List original,SignatureCrop crop,
+    String filter,{double intensity=1}) => compute(_signatureTransform, {
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':filter,'preview':true,'quad':crop.quad,
+      'intensity':intensity,
+    });
+
+  static Future<Uint8List> exactJpeg(Uint8List original,SignatureCrop crop,
+    String filter,int kilobytes,{double intensity=1}) {
+    if(kilobytes<5||kilobytes>10240) {
+      throw ArgumentError('Target must be between 5 and 10,240 KB');
+    }
+    return compute(_signatureTransform,{
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':filter,'preview':false,'target':kilobytes*1024,
+      'quad':crop.quad,'intensity':intensity,
+    });
+  }
+
+  /// Rotate the actual source pixels on an isolate. This is not merely a
+  /// visual transform: future crop, exact-size output, Save and Cart receive
+  /// the rotated image. The current document is preserved if encoding fails.
+  /// Full-resolution working image for tool-to-tool transfers (no 20 KB
+  /// preview downgrade and no artificial exact-size padding).
+  static Future<Uint8List> workingPng(Uint8List original,
+    SignatureCrop crop,String filter,{double intensity=1})=>
+    compute(_signatureTransform,{
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':filter,'quad':crop.quad,'intensity':intensity,
+      'workingPng':true,
+    });
+
+  static Future<Uint8List> rotate(Uint8List original,double degrees)=>
+    compute(_rotateSignature,{'bytes':original,'degrees':degrees});
+
+  /// Commit the crop at source resolution, not from the small preview.
+  /// Subsequent edits work on this saved cropped source and the handles reset.
+  static Future<Uint8List> applyCrop(Uint8List original,SignatureCrop crop)=>
+    compute(_signatureTransform,{
+      'bytes':original,'crop':[crop.left,crop.top,crop.right,crop.bottom],
+      'filter':'Original','cropOnly':true,'quad':crop.quad,
+    });
+
+  /// Create every filter thumbnail from one tiny source in a single worker.
+  /// No full-size image decode or per-card ONNX/image operations during build.
+  static Future<Map<String,Uint8List>> thumbnails(Uint8List bytes,
+      List<String> filters)=>compute(_buildSignatureThumbnails,{
+        'bytes':bytes,'filters':filters,
+      });
+
+  /// JPEG comments are standards-compliant and do not alter image pixels.
+  /// This guarantees exactly N * 1024 bytes IF the actual compressed signature
+  /// can fit in that target. Otherwise we throw; never silently make 19/21 KB.
+  @visibleForTesting
+  static Uint8List padJpegToExactSize(Uint8List jpeg,int target) {
+    if(jpeg.length>target) {
+      throw StateError('Image cannot fit into the requested target');
+    }
+    if(jpeg.length<4 || jpeg[0]!=0xff || jpeg[1]!=0xd8 ||
+      jpeg[jpeg.length-2]!=0xff || jpeg.last!=0xd9) {
+      throw FormatException('Expected an intact JPEG');
+    }
+    final remaining=target-jpeg.length;
+    if(remaining==0)return jpeg;
+    if(remaining<4) {
+      throw StateError('Not enough room for a valid JPEG comment segment');
+    }
+    final output=BytesBuilder(copy:false)..add(jpeg.sublist(0,2));
+    var left=remaining;
+    while(left>0) {
+      // 4 bytes for marker and length; max 65533 bytes of payload.
+      // Avoid leaving a final remainder of 1..3 bytes.
+      var chunk=math.min(left,65537);
+      if(left-chunk>0 && left-chunk<4) chunk=left-4;
+      if(chunk<4)throw StateError('Invalid JPEG padding segment');
+      final payload=chunk-4;
+      final length=payload+2;
+      output.add([0xff,0xfe,(length>>8)&255,length&255]);
+      output.add(Uint8List(payload));
+      left-=chunk;
+    }
+    output.add(jpeg.sublist(2));
+    final bytes=output.takeBytes();
+    if(bytes.length!=target)throw StateError('Exact target encoding failed');
+    return bytes;
+  }
+}
+
+Uint8List _rotateSignature(Map<String,Object?> request){
+  final original=img.decodeImage(request['bytes'] as Uint8List);
+  if(original==null)throw const FormatException('Unsupported signature image');
+  final degrees=(request['degrees'] as num).toDouble();
+  if(!degrees.isFinite||degrees.abs()>360) {
+    throw ArgumentError.value(degrees,'degrees','Rotation must be within 360°');
+  }
+  final rotated=img.copyRotate(original,angle:degrees,
+    interpolation:img.Interpolation.linear);
+  return Uint8List.fromList(img.encodePng(rotated,level:1));
+}
+
+/// Isolate entrypoint: filters, crop and JPEG encoding off the UI thread.
+/// JPEG is chosen to support reliable quality/size control. A target which
+/// cannot retain a minimally legible image yields a validation error.
+Uint8List _signatureTransform(Map<String,dynamic> request) {
+  final original=request['bytes'] as Uint8List;
+  final decoded=img.decodeImage(original);
+  if(decoded==null)throw const FormatException('Unsupported image format');
+  final rawCrop=(request['crop'] as List).cast<double>();
+  final left=rawCrop[0].clamp(0.0,1.0);
+  final top=rawCrop[1].clamp(0.0,1.0);
+  final right=rawCrop[2].clamp(0.0,1.0);
+  final bottom=rawCrop[3].clamp(0.0,1.0);
+  final x=(left*decoded.width).floor().clamp(0,decoded.width-1).toInt();
+  final y=(top*decoded.height).floor().clamp(0,decoded.height-1).toInt();
+  final width=math.max(1,(right*decoded.width).ceil()-x)
+    .clamp(1,decoded.width-x).toInt();
+  final height=math.max(1,(bottom*decoded.height).ceil()-y)
+    .clamp(1,decoded.height-y).toInt();
+  img.Image cropped;
+  final quad=(request['quad'] as List?)?.cast<double>();
+  if(quad!=null && quad.length==8){
+    final p=<img.Point>[];
+    for(var i=0;i<8;i+=2){
+      p.add(img.Point(quad[i].clamp(0.0,1.0)*decoded.width,
+        quad[i+1].clamp(0.0,1.0)*decoded.height));
+    }
+    double distance(img.Point a,img.Point b)=>
+      math.sqrt(math.pow(a.x-b.x,2)+math.pow(a.y-b.y,2));
+    final w=math.max(distance(p[0],p[1]),distance(p[3],p[2]))
+      .round().clamp(1,8192).toInt();
+    final h=math.max(distance(p[0],p[3]),distance(p[1],p[2]))
+      .round().clamp(1,8192).toInt();
+    if(w<4||h<4)throw StateError('Perspective selection is too small');
+    cropped=img.copyRectify(decoded,topLeft:p[0],topRight:p[1],
+      bottomRight:p[2],bottomLeft:p[3],
+      interpolation:img.Interpolation.linear,
+      toImage:img.Image(width:w,height:h,numChannels:4));
+  }else{
+    cropped=img.copyCrop(decoded,x:x,y:y,width:width,height:height);
+  }
+  if(request['cropOnly']==true){
+    return Uint8List.fromList(img.encodePng(cropped,level:1));
+  }
+  // Apply preview filters to an at-most 1100px bitmap. Previously each
+  // slider change filtered the entire 12/48MP source before downsampling,
+  // causing long delays and avoidable temporary allocations.
+  if(request['preview']==true){
+    final longer=math.max(cropped.width,cropped.height);
+    if(longer>1100){
+      cropped=img.copyResize(cropped,
+        width:math.max(1,(cropped.width*1100/longer).round()),
+        height:math.max(1,(cropped.height*1100/longer).round()),
+        interpolation:img.Interpolation.average);
+    }
+  }
+  final filter=request['filter'] as String;
+  final intensity=((request['intensity'] as num?)?.toDouble()??1)
+    .clamp(0.0,1.0);
+  if(filter=='White Background') {
+    // Adaptive paper estimation preserves the original black/blue ink hue.
+    // Its strength slider controls how thoroughly the paper turns white.
+    _whitenSignaturePaper(cropped,intensity);
+  }else{
+  // Flatten any transparency onto white, so ink remains a real signature.
+  for(var py=0;py<cropped.height;py++) {
+    for(var px=0;px<cropped.width;px++) {
+      final p=cropped.getPixel(px,py);
+      final alpha=p.a.toDouble()/255.0;
+      final r=(p.r.toDouble()*alpha+255*(1-alpha)).round();
+      final g=(p.g.toDouble()*alpha+255*(1-alpha)).round();
+      final b=(p.b.toDouble()*alpha+255*(1-alpha)).round();
+      final grey=(.299*r+.587*g+.114*b).round().clamp(0,255).toInt();
+      var red=r,green=g,blue=b;
+      switch(filter) {
+        case 'Black & White':
+          final mono=grey<170?0:255;
+          red=mono;green=mono;blue=mono;
+        case 'Grayscale':
+          red=grey;green=grey;blue=grey;
+        case 'Blue Ink':
+          final strength=255-grey;
+          red=255-strength;green=255-(strength*.72).round();
+          blue=255-(strength*.12).round();
+        case 'Red Ink':
+          final ink=255-grey;
+          red=255-(ink*.10).round();green=255-ink;blue=255-ink;
+        case 'Green Ink':
+          final ink=255-grey;
+          red=255-ink;green=255-(ink*.32).round();blue=255-ink;
+        case 'Dark Ink':
+          final ink=(grey*.62).round().clamp(0,255).toInt();
+          red=ink;green=ink;blue=ink;
+        case 'High Contrast':
+          final mono=((grey-128)*1.7+128).round().clamp(0,255).toInt();
+          red=mono;green=mono;blue=mono;
+        case 'Soft Ink':
+          final soft=(grey*.83+25).round().clamp(0,255).toInt();
+          red=soft;green=soft;blue=soft;
+        case 'Sepia':
+          red=(.393*r+.769*g+.189*b).round().clamp(0,255).toInt();
+          green=(.349*r+.686*g+.168*b).round().clamp(0,255).toInt();
+          blue=(.272*r+.534*g+.131*b).round().clamp(0,255).toInt();
+        case 'Invert':
+          red=255-r;green=255-g;blue=255-b;
+        case 'Clean Paper':
+          final adjusted=((grey-128)*1.3+155).round().clamp(0,255).toInt();
+          red=adjusted;green=adjusted;blue=adjusted;
+        case 'Pencil':
+          final pencil=(grey<195 ? grey*.7 : grey*.93)
+            .round().clamp(0,255).toInt();
+          red=pencil;green=pencil;blue=pencil;
+      }
+      // Live intensity blends each selected preset with the original pixel.
+      red=(r+(red-r)*intensity).round().clamp(0,255).toInt();
+      green=(g+(green-g)*intensity).round().clamp(0,255).toInt();
+      blue=(b+(blue-b)*intensity).round().clamp(0,255).toInt();
+      cropped.setPixelRgb(px,py,red,green,blue);
+    }
+  }
+  }
+  if(request['preview']==true) {
+    final preview=math.max(cropped.width,cropped.height);
+    if(preview>1100)cropped=img.copyResize(cropped,
+      width:(cropped.width*1100/preview).round(),
+      height:(cropped.height*1100/preview).round());
+    return Uint8List.fromList(img.encodeJpg(cropped,quality:86));
+  }
+  if(request['workingPng']==true){
+    return Uint8List.fromList(img.encodePng(cropped,level:2));
+  }
+  final target=request['target'] as int;
+  // Preserve legible ink edges: find the highest quality that fits at each
+  // resolution, reducing dimensions before resorting to destructive Q3 JPEG.
+  final fullResolution=cropped;
+  var candidate=cropped;
+  var scale=1.0;
+  const minimumQuality=68;
+  for(var pass=0;pass<28;pass++) {
+    var low=minimumQuality,high=96;
+    Uint8List? best;
+    for(var iteration=0;iteration<8 && low<=high;iteration++){
+      final quality=(low+high)~/2;
+      final encoded=Uint8List.fromList(img.encodeJpg(candidate,quality:quality));
+      if(encoded.length==target || encoded.length<=target-4){
+        best=encoded;
+        low=quality+1;
+      }else{
+        high=quality-1;
+      }
+    }
+    if(best!=null){
+      return SignatureEditEngine.padJpegToExactSize(best,target);
+    }
+    if(candidate.width<=24&&candidate.height<=24)break;
+    final measured=img.encodeJpg(candidate,quality:minimumQuality).length;
+    final factor=math.sqrt(target/measured).clamp(.72,.94).toDouble();
+    final width=candidate.width<=24?candidate.width:
+      math.max(24,(candidate.width*factor).floor());
+    final height=candidate.height<=24?candidate.height:
+      math.max(24,(candidate.height*factor).floor());
+    if(width==candidate.width&&height==candidate.height)break;
+    // Always resample from the full-resolution edit, not an already resized
+    // candidate. Chained averaging blurs thin signature strokes.
+    scale*=factor;
+    candidate=img.copyResize(fullResolution,
+      width:math.max(1,(fullResolution.width*scale).floor()),
+      height:math.max(1,(fullResolution.height*scale).floor()),
+      interpolation:img.Interpolation.cubic);
+  }
+  throw StateError(
+    'Exact ${(target/1024).round()} KB cannot retain readable ink. '
+    'Increase the target size or crop more.');
+
+}
+
+/// Estimate the brightest paper color within small local regions. This
+/// removes colored/shaded paper while respecting the ink's original channels:
+/// black strokes stay black and blue strokes stay blue (never colorized).
+/// A photo with virtually identical ink/background colors cannot be reliably
+/// separated, so the operation intentionally avoids inventing missing strokes.
+void _whitenSignaturePaper(img.Image source,double intensity) {
+  if(intensity<=0)return;
+  final w=source.width,h=source.height;
+  final tile=math.max(32,math.max(w,h)~/24);
+  final cols=(w+tile-1)~/tile,rows=(h+tile-1)~/tile;
+  final count=rows*cols;
+  final paperR=List<double>.filled(count,255);
+  final paperG=List<double>.filled(count,255);
+  final paperB=List<double>.filled(count,255);
+  final brightest=List<double>.filled(count,-1);
+  // Sampling all pixels is linear in photo size and runs in a compute isolate.
+  for(var y=0;y<h;y++){
+    for(var x=0;x<w;x++){
+      final p=source.getPixel(x,y);
+      final a=p.a.toDouble()/255;
+      final r=p.r.toDouble()*a+255*(1-a);
+      final g=p.g.toDouble()*a+255*(1-a);
+      final b=p.b.toDouble()*a+255*(1-a);
+      final luminance=.299*r+.587*g+.114*b;
+      final index=(y~/tile)*cols+x~/tile;
+      if(luminance>brightest[index]){
+        brightest[index]=luminance;
+        paperR[index]=r;paperG[index]=g;paperB[index]=b;
+      }
+    }
+  }
+  double interpolate(List<double> grid,int x,int y) {
+    final fx=(x+0.5)/tile-0.5,fy=(y+0.5)/tile-0.5;
+    final left=fx.floor().clamp(0,cols-1);
+    final right=(left+1).clamp(0,cols-1);
+    final top=fy.floor().clamp(0,rows-1);
+    final bottom=(top+1).clamp(0,rows-1);
+    final tx=(fx-left).clamp(0.0,1.0);
+    final ty=(fy-top).clamp(0.0,1.0);
+    final a=grid[top*cols+left];
+    final b=grid[top*cols+right];
+    final c=grid[bottom*cols+left];
+    final d=grid[bottom*cols+right];
+    return (a+(b-a)*tx)*(1-ty)+(c+(d-c)*tx)*ty;
+  }
+  for(var y=0;y<h;y++){
+    for(var x=0;x<w;x++){
+      final pixel=source.getPixel(x,y);
+      final a=pixel.a.toDouble()/255;
+      final r=pixel.r.toDouble()*a+255*(1-a);
+      final g=pixel.g.toDouble()*a+255*(1-a);
+      final b=pixel.b.toDouble()*a+255*(1-a);
+      final pr=interpolate(paperR,x,y);
+      final pg=interpolate(paperG,x,y);
+      final pb=interpolate(paperB,x,y);
+      final drop=.299*(pr-r)+.587*(pg-g)+.114*(pb-b);
+      // Color/grain close to local paper is cleaned away, while clear
+      // darker signatures retain their per-channel hue and stroke edges.
+      final ink=((drop-12)/22).clamp(0.0,1.0);
+      double channel(double original,double paper) {
+        final cleaned=(255-math.max(0,paper-original)*1.16*ink)
+          .clamp(0.0,255.0);
+        return original+(cleaned-original)*intensity;
+      }
+      source.setPixelRgb(x,y,
+        channel(r,pr).round().clamp(0,255),
+        channel(g,pg).round().clamp(0,255),
+        channel(b,pb).round().clamp(0,255));
+    }
+  }
+}
+
+/// Fast filter previews from exactly the same transform as real export.
+/// Only a 160px mini-image enters each filter calculation, so results are
+/// inexpensive even for large camera photographs.
+Map<String,Uint8List> _buildSignatureThumbnails(
+    Map<String,Object?> request){
+  final source=img.decodeImage(request['bytes'] as Uint8List);
+  if(source==null)throw const FormatException('Invalid signature source');
+  const maxSide=160;
+  final biggest=math.max(source.width,source.height);
+  final small=biggest>maxSide?img.copyResize(source,
+    width:math.max(1,(source.width*maxSide/biggest).round()),
+    height:math.max(1,(source.height*maxSide/biggest).round()),
+    interpolation:img.Interpolation.average):source;
+  final png=Uint8List.fromList(img.encodePng(small,level:1));
+  final output=<String,Uint8List>{};
+  for(final name in request['filters'] as List<String>){
+    output[name]=_signatureTransform({
+      'bytes':png,'crop':<double>[0,0,1,1],
+      'filter':name,'intensity':1.0,
+      'preview':true,
+    });
+  }
+  return output;
+}
