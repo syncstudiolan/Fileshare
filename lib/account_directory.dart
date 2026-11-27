@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
+import 'windows_tls_trust.dart';
 
 /// Shared File Share directory, deployed ONCE by the app publisher.
 /// A user never needs to enter their Worker address on a second device.
@@ -43,8 +46,11 @@ class AccountDirectory {
     final origin=_host;
     if(origin==null)throw StateError(
       'Email-only discovery is not active until the File Share directory is configured.');
-    final client=http.Client();
-    try {
+    return WindowsTlsTrust.retryWithSystemRoots((context) async {
+      final http.Client client = context == null
+          ? http.Client()
+          : IOClient(HttpClient(context: context));
+      try {
       final response=await client.post(origin.resolve(path),headers:{
         'content-type':'application/json','accept':'application/json',
       },body:jsonEncode(values)).timeout(const Duration(seconds:28));
@@ -62,7 +68,8 @@ class AccountDirectory {
       return payload;
     }on TimeoutException {
       throw StateError('Directory is unreachable. Check your internet connection.');
-    }finally{client.close();}
+      } finally { client.close(); }
+    });
   }
 
   /// The signed session proves the user already logged in on their own Worker.
