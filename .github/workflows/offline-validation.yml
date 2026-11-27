@@ -296,7 +296,7 @@ jobs:
                   raise SystemExit('Missing generated macOS entitlement file: '+str(path))
               text=path.read_text()
               if '<key>keychain-access-groups</key>' not in text:
-                  entry='''\n\t<key>keychain-access-groups</key>\n\t<array>\n\t\t<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>\n\t</array>'''
+                  entry='''\n\t<key>keychain-access-groups</key>\n\t<array/>'''
                   text=text.replace('</dict>',entry+'\n</dict>')
               path.write_text(text)
               if 'keychain-access-groups' not in path.read_text():
@@ -385,7 +385,18 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -d --entitlements :- "$app" > release-macos-entitlements.plist 2>/dev/null
           plutil -lint release-macos-entitlements.plist
-          grep -q 'keychain-access-groups' release-macos-entitlements.plist
+          python3 - <<'PY'
+          import plistlib
+          with open('release-macos-entitlements.plist', 'rb') as f:
+              entitlements = plistlib.load(f)
+          groups = entitlements.get('keychain-access-groups')
+          if groups != []:
+              raise SystemExit(
+                  'Expected empty keychain-access-groups for direct/ad-hoc macOS distribution; '
+                  f'found {groups!r}. A non-empty TEAMID group requires provisioning.'
+              )
+          print('Verified embedded macOS Keychain entitlement uses the default app access group')
+          PY
 
           # Launch the actual release bundle on the macOS runner. Fail the
           # release if LaunchServices cannot keep the main process alive.
