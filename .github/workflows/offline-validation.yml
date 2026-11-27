@@ -696,6 +696,37 @@ jobs:
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
+      - name: Bundle and verify Microsoft x64 VC++ runtime for fresh Windows PCs
+        if: matrix.group == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = 'build/windows/x64/runner/Release'
+          foreach ($required in @('file_share.exe','flutter_windows.dll')) {
+            if (-not (Test-Path (Join-Path $bundle $required))) {
+              throw "Missing required native app binary: $required"
+            }
+          }
+          if (-not (Test-Path (Join-Path $bundle 'data'))) {
+            throw 'Missing Flutter Windows data assets'
+          }
+          # Official Microsoft bootstrapper, bundled IN the installer.
+          # Never copy random CRT files to System32 or bypass a missing DLL.
+          New-Item -ItemType Directory -Force 'tool/installer-deps' | Out-Null
+          $redist = 'tool/installer-deps/VC_redist.x64.exe'
+          & curl.exe -fSL --retry 3 --retry-delay 3 -o $redist 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $redist)) {
+            throw 'Official Microsoft VC++ x64 runtime download failed'
+          }
+          if ((Get-Item $redist).Length -lt 1000000) {
+            throw 'VC++ runtime installer download is unexpectedly small'
+          }
+          $signature = Get-AuthenticodeSignature -FilePath $redist
+          if ($signature.Status -ne 'Valid' -or
+              $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+            throw 'VC++ redistributable Authenticode signature is not valid Microsoft'
+          }
+          Write-Host 'Microsoft VC++ x64 runtime verified and bundled for offline installation'
       - name: Install Inno Setup compiler
         if: matrix.group == 'windows'
         shell: pwsh
