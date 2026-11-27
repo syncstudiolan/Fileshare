@@ -75,7 +75,7 @@ if ($loaded -eq 0) { exit 3 }
       final raw = result.stdout;
       if (raw is! String || raw.length > 4000000) return null;
       final entries = raw
-          .split(RegExp(r'\\r?\\n'))
+          .split(RegExp(r'\r?\n'))
           .map((entry) => entry.trim())
           .where((entry) =>
               entry.isNotEmpty && RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(entry))
