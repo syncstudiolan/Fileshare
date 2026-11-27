@@ -448,6 +448,15 @@ class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver
     }
   }
 
+  @override
+  void didChangePlatformBrightness() {
+    super.didChangePlatformBrightness();
+    if (_mode == ThemeMode.system && (Platform.isWindows || Platform.isMacOS)) {
+      unawaited(windowManager.setBrightness(
+        WidgetsBinding.instance.platformDispatcher.platformBrightness));
+    }
+  }
+
   @override void didChangeAppLifecycleState(AppLifecycleState state){
     if(state==AppLifecycleState.paused || state==AppLifecycleState.detached)
       _wasBackgrounded=true;
@@ -1076,10 +1085,10 @@ class _LoginPageState extends State<LoginPage> {
       // Show practical steps, not a raw BoringSSL source path. Never bypass
       // certificate validation or imply that the password is incorrect.
       final message = e is TlsException && Platform.isWindows
-          ? 'Secure connection could not verify the server certificate. '
-            'Check Windows date/time, install Windows Updates (including root '
-            'certificates), and check antivirus HTTPS scanning or a proxy. '
-            'Then retry. Your password has not been verified yet.'
+          ? 'Windows trusted-root certificate retry failed; certificate verification remains enabled. '
+            'Check Windows date/time, install Windows root-certificate updates, '
+            'and check antivirus HTTPS inspection or a proxy. '
+            'Your password has not been verified yet.'
           : e.toString().replaceFirst('Bad state: ','');
       if(mounted)setState(()=>_error=message);
     }finally{if(mounted)setState(()=>_busy=false);}
