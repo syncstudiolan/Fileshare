@@ -1,0 +1,104 @@
+name: File Share macOS PR Validation
+
+on:
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'tool/prepare_macos_tray_runner.py'
+      - 'integration_test/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  macos_arm64_dmg_validation:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate and configure macOS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          xcodebuild -version
+          flutter config --enable-macos-desktop
+          flutter config --enable-swift-package-manager
+          flutter create --project-name file_share --platforms=macos .
+          python3 -m venv .macos-build-venv
+          .macos-build-venv/bin/python -m pip install --quiet Pillow
+          .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
+          flutter pub get
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          project=Path('macos/Runner.xcodeproj/project.pbxproj')
+          source=project.read_text()
+          source,count=re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
+                               'MACOSX_DEPLOYMENT_TARGET = 14.0;',source)
+          if count < 1:
+              raise SystemExit('No macOS deployment target found')
+          project.write_text(source)
+          packages=list(Path('macos').glob('**/FlutterGeneratedPluginSwiftPackage/Package.swift'))
+          if not packages:
+              raise SystemExit('Generated Flutter SwiftPM package missing')
+          for package in packages:
+              value=package.read_text()
+              value,count=re.subn(r'\.macOS\("[0-9.]+"\)', '.macOS("14.0")',value)
+              if count < 1:
+                  raise SystemExit('Could not set generated package macOS 14 target')
+              package.write_text(value)
+          for name in ('Release.entitlements','DebugProfile.entitlements'):
+              path=Path('macos/Runner')/name
+              if not path.is_file():
+                  raise SystemExit('Missing '+str(path))
+              import plistlib
+              with path.open('rb') as handle:
+                  values=plistlib.load(handle)
+              if 'keychain-access-groups' in values:
+                  raise SystemExit('Ad-hoc build must not enable Keychain Sharing')
+          PY
+      - name: Analyze and run unit tests
+        run: |
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter test --reporter expanded --timeout 2m
+      - name: Verify real macOS login Keychain round-trip
+        run: flutter test integration_test/macos_secure_storage_test.dart -d macos
+      - name: Build and validate Apple Silicon app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build macos --release
+          app="build/macos/Build/Products/Release/file_share.app"
+          test -d "$app"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          test -x "$app/Contents/MacOS/$executable"
+          lipo -archs "$app/Contents/MacOS/$executable" | tr ' ' '\n' | grep -qx arm64
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --entitlements :- "$app" > entitlements.plist 2>/dev/null
+          python3 - <<'PY'
+          import plistlib
+          values=plistlib.load(open('entitlements.plist','rb'))
+          if 'keychain-access-groups' in values:
+              raise SystemExit('Unexpected Keychain Sharing entitlement')
+          PY
+          mkdir -p release/dmg-root release/dmg-mounted
+          ditto "$app" "release/dmg-root/File Share.app"
+          ln -s /Applications release/dmg-root/Applications
+          hdiutil create -volname "File Share" -srcfolder release/dmg-root -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
+          hdiutil verify release/FileShare-macOS-AppleSilicon.dmg
+          hdiutil attach release/FileShare-macOS-AppleSilicon.dmg -readonly -nobrowse -mountpoint release/dmg-mounted
+          test -x "release/dmg-mounted/File Share.app/Contents/MacOS/$executable"
+          codesign --verify --deep --strict --verbose=2 "release/dmg-mounted/File Share.app"
+          hdiutil detach release/dmg-mounted
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileShare-macOS-PR-validation-DMG
+          path: release/FileShare-macOS-AppleSilicon.dmg
+          if-no-files-found: error

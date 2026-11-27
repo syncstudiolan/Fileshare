@@ -283,33 +283,27 @@ jobs:
           .macos-build-venv/bin/python -m pip install --quiet Pillow
           .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
           flutter pub get
-          # flutter_secure_storage uses the macOS Keychain. Without an
-          # explicit Keychain access group macOS returns errSecMissingEntitlement
-          # (-34018) while saving/restoring the login session.
+          # Ad-hoc macOS distribution has no provisioning profile. The app
+          # uses the legacy login Keychain through MacOsOptions(false), not
+          # the provisioning-only Data Protection Keychain / Keychain Sharing.
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          root=Path('macos/Runner')
-          files=[root/'DebugProfile.entitlements',root/'Release.entitlements']
-          for path in files:
+          import plistlib
+          for name in ('Release.entitlements', 'DebugProfile.entitlements'):
+              path=Path('macos/Runner')/name
               if not path.is_file():
-                  raise SystemExit('Missing generated macOS entitlement file: '+str(path))
-              text=path.read_text()
-              if '<key>keychain-access-groups</key>' not in text:
-                  entry='''\n\t<key>keychain-access-groups</key>\n\t<array/>'''
-                  text=text.replace('</dict>',entry+'\n</dict>')
-              path.write_text(text)
-              if 'keychain-access-groups' not in path.read_text():
-                  raise SystemExit('Keychain access group entitlement was not applied')
-              print('Configured Keychain entitlement:',path)
-          project=Path('macos/Runner.xcodeproj/project.pbxproj')
-          pbx=project.read_text()
-          if 'CODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;' not in pbx:
-              raise SystemExit('Release configuration does not reference Runner/Release.entitlements')
-          if 'CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;' not in pbx:
-              raise SystemExit('Debug configuration does not reference Runner/DebugProfile.entitlements')
-          print('Verified both macOS signing configurations use Keychain entitlements')
+                  raise SystemExit('Missing generated entitlement file: '+str(path))
+              with path.open('rb') as handle:
+                  values=plistlib.load(handle)
+              if 'keychain-access-groups' in values:
+                  raise SystemExit('Ad-hoc build must not request Keychain Sharing')
+          source=Path('lib/secure_storage.dart').read_text()
+          if 'usesDataProtectionKeychain: false' not in source:
+              raise SystemExit('macOS login Keychain fallback is not configured')
+          print('PASS: provisioning-free macOS login Keychain configuration')
           PY
+          flutter test integration_test/macos_secure_storage_test.dart -d macos
+
       - name: Fix macOS 14 deployment target before ONNX SwiftPM resolution
         if: matrix.group == 'apple' && matrix.macos
         shell: bash
@@ -379,9 +373,8 @@ jobs:
           bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
           test -n "$bundle_executable"
           test -x "$app/Contents/MacOS/$bundle_executable"
-          # Do not re-sign the Xcode-built app: a second ad-hoc --deep
-          # signing pass can replace the original signature and strip the
-          # Keychain access-group entitlement, causing macOS OSStatus -34018.
+          # Ad-hoc distribution uses the legacy login Keychain; it must not
+          # carry the provisioning-only Keychain Sharing entitlement.
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -d --entitlements :- "$app" > release-macos-entitlements.plist 2>/dev/null
           plutil -lint release-macos-entitlements.plist
@@ -389,13 +382,9 @@ jobs:
           import plistlib
           with open('release-macos-entitlements.plist', 'rb') as f:
               entitlements = plistlib.load(f)
-          groups = entitlements.get('keychain-access-groups')
-          if groups != []:
-              raise SystemExit(
-                  'Expected empty keychain-access-groups for direct/ad-hoc macOS distribution; '
-                  f'found {groups!r}. A non-empty TEAMID group requires provisioning.'
-              )
-          print('Verified embedded macOS Keychain entitlement uses the default app access group')
+          if 'keychain-access-groups' in entitlements:
+              raise SystemExit('Ad-hoc macOS app unexpectedly requests Keychain Sharing')
+          print('Verified no provisioning-only Keychain Sharing entitlement')
           PY
 
           # GitHub-hosted macOS runners can lack an interactive LaunchServices

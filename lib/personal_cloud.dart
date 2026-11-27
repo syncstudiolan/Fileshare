@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'account_directory.dart';
 import 'windows_tls_trust.dart';
@@ -43,7 +43,7 @@ class CloudUploadJob {
 class PersonalCloud extends ChangeNotifier {
   PersonalCloud._();
   static final PersonalCloud instance = PersonalCloud._();
-  static const _secrets = FlutterSecureStorage();
+  static final _secrets = FileShareSecureStorage.instance;
 
   Uri? _host;
   String? _ownerToken;
