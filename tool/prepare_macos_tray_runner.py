@@ -197,10 +197,11 @@ def patch_local_network_permissions() -> None:
         entitlements["com.apple.security.network.server"] = True
         entitlements["com.apple.security.files.user-selected.read-write"] = True
         # flutter_secure_storage stores login sessions in macOS Keychain.
-        # The signed app must carry this access group or SecItem returns -34018.
-        entitlements["keychain-access-groups"] = [
-            "$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"
-        ]
+        # Directly distributed/ad-hoc macOS builds have no provisioning profile.
+        # Use the plugin's documented empty Keychain Sharing entitlement so the
+        # app uses its own default access group without claiming a restricted
+        # TEAMID-prefixed group that requires provisioning.
+        entitlements["keychain-access-groups"] = []
         with path.open("wb") as handle:
             plistlib.dump(entitlements, handle)
     print("macOS Bonjour privacy and sandbox client/server permissions ready")
