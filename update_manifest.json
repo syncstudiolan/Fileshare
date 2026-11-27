@@ -16,11 +16,11 @@
     "version": "0.1.0"
   },
   "macos": {
-    "build": 656,
+    "build": 661,
     "notes": "Apple Silicon DMG; replace the app in Applications using Finder.",
-    "sha256": "c536481ae5a0e3d831e8486b512222a0e1cf00c84a9f6229207509b0b4cee459",
-    "size": 55630171,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-656/FileShare-macOS-AppleSilicon.dmg",
+    "sha256": "4909bebafee30574ec8b43bec03fe27f2b26f9c01ca13ee38f80633ef3e14f4b",
+    "size": 55679882,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-661/FileShare-macOS-AppleSilicon.dmg",
     "version": "0.1.0"
   },
   "schema": 1,
