@@ -8,7 +8,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('macOS login Keychain write/read/delete works without Keychain Sharing',
-      (tester) async {
+      (_) async {
     if (!Platform.isMacOS) return;
     final storage = FileShareSecureStorage.instance;
     final key = 'fileshare-keychain-smoke-' + DateTime.now().microsecondsSinceEpoch.toString();
