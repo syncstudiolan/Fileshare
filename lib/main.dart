@@ -178,6 +178,13 @@ class WindowsBackground with WindowListener, desktop_tray.TrayListener {
   Future<void> initialize({bool launchHidden=false}) async {
     if (!Platform.isWindows && !Platform.isMacOS) return;
     await windowManager.ensureInitialized();
+    final savedAppearance = await SharedPreferencesAsync().getString('appearance');
+    final nativeBrightness = savedAppearance == 'dark'
+        ? Brightness.dark
+        : savedAppearance == 'light'
+            ? Brightness.light
+            : WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    await windowManager.setBrightness(nativeBrightness);
     // Window remains hidden on login; manual launch opens normally.
     if(launchHidden){
       await windowManager.hide();
@@ -462,6 +469,14 @@ class _FileShareAppState extends State<FileShareApp> with WidgetsBindingObserver
   void _setMode(ThemeMode value) {
     setState(() => _mode = value);
     SharedPreferencesAsync().setString('appearance', value.name);
+    if (Platform.isWindows || Platform.isMacOS) {
+      final brightness = value == ThemeMode.dark
+          ? Brightness.dark
+          : value == ThemeMode.light
+              ? Brightness.light
+              : WidgetsBinding.instance.platformDispatcher.platformBrightness;
+      unawaited(windowManager.setBrightness(brightness));
+    }
   }
 
   @override
@@ -1060,7 +1075,7 @@ class _LoginPageState extends State<LoginPage> {
     }catch(e){
       // Show practical steps, not a raw BoringSSL source path. Never bypass
       // certificate validation or imply that the password is incorrect.
-      final message = e is HandshakeException && Platform.isWindows
+      final message = e is TlsException && Platform.isWindows
           ? 'Secure connection could not verify the server certificate. '
             'Check Windows date/time, install Windows Updates (including root '
             'certificates), and check antivirus HTTPS scanning or a proxy. '

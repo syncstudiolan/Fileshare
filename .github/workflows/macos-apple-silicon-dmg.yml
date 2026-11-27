@@ -98,6 +98,28 @@ jobs:
           test -n "$executable"
           lipo -info "$executable"
           lipo -archs "$executable" | tr " " "\\n" | grep -qx arm64
+          # Verify Xcode's original signature and the Keychain entitlement.
+          # Never re-sign with an ad-hoc identity here: that can strip entitlements.
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --entitlements :- "$app" > release-macos-entitlements.plist 2>/dev/null
+          plutil -lint release-macos-entitlements.plist
+          grep -q 'keychain-access-groups' release-macos-entitlements.plist
+          bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          test -x "$app/Contents/MacOS/$bundle_executable"
+          open -n "$app"
+          launched=0
+          for attempt in $(seq 1 20); do
+            if pgrep -x "$bundle_executable" >/dev/null; then
+              launched=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$launched" -ne 1 ]]; then
+            echo "macOS release app did not remain running after LaunchServices open"
+            exit 1
+          fi
+          pkill -x "$bundle_executable" || true
           mkdir -p release/dmg-root
           ditto "$app" "release/dmg-root/File Share.app"
           ln -s /Applications release/dmg-root/Applications

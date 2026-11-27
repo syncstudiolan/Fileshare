@@ -17,7 +17,7 @@ class WindowsTlsTrust {
       Future<T> Function(SecurityContext? context) request) async {
     try {
       return await request(null);
-    } on HandshakeException {
+    } on TlsException {
       if (!Platform.isWindows) rethrow;
       final context = await (_cachedContext ??= _readWindowsRoots());
       if (context == null) { _cachedContext = null; rethrow; }
