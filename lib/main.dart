@@ -750,6 +750,25 @@ class AppLogo extends StatelessWidget {
   );
 }
 
+Future<void> editFileShareDeviceName(BuildContext context,{bool firstRun=false}) async {
+  final controller=TextEditingController(text:firstRun?'':appLan.deviceName);
+  try {
+    final result=await showDialog<String>(context:context,barrierDismissible:!firstRun,
+      builder:(dialog)=>AlertDialog(
+        title:Text(firstRun?'Enter your device name':'Device Name'),
+        content:TextField(controller:controller,maxLength:60,autofocus:true,
+          decoration:InputDecoration(hintText:LanEngine.defaultDeviceName),
+          onSubmitted:(value)=>Navigator.pop(dialog,value)),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,firstRun?'':null),
+            child:Text(firstRun?'Skip':'Cancel')),
+          FilledButton(onPressed:()=>Navigator.pop(dialog,controller.text),
+            child:Text(firstRun?'Continue':'Save')),
+        ]));
+    if(result!=null || firstRun)await appLan.setDeviceName(result??'');
+  } finally {controller.dispose();}
+}
+
 class WelcomePage extends StatelessWidget {
   const WelcomePage({
     super.key,
@@ -2350,6 +2369,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   bool _sending = false;
   bool _desktopSidebarVisible = true;
   bool _preparingText=false;
+  bool _deviceNamePrompted=false;
   String? _sendingPreview;
   bool _timelineSeeded=false;
   final Set<String> _knownTimelineKeys=<String>{};
@@ -2812,6 +2832,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     _importEditedCart();
     if (widget.enableBackends) WidgetsBinding.instance.addPostFrameCallback((_) {
       appLan.start().then((_) async {
+        if(mounted && !appLan.deviceNameConfigured && !_deviceNamePrompted){
+          _deviceNamePrompted=true;
+          await editFileShareDeviceName(context, firstRun:true);
+        }
         if (Platform.isAndroid) {
           _native.setMethodCallHandler((call) async {
             if(call.method=='sharesReceived') {
@@ -3263,7 +3287,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         // Preserve previous no-login behavior: queue locally, never upload.
         for(final batch in batches){
           try{
-            await appLan.enqueue(batch.sources,names:batch.labels);
+            await appLan.enqueue(batch.sources,names:batch.labels,messageId:batch.id);
             if(mounted)setState(()=>_staged.remove(batch));
             unawaited(_cleanupEditedCartSnapshots(batch.sources));
           }catch(e){_snack('Could not queue files: '+e.toString());}
@@ -3276,7 +3300,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       for(final batch in batches){
         try{
           if(useLan){
-            await appLan.enqueue(batch.sources,names:batch.labels);
+            await appLan.enqueue(batch.sources,names:batch.labels,messageId:batch.id);
             successful+=batch.sources.length;
             if(mounted)setState(()=>_staged.remove(batch));
             unawaited(_cleanupEditedCartSnapshots(batch.sources));
@@ -3364,18 +3388,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 
   List<TimelineGroup> _timeline() {
     final hidden = _staged.map((item) => item.id).toSet();
-    final visibleToPeers = appLan.files.where((e) =>
-      !e.incoming && e.state != TransferState.queued)
-      .map((e) => e.batch).toSet();
-    final lan = appLan.files.where((f) =>
+    final lan = appLan.dashboardFiles.where((f) =>
       !hidden.contains(f.batch) &&
-      (f.state != TransferState.queued || !visibleToPeers.contains(f.batch)) &&
       (_filter == 'All' || (_filter == 'Sent' && !f.incoming) ||
       (_filter == 'Received' && f.incoming))).toList();
     final groupedLan = <String, List<LanFile>>{};
     for (final item in lan) {
       final key = item.batch + ':' +
-        (item.peerId.isNotEmpty ? item.peerId : item.peer) + ':' +
+        (item.incoming ? (item.peerId.isNotEmpty ? item.peerId : item.peer) : 'sent') + ':' +
         item.incoming.toString();
       groupedLan.putIfAbsent(key, () => []).add(item);
     }
@@ -4142,6 +4162,15 @@ class FeatureDesignPage extends StatelessWidget {
   ]);
 
   Widget _settings(BuildContext c) => Column(children: [
+    _section(c,'Device Name','Identify this device on the local network.',
+      ListenableBuilder(listenable:appLan,builder:(context,_)=>Column(children:[
+        ListTile(leading:const Icon(Icons.devices),title:const Text('Device Name'),
+          subtitle:Text(appLan.deviceName),trailing:const Icon(Icons.edit_outlined),
+          onTap:()=>editFileShareDeviceName(context)),
+        ListTile(leading:const Icon(Icons.fingerprint),title:const Text('Device ID'),
+          subtitle:SelectableText(appLan.deviceId??'Initializing…')),
+      ]))),
+    const SizedBox(height:14),
     _section(c, 'Cloud Setup',
       'Manage the personal Cloudflare Worker, account pairing and online Guest QR service from Settings.',
       Column(children: [
