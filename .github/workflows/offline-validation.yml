@@ -370,6 +370,37 @@ jobs:
           test -n "$executable"
           lipo -info "$executable"
           lipo -archs "$executable" | tr " " "\\n" | grep -qx arm64
+
+          # A successful Flutter build and a valid DMG checksum do not prove
+          # that LaunchServices can open the installed app. Validate the bundle,
+          # apply a consistent ad-hoc signature for local execution, and verify it.
+          test -s "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/Info.plist"
+          bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          test -n "$bundle_executable"
+          test -x "$app/Contents/MacOS/$bundle_executable"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          # Launch the actual release bundle on the macOS runner. Fail the
+          # release if LaunchServices cannot keep the main process alive.
+          open -n "$app"
+          launched=0
+          for attempt in $(seq 1 15); do
+            if pgrep -x "$bundle_executable" >/dev/null; then
+              launched=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$launched" -ne 1 ]]; then
+            echo "macOS app failed to stay open in LaunchServices smoke test"
+            codesign -dv --verbose=4 "$app" 2>&1 || true
+            plutil -p "$app/Contents/Info.plist" || true
+            exit 1
+          fi
+          pkill -x "$bundle_executable" || true
+
           mkdir -p release/dmg-root
           ditto "$app" "release/dmg-root/File Share.app"
           ln -s /Applications release/dmg-root/Applications
