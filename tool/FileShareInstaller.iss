@@ -56,7 +56,5 @@ begin
 end;
 
 [Run]
-Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; \
-  StatusMsg: "Installing required Microsoft Visual C++ runtime..."; \
-  Flags: waituntilterminated; Check: not MicrosoftVCRuntimeInstalled
+Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing required Microsoft Visual C++ runtime..."; Flags: waituntilterminated; Check: not MicrosoftVCRuntimeInstalled
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch File Share"; Flags: nowait postinstall skipifsilent
