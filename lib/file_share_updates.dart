@@ -162,13 +162,14 @@ class FileShareUpdates extends ChangeNotifier {
       final extension=_extension;
       final name='FileShare-${Platform.isAndroid?'Android':Platform.isIOS?'iOS':Platform.isMacOS?'macOS':'Windows'}-${next.build}.$extension';
       final file=File('${folder.path}${Platform.pathSeparator}$name');
-      partial=File('${file.path}.download');
-      if(await partial.exists())await partial.delete();
+      final partialFile=File('${file.path}.download');
+      partial=partialFile;
+      if(await partialFile.exists())await partialFile.delete();
       final request=await client.getUrl(Uri.parse(next.url));
       final response=await request.close().timeout(const Duration(seconds:30));
       if(response.statusCode!=200)throw HttpException(
         'Update download HTTP ${response.statusCode}');
-      final sink=partial.openWrite();
+      final sink=partialFile.openWrite();
       var received=0;
       try {
         await for(final chunk in response){
@@ -180,19 +181,20 @@ class FileShareUpdates extends ChangeNotifier {
         await sink.flush();
       } finally { await sink.close(); }
       if(received!=next.size)throw const FormatException('Update download truncated');
-      final actual=(await sha256.bind(partial.openRead()).first).toString();
+      final actual=(await sha256.bind(partialFile.openRead()).first).toString();
       if(actual.toLowerCase()!=next.sha256) {
         throw const FormatException('Update SHA-256 mismatch; installation blocked');
       }
       if(await file.exists())await file.delete();
-      await partial.rename(file.path);
+      await partialFile.rename(file.path);
       downloaded=file;progress=1;
       stage=UpdateStage.ready;
       });
     } catch(e) {
       error='Download failed: $e';
       stage=UpdateStage.failed;
-      if(partial!=null&&await partial.exists())await partial.delete();
+      final incomplete=partial;
+      if(incomplete!=null&&await incomplete.exists())await incomplete.delete();
     } finally {
       _downloading=false;notifyListeners();
     }
