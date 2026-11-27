@@ -303,6 +303,21 @@ jobs:
               raise SystemExit('macOS login Keychain fallback is not configured')
           print('PASS: provisioning-free macOS login Keychain configuration')
           PY
+          # flutter_onnxruntime requires macOS 14. The secure-storage integration
+          # test builds the Runner immediately, so set the deployment target
+          # BEFORE invoking flutter test (the previous ordering left it at 12).
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          project=Path('macos/Runner.xcodeproj/project.pbxproj')
+          source=project.read_text()
+          updated,count=re.subn(r'MACOSX_DEPLOYMENT_TARGET = [0-9.]+;',
+                                'MACOSX_DEPLOYMENT_TARGET = 14.0;',source)
+          if count < 1:
+              raise SystemExit('No macOS deployment target found in generated Runner project')
+          project.write_text(updated)
+          print(f'Applied macOS 14 deployment target to {count} Xcode settings before Keychain test')
+          PY
           flutter test integration_test/macos_secure_storage_test.dart -d macos
 
       - name: Fix macOS 14 deployment target before ONNX SwiftPM resolution
