@@ -196,12 +196,9 @@ def patch_local_network_permissions() -> None:
         entitlements["com.apple.security.network.client"] = True
         entitlements["com.apple.security.network.server"] = True
         entitlements["com.apple.security.files.user-selected.read-write"] = True
-        # flutter_secure_storage stores login sessions in macOS Keychain.
-        # Directly distributed/ad-hoc macOS builds have no provisioning profile.
-        # Use the plugin's documented empty Keychain Sharing entitlement so the
-        # app uses its own default access group without claiming a restricted
-        # TEAMID-prefixed group that requires provisioning.
-        entitlements["keychain-access-groups"] = []
+        # Ad-hoc distribution has no provisioning profile. Dart uses the
+        # legacy login Keychain, so do not enable Keychain Sharing here.
+        entitlements.pop("keychain-access-groups", None)
         with path.open("wb") as handle:
             plistlib.dump(entitlements, handle)
     print("macOS Bonjour privacy and sandbox client/server permissions ready")

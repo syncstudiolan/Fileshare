@@ -3,7 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -17,7 +17,7 @@ class CloudProvisioningResult {
 class CloudflareProvisioner extends ChangeNotifier {
   CloudflareProvisioner({http.Client? client}):_client=client??http.Client();
   final http.Client _client;
-  static const _secure=FlutterSecureStorage();
+  static final _secure=FileShareSecureStorage.instance;
   String status='Ready to connect';
   bool busy=false;
   void _progress(String value){status=value;notifyListeners();}
