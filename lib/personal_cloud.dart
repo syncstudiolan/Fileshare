@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'account_directory.dart';
+import 'windows_tls_trust.dart';
 
 /// An owner-facing client for a user's OWN workers.dev endpoint.
 /// It does not receive a Cloudflare admin API token; that token is only for
@@ -113,7 +114,9 @@ class PersonalCloud extends ChangeNotifier {
   Future<Map<String, dynamic>> _request(
     Uri host, String token, String method, String path,
     [Map<String, dynamic>? payload]) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
+    return WindowsTlsTrust.retryWithSystemRoots((context) async {
+      final client = HttpClient(context: context)
+        ..connectionTimeout = const Duration(seconds: 12);
     try {
       final request = await client.openUrl(method, host.resolve(path));
       if(token.isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + token);
@@ -143,6 +146,7 @@ class PersonalCloud extends ChangeNotifier {
       }
       return data;
     } finally { client.close(force: true); }
+    });
   }
 
   Future<Map<String, dynamic>> _call(String method, String path,

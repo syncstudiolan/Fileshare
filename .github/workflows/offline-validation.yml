@@ -25,7 +25,7 @@ on:
 # Ordinary merges do not release. [release-now] is an explicit one-time
 # authorization for the initial migration; later use the Run workflow button.
 concurrency:
-  group: ${{ (github.event_name == 'workflow_dispatch' || ((contains(github.event.head_commit.message, '[release-now]') || contains(github.event.head_commit.message, '[android-release-now]')) || contains(github.event.head_commit.message, '[android-dsc-test]'))) && 'fileshare-production-release' || github.run_id }}
+  group: ${{ (github.event_name == 'workflow_dispatch' || ((contains(github.event.head_commit.message, '[release-now]') || contains(github.event.head_commit.message, '[android-release-now]')) || (contains(github.event.head_commit.message, '[android-dsc-test]') || contains(github.event.head_commit.message, '[desktop-release-now]')))) && 'fileshare-production-release' || github.run_id }}
   # A newer explicitly requested release supersedes a stale/queued older run.
   # Ordinary non-release pushes use a separate run-specific group.
   cancel-in-progress: true
@@ -36,7 +36,7 @@ permissions:
 jobs:
   release_preflight:
     name: Release preflight - LAN convergence and photo export
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && ((contains(github.event.head_commit.message, '[release-now]') || contains(github.event.head_commit.message, '[android-release-now]')) || contains(github.event.head_commit.message, '[android-dsc-test]'))))
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && ((contains(github.event.head_commit.message, '[release-now]') || contains(github.event.head_commit.message, '[android-release-now]')) || (contains(github.event.head_commit.message, '[android-dsc-test]') || contains(github.event.head_commit.message, '[desktop-release-now]')))))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -64,9 +64,9 @@ jobs:
         id: plan
         shell: bash
         env:
-          BUILD_ANDROID: ${{ github.event_name == 'push' || inputs.android }}
+          BUILD_ANDROID: ${{ (github.event_name == 'push' && !contains(github.event.head_commit.message, '[desktop-release-now]')) || (github.event_name == 'workflow_dispatch' && inputs.android) }}
           BUILD_WINDOWS: ${{ (github.event_name == 'push' || inputs.windows) && !contains(github.event.head_commit.message, '[android-dsc-test]') && !contains(github.event.head_commit.message, '[android-release-now]') }}
-          BUILD_IOS: ${{ (github.event_name == 'push' || inputs.ios) && !contains(github.event.head_commit.message, '[android-dsc-test]') && !contains(github.event.head_commit.message, '[android-release-now]') }}
+          BUILD_IOS: ${{ (github.event_name == 'push' || inputs.ios) && !contains(github.event.head_commit.message, '[desktop-release-now]') && !contains(github.event.head_commit.message, '[android-dsc-test]') && !contains(github.event.head_commit.message, '[android-release-now]') }}
           BUILD_MACOS: ${{ (github.event_name == 'push' || inputs.macos) && !contains(github.event.head_commit.message, '[android-dsc-test]') && !contains(github.event.head_commit.message, '[android-release-now]') }}
         run: |
           python3 - <<'PY'
@@ -696,6 +696,37 @@ jobs:
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
+      - name: Bundle and verify Microsoft x64 VC++ runtime for fresh Windows PCs
+        if: matrix.group == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = 'build/windows/x64/runner/Release'
+          foreach ($required in @('file_share.exe','flutter_windows.dll')) {
+            if (-not (Test-Path (Join-Path $bundle $required))) {
+              throw "Missing required native app binary: $required"
+            }
+          }
+          if (-not (Test-Path (Join-Path $bundle 'data'))) {
+            throw 'Missing Flutter Windows data assets'
+          }
+          # Official Microsoft bootstrapper, bundled IN the installer.
+          # Never copy random CRT files to System32 or bypass a missing DLL.
+          New-Item -ItemType Directory -Force 'tool/installer-deps' | Out-Null
+          $redist = 'tool/installer-deps/VC_redist.x64.exe'
+          & curl.exe -fSL --retry 3 --retry-delay 3 -o $redist 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $redist)) {
+            throw 'Official Microsoft VC++ x64 runtime download failed'
+          }
+          if ((Get-Item $redist).Length -lt 1000000) {
+            throw 'VC++ runtime installer download is unexpectedly small'
+          }
+          $signature = Get-AuthenticodeSignature -FilePath $redist
+          if ($signature.Status -ne 'Valid' -or
+              $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+            throw 'VC++ redistributable Authenticode signature is not valid Microsoft'
+          }
+          Write-Host 'Microsoft VC++ x64 runtime verified and bundled for offline installation'
       - name: Install Inno Setup compiler
         if: matrix.group == 'windows'
         shell: pwsh
