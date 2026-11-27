@@ -16,20 +16,20 @@
     "version": "0.1.0"
   },
   "macos": {
-    "build": 651,
+    "build": 653,
     "notes": "Apple Silicon DMG; replace the app in Applications using Finder.",
-    "sha256": "8b7c5da01c15d8ade252c52a4fb2d31af92fb5a4bf8fe307a6399f997acc04ce",
-    "size": 55671421,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-651/FileShare-macOS-AppleSilicon.dmg",
+    "sha256": "4dcd5ac6f8cf0079eda3d07b5205aee24e840f48491bb68d4ed4123ba946d78c",
+    "size": 55670118,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-653/FileShare-macOS-AppleSilicon.dmg",
     "version": "0.1.0"
   },
   "schema": 1,
   "windows": {
-    "build": 651,
+    "build": 653,
     "notes": "Windows x64 Setup installer; approve UAC.",
-    "sha256": "02a1d6ff0d2e5aaceee8320dbed7b03cb0edf7a9aca696cecb099edce0d41c00",
-    "size": 19178391,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-651/FileShare-Windows-Setup.exe",
+    "sha256": "eeb203005e774b83d7991570c51ccfbeb048f83dc73d8d00b3dda4806781ab5c",
+    "size": 42895139,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-653/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
