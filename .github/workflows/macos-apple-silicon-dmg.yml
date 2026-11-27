@@ -40,6 +40,7 @@ jobs:
           .macos-build-venv/bin/python -m pip install --quiet Pillow
           .macos-build-venv/bin/python tool/prepare_macos_tray_runner.py
           flutter pub get
+          flutter test integration_test/macos_secure_storage_test.dart -d macos
       - name: Fix macOS 14 deployment target before ONNX SwiftPM resolution
         shell: bash
         run: |
@@ -98,34 +99,33 @@ jobs:
           test -n "$executable"
           lipo -info "$executable"
           lipo -archs "$executable" | tr " " "\\n" | grep -qx arm64
-          # Verify Xcode's original signature and the Keychain entitlement.
-          # Never re-sign with an ad-hoc identity here: that can strip entitlements.
+          # Ad-hoc build: no Developer ID certificate, notarization, or
+          # provisioning profile. The legacy login Keychain is configured in Dart.
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -d --entitlements :- "$app" > release-macos-entitlements.plist 2>/dev/null
           plutil -lint release-macos-entitlements.plist
-          grep -q 'keychain-access-groups' release-macos-entitlements.plist
+          python3 - <<'PY'
+          import plistlib
+          with open('release-macos-entitlements.plist', 'rb') as handle:
+              entitlements=plistlib.load(handle)
+          if 'keychain-access-groups' in entitlements:
+              raise SystemExit('Ad-hoc build must not request Keychain Sharing')
+          print('PASS: no provisioning-only Keychain Sharing entitlement')
+          PY
           bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
           test -x "$app/Contents/MacOS/$bundle_executable"
-          open -n "$app"
-          launched=0
-          for attempt in $(seq 1 20); do
-            if pgrep -x "$bundle_executable" >/dev/null; then
-              launched=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "$launched" -ne 1 ]]; then
-            echo "macOS release app did not remain running after LaunchServices open"
-            exit 1
-          fi
-          pkill -x "$bundle_executable" || true
           mkdir -p release/dmg-root
           ditto "$app" "release/dmg-root/File Share.app"
           ln -s /Applications release/dmg-root/Applications
           hdiutil create -volname "File Share" -srcfolder release/dmg-root -ov -format UDZO release/FileShare-macOS-AppleSilicon.dmg
           test -s release/FileShare-macOS-AppleSilicon.dmg
           hdiutil verify release/FileShare-macOS-AppleSilicon.dmg
+          mkdir -p release/dmg-mounted
+          hdiutil attach release/FileShare-macOS-AppleSilicon.dmg -readonly -nobrowse -mountpoint release/dmg-mounted
+          test -d "release/dmg-mounted/File Share.app"
+          test -x "release/dmg-mounted/File Share.app/Contents/MacOS/$bundle_executable"
+          codesign --verify --deep --strict --verbose=2 "release/dmg-mounted/File Share.app"
+          hdiutil detach release/dmg-mounted
       - uses: actions/upload-artifact@v4
         with:
           name: FileShare-macOS-AppleSilicon-DMG
@@ -140,7 +140,7 @@ jobs:
           gh release create "fileshare-macos-arm64-v${MAC_RELEASE_VERSION}-build-${MAC_RELEASE_BUILD}" release/FileShare-macOS-AppleSilicon.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "File Share macOS Apple Silicon DMG" \
-            --notes "Unsigned/unnotarized macOS 14+ ARM64-compatible DMG with Bonjour LAN discovery and macOS in-app update check/download. For this first upgrade from an older Mac build, install the DMG once in Finder; later updates can be downloaded and opened inside File Share. Gatekeeper approval and real LAN testing may be required." --prerelease
+            --notes "Ad-hoc unsigned/unnotarized macOS 14+ Apple Silicon DMG. No Developer ID certificate or provisioning profile is required. Because the app is downloaded outside the App Store and is not notarized, Gatekeeper may require Control-click > Open or approval in Privacy & Security. The app uses the macOS login Keychain without Keychain Sharing entitlements. CI checks the ARM64 executable, code-signature integrity, mounted DMG contents, and a real Keychain write/read/delete round-trip." --prerelease
       - name: Publish verified macOS update manifest
         env:
           GH_TOKEN: ${{ github.token }}
