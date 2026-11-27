@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'account_directory.dart';
 import 'windows_tls_trust.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// An owner-facing client for a user's OWN workers.dev endpoint.
 /// It does not receive a Cloudflare admin API token; that token is only for
@@ -531,7 +532,7 @@ class PersonalCloud extends ChangeNotifier {
   Future<void> _runOutgoingJob(CloudUploadJob job) async {
     try {
       await uploadDeviceFile(job.file,job.name,job.senderId,
-        senderName:Platform.localHostname,
+        senderName:(await SharedPreferencesAsync().getString('lan_device_name')) ?? Platform.localHostname,
         onCreated:(id){job.remoteId=id;notifyListeners();},
         onProgress:(fraction){
           job.progress=fraction;

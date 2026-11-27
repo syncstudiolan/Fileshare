@@ -172,6 +172,34 @@ class LanEngine extends ChangeNotifier {
   Directory? _inbox, _outbox;
   File? _db, _queueDb;
   String? deviceId, error;
+  String? _deviceName;
+  bool deviceNameConfigured = false;
+  String get deviceName => _deviceName ?? defaultDeviceName;
+  static String get defaultDeviceName {
+    final host = Platform.localHostname.trim();
+    if (host.isNotEmpty && host.toLowerCase() != 'localhost') {
+      return host.length > 60 ? host.substring(0, 60) : host;
+    }
+    return Platform.isWindows ? 'Windows-PC' :
+      Platform.isMacOS ? 'Mac' : Platform.isIOS ? 'iPhone' :
+      Platform.isAndroid ? 'Android' : 'Device';
+  }
+  Future<void> setDeviceName(String value) async {
+    final trimmed = value.trim().replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '');
+    final name = trimmed.isEmpty ? defaultDeviceName :
+      trimmed.length > 60 ? trimmed.substring(0, 60) : trimmed;
+    final prefs = SharedPreferencesAsync();
+    await prefs.setString('lan_device_name', name);
+    _deviceName = name;
+    deviceNameConfigured = true;
+    _notify();
+    if (started) {
+      _nativeRestartNeeded = true;
+      _sendAnnouncement();
+      refresh();
+    }
+  }
+  final Set<String> _receivingIdentities = <String>{};
   bool started = false, _disposed = false;
   Future<void>? _starting, _stopping;
   final _incomingConnections=<Socket,Future<void>>{};
@@ -213,6 +241,8 @@ class LanEngine extends ChangeNotifier {
       final preferences = SharedPreferencesAsync();
       deviceId = await preferences.getString('lan_device_id') ?? newId();
       await preferences.setString('lan_device_id', deviceId!);
+      _deviceName = await preferences.getString('lan_device_name');
+      deviceNameConfigured = _deviceName?.trim().isNotEmpty == true;
     }
     await _restore();
     await _loadQueue();
@@ -374,7 +404,7 @@ class LanEngine extends ChangeNotifier {
         name:instance,type:'_fileshare._tcp',port:_server!.port,
         txt:<String,Uint8List>{
           'id':Uint8List.fromList(utf8.encode(id)),
-          'n':Uint8List.fromList(utf8.encode(Platform.localHostname)),
+          'n':Uint8List.fromList(utf8.encode(deviceName)),
           'v':Uint8List.fromList(utf8.encode('2')),
         },
       ));
@@ -510,7 +540,7 @@ class LanEngine extends ChangeNotifier {
     });
     try {
       await _bonjour.invokeMethod<void>('start', {
-        'id': deviceId!, 'name': Platform.localHostname, 'port': _server!.port,
+        'id': deviceId!, 'name': deviceName, 'port': _server!.port,
       });
       if(generation!=_listenerGeneration||_disposed){
         await _bonjour.invokeMethod<void>('stop');
@@ -579,7 +609,7 @@ class LanEngine extends ChangeNotifier {
     if(socket==null || receiver==null || deviceId==null)return;
     final bytes=utf8.encode(jsonEncode({
       'app':'fileshare-lan-v1','id':deviceId,
-      'name':Platform.localHostname,'port':receiver.port,'v':'2',
+      'name':deviceName,'port':receiver.port,'v':'2',
     }));
     try{
       socket.send(bytes,destination??InternetAddress('255.255.255.255'),discoveryPort);
@@ -695,7 +725,7 @@ class LanEngine extends ChangeNotifier {
     }
   }
 
-  Map<String,Object?> _helloIdentity()=>{'id':deviceId,'name':Platform.localHostname,
+  Map<String,Object?> _helloIdentity()=>{'id':deviceId,'name':deviceName,
       'port':_server!.port};
   LanPeer? _parseHelloPeer(Object? value,String address){
     if(value is! Map)return null;
@@ -821,10 +851,11 @@ class LanEngine extends ChangeNotifier {
   }
 
   /// Starts only when Send is pressed; no nearby device is required.
-  Future<String> enqueue(List<File> sources,{List<String>? names})async{
+  Future<String> enqueue(List<File> sources,{List<String>? names,String? messageId})async{
     if(!started||_outbox==null)throw StateError('LAN engine not ready');
     if(sources.isEmpty)throw StateError('No selected files');
-    final batchId=newId();
+    final batchId=messageId??newId();
+    if(queuedBatches.any((b)=>b.id==batchId))return batchId;
     final items=<QueuedLanItem>[];
     try{
       for(var i=0;i<sources.length;i++){
@@ -868,6 +899,7 @@ class LanEngine extends ChangeNotifier {
       for(final batch in queuedBatches.toList()){
         if(DateTime.now().difference(batch.created)>=expiry)continue;
         for(final item in batch.items.toList()){
+          if(!queuedBatches.contains(batch)||!batch.items.contains(item))continue;
           final key=peer.id+':'+item.id;
           if(batch.deliveredKeys.contains(key))continue;
           final last=_attempts[key];
@@ -886,7 +918,7 @@ class LanEngine extends ChangeNotifier {
           entry.error=null;
           entry.done=0;
           _update(save:true);
-          await _sendOne(source,peer,entry);
+          await _sendOne(source,peer,entry,logicalId:item.id);
           if(entry.state==TransferState.delivered){
             batch.deliveredKeys.add(key);_saveQueue();
           }else{return;}
@@ -932,6 +964,7 @@ class LanEngine extends ChangeNotifier {
     for (final file in selected) {
       if (!await file.exists()) continue;
       final size = await file.length();
+      final logicalId = newId();
       for (final peer in targets) {
         final record = LanFile(
           id: newId(), batch: batch,
@@ -939,14 +972,14 @@ class LanEngine extends ChangeNotifier {
           path: file.path, peer: peer.name, peerId: peer.id, incoming: false,
           size: size, created: DateTime.now(), state: TransferState.preparing);
         files.insert(0, record);
-        tasks.add(_sendOne(file, peer, record));
+        tasks.add(_sendOne(file, peer, record,logicalId:logicalId));
       }
     }
     _update(save: true);
     await Future.wait(tasks);
   }
 
-  Future<void> _sendOne(File source, LanPeer peer, LanFile record) async {
+  Future<void> _sendOne(File source, LanPeer peer, LanFile record,{String? logicalId}) async {
     Socket? socket;
     try {
       socket = await Socket.connect(peer.address, peer.port,
@@ -969,8 +1002,9 @@ class LanEngine extends ChangeNotifier {
       });
       socket.add(utf8.encode(jsonEncode({
         'protocol': 'fileshare-file-v1', 'id': record.id,
+        if(logicalId!=null) 'messageId':logicalId,
         'batch': record.batch, 'name': record.name,
-        'size': record.size, 'sender': Platform.localHostname,
+        'size': record.size, 'sender': deviceName,
         'senderId': deviceId,
       }) + '\n'));
       record.state = TransferState.sending;
@@ -1014,6 +1048,7 @@ class LanEngine extends ChangeNotifier {
     // clients may keep TCP open for an ACK, so read exactly the framed size.
     final reader = StreamIterator<List<int>>(socket);
     var control=false;
+    String? claimedIdentity;
     try {
       final header = <int>[];
       var ready = false, got = 0, expected = -1;
@@ -1068,7 +1103,18 @@ class LanEngine extends ChangeNotifier {
           final senderId = (meta['senderId'] as String?) ?? socket.remoteAddress.address;
           final transferId = (meta['id'] as String?) ?? '';
           // Stable, scoped IDs survive ACK loss and sender retries.
-          final id = transferId.isEmpty ? newId() : '${senderId}_$transferId';
+          if (senderId == deviceId) throw const FormatException('Self transfer');
+          final logical = meta['messageId'];
+          final legacyId = transferId.isEmpty ? newId() : '${senderId}_$transferId';
+          final logicalId = logical is String &&
+              RegExp(r'^[A-Za-z0-9_-]{1,100}$').hasMatch(logical)
+            ? '${senderId}_$logical' : legacyId;
+          final id = files.any((f)=>f.incoming && f.id==legacyId &&
+              f.state==TransferState.delivered) ? legacyId : logicalId;
+          if (!_receivingIdentities.add(id)) {
+            throw const SocketException('Transfer already in progress');
+          }
+          claimedIdentity = id;
           final name = safeFileName(meta['name'] as String);
           final destination = _inbox!.path + Platform.pathSeparator + id + '_' + name;
           final existing = files.where((f) => f.incoming && f.id == id &&
@@ -1126,7 +1172,7 @@ class LanEngine extends ChangeNotifier {
         }));
       }
     } catch (e) {
-      if (record != null) {
+      if (record != null && record.state != TransferState.delivered) {
         record.state = TransferState.failed;
         record.error = e.toString();
       }
@@ -1144,15 +1190,55 @@ class LanEngine extends ChangeNotifier {
       }
       try{await reader.cancel();}catch(_){}
       socket.destroy();
+      if(claimedIdentity!=null)_receivingIdentities.remove(claimedIdentity);
       if(!control)_update(save: true);
     }
+  }
+
+  List<LanFile> get dashboardFiles => collapseDashboardFiles(files);
+
+  static List<LanFile> collapseDashboardFiles(Iterable<LanFile> records) {
+    final incoming = <LanFile>[];
+    final outgoing = <String,List<LanFile>>{};
+    for(final file in records) {
+      if(file.incoming) {incoming.add(file);continue;}
+      final key = jsonEncode([file.batch,file.path]);
+      outgoing.putIfAbsent(key,()=>[]).add(file);
+    }
+    return [...incoming,for(final rows in outgoing.values) _collapseOutgoing(rows)];
+  }
+
+  static LanFile _collapseOutgoing(List<LanFile> rows) {
+    final queued = rows.where((f)=>f.state==TransferState.queued).toList();
+    final delivery = rows.where((f)=>f.state!=TransferState.queued).toList();
+    final first = queued.isNotEmpty ? queued.first : rows.first;
+    final active = delivery.where((f)=>f.state==TransferState.sending ||
+      f.state==TransferState.preparing).toList();
+    final failed = delivery.where((f)=>f.state==TransferState.failed).toList();
+    final status = active.isNotEmpty ? active.first.state :
+      failed.isNotEmpty ? TransferState.failed :
+      delivery.isNotEmpty && delivery.every((f)=>f.state==TransferState.delivered)
+        ? TransferState.delivered : first.state;
+    final done = delivery.isEmpty ? first.done :
+      delivery.map((f)=>f.done).reduce(min);
+    return LanFile(id:first.id,batch:first.batch,name:first.name,path:first.path,
+      peer:first.peer,peerId:first.peerId,incoming:false,size:first.size,
+      created:first.created,state:status,done:done,
+      error:failed.isNotEmpty?failed.first.error:null);
   }
 
   Future<void> remove(String id) async {
     final hits = files.where((entry) => entry.id == id).toList();
     if (hits.isEmpty) return;
     final item = hits.first;
-    if(item.state==TransferState.queued){await cancelQueuedBatch(item.batch);return;}
+    if(!item.incoming){
+      for(final batch in queuedBatches.where((b)=>b.id==item.batch).toList()){
+        batch.items.removeWhere((entry)=>entry.path==item.path);
+        if(batch.items.isEmpty)queuedBatches.remove(batch);
+      }
+      files.removeWhere((f)=>!f.incoming&&f.batch==item.batch&&f.path==item.path);
+      _saveQueue();_update(save:true);return;
+    }
     // Never delete sender originals.
     if (item.incoming) {
       final f = File(item.path);
