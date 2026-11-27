@@ -1,4 +1,5 @@
 name: File Share Release Pipeline
+# macOS-only builds are selected by the [macos-release-now] commit marker.
 
 on:
   push:
