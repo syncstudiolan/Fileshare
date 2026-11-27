@@ -35,7 +35,7 @@ class WindowsTlsTrust {
 $ErrorActionPreference = 'Stop'
 foreach ($location in @('CurrentUser', 'LocalMachine')) {
   try {
-    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', $location)
+    $store = New-Object -TypeName System.Security.Cryptography.X509Certificates.X509Store -ArgumentList @('Root', $location)
     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
     try {
       foreach ($cert in $store.Certificates) {
