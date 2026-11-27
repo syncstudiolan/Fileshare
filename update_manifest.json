@@ -25,11 +25,11 @@
   },
   "schema": 1,
   "windows": {
-    "build": 656,
+    "build": 665,
     "notes": "Windows x64 Setup installer; approve UAC.",
-    "sha256": "3650b830a629773ae93856b0ebba3f69b47dfbe41fa3866e54a9aeed322389e9",
-    "size": 42894368,
-    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-656/FileShare-Windows-Setup.exe",
+    "sha256": "7f8c7601758a1caaa12280cf8797e545c278254c1be3bc7190b1fa35887f3aac",
+    "size": 42899643,
+    "url": "https://github.com/syncstudiolan/Fileshare/releases/download/fileshare-v0.1.0-build-665/FileShare-Windows-Setup.exe",
     "version": "0.1.0"
   }
 }
