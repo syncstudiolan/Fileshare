@@ -998,7 +998,18 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _enterDashboard()async{
     await SharedPreferencesAsync().setBool('offline_start',true);
     if(!mounted)return;
-    Navigator.of(context).pushAndRemoveUntil(fadePage(
+    // Desktop login can be displayed in the Dashboard's nested Navigator.
+    // Do not push a second DashboardPage there: that nests the full desktop
+    // sidebar/menu inside the original sidebar and duplicates the UI.
+    final localNavigator = Navigator.of(context);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    if ((Platform.isWindows || Platform.isMacOS) &&
+        !identical(localNavigator, rootNavigator)) {
+      localNavigator.popUntil((route) => route.isFirst);
+      return;
+    }
+    // First-run login lives on the root Navigator, without a dashboard yet.
+    rootNavigator.pushAndRemoveUntil(fadePage(
       DashboardPage(mode:widget.mode,onMode:widget.onMode)),(_)=>false);
   }
 
