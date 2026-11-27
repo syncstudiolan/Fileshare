@@ -1028,7 +1028,15 @@ class _LoginPageState extends State<LoginPage> {
       }
       await _enterDashboard();
     }catch(e){
-      if(mounted)setState(()=>_error=e.toString().replaceFirst('Bad state: ',''));
+      // Show practical steps, not a raw BoringSSL source path. Never bypass
+      // certificate validation or imply that the password is incorrect.
+      final message = e is HandshakeException && Platform.isWindows
+          ? 'Secure connection could not verify the server certificate. '
+            'Check Windows date/time, install Windows Updates (including root '
+            'certificates), and check antivirus HTTPS scanning or a proxy. '
+            'Then retry. Your password has not been verified yet.'
+          : e.toString().replaceFirst('Bad state: ','');
+      if(mounted)setState(()=>_error=message);
     }finally{if(mounted)setState(()=>_busy=false);}
   }
 
