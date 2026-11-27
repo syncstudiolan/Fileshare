@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'account_directory.dart';
 import 'windows_tls_trust.dart';
+import 'secure_http.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// An owner-facing client for a user's OWN workers.dev endpoint.
@@ -115,10 +116,7 @@ class PersonalCloud extends ChangeNotifier {
   Future<Map<String, dynamic>> _request(
     Uri host, String token, String method, String path,
     [Map<String, dynamic>? payload]) async {
-    return WindowsTlsTrust.retryWithSystemRoots((context) async {
-      final client = HttpClient(context: context)
-        ..connectionTimeout = const Duration(seconds: 12);
-    try {
+    return SecureHttp.run((client) async {
       final request = await client.openUrl(method, host.resolve(path));
       if(token.isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ' + token);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
@@ -146,7 +144,6 @@ class PersonalCloud extends ChangeNotifier {
         throw StateError(data['error']?.toString() ?? 'Cloud request failed');
       }
       return data;
-    } finally { client.close(force: true); }
     });
   }
 
@@ -628,8 +625,8 @@ class PersonalCloud extends ChangeNotifier {
     final uri=_host!.resolve('/v1/owner/transfer/'+id+
       (multipart?'/part/'+part.toString():''));
     for(var attempt=0;attempt<3;attempt++){
-      final client=HttpClient()..connectionTimeout=const Duration(seconds:15);
       try{
+        await SecureHttp.run((client) async {
         final request=await client.putUrl(uri);
         request.headers.set(HttpHeaders.authorizationHeader,'Bearer '+_sessionToken!);
         request.headers.contentType=ContentType.binary;
@@ -646,10 +643,11 @@ class PersonalCloud extends ChangeNotifier {
           throw StateError('Cloud upload HTTP '+response.statusCode.toString()+': '+body);
         }
         return;
+        });
       }catch(_){
         if(attempt==2)rethrow;
         await Future<void>.delayed(Duration(seconds:attempt+1));
-      }finally{client.close(force:true);}
+      }
     }
   }
 
@@ -738,8 +736,8 @@ class PersonalCloud extends ChangeNotifier {
       await target.delete();
     }
     final temporary=File(target.path+'.part');
-    final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
     try{
+      return await SecureHttp.run((client) async {
       final request=await client.getUrl(
         _host!.resolve(item.deviceTransfer
           ? '/v1/owner/transfer/'+item.id
@@ -753,10 +751,11 @@ class PersonalCloud extends ChangeNotifier {
       if(await temporary.length()!=item.size)throw const FormatException(
         'Cloud file download was incomplete');
       return temporary.rename(target.path);
+      });
     }catch(_){
       if(await temporary.exists())await temporary.delete();
       rethrow;
-    }finally{client.close(force:true);}
+    }
   }
 
   Future<void> deleteRemote(CloudFile item) async {

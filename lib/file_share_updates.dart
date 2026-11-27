@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'main.dart' show FileTheme, WindowsBackground;
+import 'secure_http.dart';
 
 /// The only trusted manifest is the one maintained by the GitHub release
 /// workflow on main. No arbitrary remote binary URLs are accepted.
@@ -85,8 +86,8 @@ class FileShareUpdates extends ChangeNotifier {
     if(!supported||_checking||_downloading||stage==UpdateStage.installing)return;
     _checking=true;
     stage=UpdateStage.checking;error=null;notifyListeners();
-    final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
     try {
+      await SecureHttp.run((client) async {
       final uri=Uri.parse(fileShareUpdateManifest).replace(queryParameters:{'t':DateTime.now().millisecondsSinceEpoch.toString()});
       final request=await client.getUrl(uri);
       request.headers.set('cache-control','no-cache');
@@ -120,12 +121,13 @@ class FileShareUpdates extends ChangeNotifier {
         release=null;downloaded=null;showPopup=false;
         stage=UpdateStage.current;
       }
+      });
     } catch(e) {
       stage=UpdateStage.failed;
       error='Could not check for updates: $e';
       showPopup=false;
     } finally {
-      _checking=false;notifyListeners();client.close(force:true);
+      _checking=false;notifyListeners();
     }
   }
 
@@ -143,9 +145,9 @@ class FileShareUpdates extends ChangeNotifier {
     showPopup=false;
     stage=UpdateStage.downloading;progress=0;error=null;
     notifyListeners();
-    final client=HttpClient()..connectionTimeout=const Duration(seconds:20);
     File? partial;
     try {
+      await SecureHttp.run((client) async {
       final directory=await getApplicationSupportDirectory();
       final folder=Directory('${directory.path}${Platform.pathSeparator}updates');
       await folder.create(recursive:true);
@@ -178,12 +180,13 @@ class FileShareUpdates extends ChangeNotifier {
       await partial.rename(file.path);
       downloaded=file;progress=1;
       stage=UpdateStage.ready;
+      });
     } catch(e) {
       error='Download failed: $e';
       stage=UpdateStage.failed;
       if(partial!=null&&await partial.exists())await partial.delete();
     } finally {
-      _downloading=false;client.close(force:true);notifyListeners();
+      _downloading=false;notifyListeners();
     }
   }
 
