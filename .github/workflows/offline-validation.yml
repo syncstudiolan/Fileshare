@@ -379,8 +379,13 @@ jobs:
           bundle_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
           test -n "$bundle_executable"
           test -x "$app/Contents/MacOS/$bundle_executable"
-          codesign --force --deep --sign - "$app"
+          # Do not re-sign the Xcode-built app: a second ad-hoc --deep
+          # signing pass can replace the original signature and strip the
+          # Keychain access-group entitlement, causing macOS OSStatus -34018.
           codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --entitlements :- "$app" > release-macos-entitlements.plist 2>/dev/null
+          plutil -lint release-macos-entitlements.plist
+          grep -q 'keychain-access-groups' release-macos-entitlements.plist
 
           # Launch the actual release bundle on the macOS runner. Fail the
           # release if LaunchServices cannot keep the main process alive.
