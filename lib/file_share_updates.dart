@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'main.dart' show FileTheme, WindowsBackground;
+import 'secure_http.dart';
 
 /// The only trusted manifest is the one maintained by the GitHub release
 /// workflow on main. No arbitrary remote binary URLs are accepted.
@@ -80,52 +81,55 @@ class FileShareUpdates extends ChangeNotifier {
     _currentBuild=build;
   }
 
+  /// Resolve the one current platform entry; upgrades supersede, never queue.
+  Future<UpdateRelease> _fetchLatestRelease() async {
+    return SecureHttp.run((client) async {
+      final uri = Uri.parse(fileShareUpdateManifest).replace(queryParameters: {
+        't': DateTime.now().millisecondsSinceEpoch.toString(),
+      });
+      final request = await client.getUrl(uri);
+      request.headers.set('cache-control', 'no-cache, no-store, max-age=0');
+      request.headers.set('pragma', 'no-cache');
+      final response = await request.close().timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) throw HttpException('Update manifest HTTP ${response.statusCode}');
+      const cap = 100 * 1024;
+      final chunks = <int>[];
+      await for (final part in response) {
+        chunks.addAll(part);
+        if (chunks.length > cap) throw const FormatException('Update manifest too large');
+      }
+      final data = jsonDecode(utf8.decode(chunks));
+      if (data is! Map<String, dynamic> || data['schema'] != 1) throw const FormatException('Unsupported update manifest');
+      final platform = Platform.isAndroid ? 'android' : Platform.isIOS ? 'ios' : Platform.isMacOS ? 'macos' : 'windows';
+      final parsed = UpdateRelease.fromJson(data[platform], platform);
+      if (parsed == null) throw const FormatException('Invalid latest release metadata');
+      return parsed;
+    });
+  }
+
   /// New session: clear a previous "Update later" only when the app restarts.
   Future<void> check({bool startup=false}) async {
     if(!supported||_checking||_downloading||stage==UpdateStage.installing)return;
     _checking=true;
     stage=UpdateStage.checking;error=null;notifyListeners();
-    final client=HttpClient()..connectionTimeout=const Duration(seconds:12);
     try {
-      final uri=Uri.parse(fileShareUpdateManifest).replace(queryParameters:{'t':DateTime.now().millisecondsSinceEpoch.toString()});
-      final request=await client.getUrl(uri);
-      request.headers.set('cache-control','no-cache');
-      final response=await request.close().timeout(const Duration(seconds:20));
-      if(response.statusCode!=200)throw HttpException(
-        'Update manifest HTTP ${response.statusCode}');
-      const cap=100*1024;
-      final chunks=<int>[];
-      await for(final part in response){
-        chunks.addAll(part);
-        if(chunks.length>cap)throw const FormatException('Update manifest too large');
-      }
-      final data=jsonDecode(utf8.decode(chunks));
-      if(data is! Map<String,dynamic>||data['schema']!=1){
-        throw const FormatException('Unsupported update manifest');
-      }
-      final platform=Platform.isAndroid?'android':Platform.isIOS?'ios':Platform.isMacOS?'macos':'windows';
-      final parsed=UpdateRelease.fromJson(data[platform],platform);
-      if(parsed==null)throw const FormatException('Invalid release metadata');
-      if(parsed.build>_currentBuild) {
-        release=parsed;
-        final cached=downloaded;
-        final matchingCache=cached!=null &&
-            cached.path.endsWith('-${parsed.build}.' +
-              _extension);
-        if(!matchingCache) downloaded=null;
-        stage=matchingCache && await cached!.exists()
-          ?UpdateStage.ready:UpdateStage.available;
-        if(startup && _suppressedBuild!=parsed.build)showPopup=true;
+      final parsed = await _fetchLatestRelease();
+      if (parsed.build > _currentBuild) {
+        release = parsed;
+        final cached = downloaded;
+        final matchingCache = cached != null && cached.path.endsWith('-${parsed.build}.' + _extension);
+        if (!matchingCache) downloaded = null;
+        stage = matchingCache && await cached!.exists() ? UpdateStage.ready : UpdateStage.available;
+        if (startup && _suppressedBuild != parsed.build) showPopup = true;
       } else {
-        release=null;downloaded=null;showPopup=false;
-        stage=UpdateStage.current;
+        release = null; downloaded = null; showPopup = false; stage = UpdateStage.current;
       }
     } catch(e) {
       stage=UpdateStage.failed;
       error='Could not check for updates: $e';
       showPopup=false;
     } finally {
-      _checking=false;notifyListeners();client.close(force:true);
+      _checking=false;notifyListeners();
     }
   }
 
@@ -135,17 +139,23 @@ class FileShareUpdates extends ChangeNotifier {
   }
 
   Future<void> download() async {
-    final next=release;
+    final current = release;
     // AppleJR-installed unsigned IPAs cannot be installed by an iOS app.
     // Signing and installation must happen outside the iOS sandbox.
-    if(!supported||next==null||_downloading||_checking||stage==UpdateStage.installing)return;
-    _downloading=true;
+    if (!supported || current == null || _downloading || _checking || stage == UpdateStage.installing) return;
+    _downloading = true;
+    var next = current;
     showPopup=false;
     stage=UpdateStage.downloading;progress=0;error=null;
     notifyListeners();
-    final client=HttpClient()..connectionTimeout=const Duration(seconds:20);
     File? partial;
     try {
+      // Re-resolve just before download so a queued older release is skipped.
+      final latest = await _fetchLatestRelease();
+      if (latest.build <= _currentBuild) { release = null; downloaded = null; stage = UpdateStage.current; return; }
+      if (latest.build > next.build) next = latest;
+      release = next;
+      await SecureHttp.run((client) async {
       final directory=await getApplicationSupportDirectory();
       final folder=Directory('${directory.path}${Platform.pathSeparator}updates');
       await folder.create(recursive:true);
@@ -178,12 +188,13 @@ class FileShareUpdates extends ChangeNotifier {
       await partial.rename(file.path);
       downloaded=file;progress=1;
       stage=UpdateStage.ready;
+      });
     } catch(e) {
       error='Download failed: $e';
       stage=UpdateStage.failed;
       if(partial!=null&&await partial.exists())await partial.delete();
     } finally {
-      _downloading=false;client.close(force:true);notifyListeners();
+      _downloading=false;notifyListeners();
     }
   }
 
@@ -193,6 +204,13 @@ class FileShareUpdates extends ChangeNotifier {
     // Lock the install action before any await: no duplicate UAC prompts.
     stage=UpdateStage.installing;error=null;notifyListeners();
     try {
+      // A newer manifest entry supersedes this package; never install the stale build.
+      final latest = await _fetchLatestRelease();
+      if (latest.build > _currentBuild && (release == null || latest.build > release!.build)) {
+        release = latest; downloaded = null; stage = UpdateStage.available;
+        error = 'A newer update is available. Download the latest version.';
+        notifyListeners(); return;
+      }
       // Revalidate immediately before install; another process may have touched the file.
       final selected=release;
       if(selected==null || !await file.exists() ||

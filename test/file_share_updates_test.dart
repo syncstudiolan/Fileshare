@@ -74,4 +74,14 @@ void main(){
     expect(mac,contains('hdiutil verify'));
   });
 
+  test('always re-resolves the single latest release before download and install',(){
+    final source=File('lib/file_share_updates.dart').readAsStringSync();
+    expect(source,contains('Future<UpdateRelease> _fetchLatestRelease()'));
+    expect(source,contains('no-cache, no-store, max-age=0'));
+    expect(source,contains('final latest = await _fetchLatestRelease();'));
+    expect(source,contains('if (latest.build > next.build) next = latest;'));
+    expect(source,contains('A newer update is available. Download the latest version.'));
+    expect(source,contains('Re-resolve just before download'));
+    expect(source,contains('never install the stale build'));
+  });
 }
